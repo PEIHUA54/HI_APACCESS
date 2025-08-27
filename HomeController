@@ -1,0 +1,101 @@
+using HI_APACCESS.Factory.F_Home;
+using HI_APACCESS.Models.M_Home;
+using HI_APACCESS.Service;
+using HI_APACCESS.ViewModels;
+using System.Web.Mvc;
+using System.Security.Claims;
+using HI_APACCESS.Service.Validation;
+using System.Web.Security;
+using System.Web;
+using System;
+
+namespace HI_APACCESS.Controllers
+{
+    public class HomeController : HI_APACCESSBaseController
+    {
+        readonly F_Main f_Main = new F_Main();
+
+        [HttpGet]
+        [TokenAuthorize]
+        public ActionResult TokenEntry()
+        {
+            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+            var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+            if (string.IsNullOrEmpty(systemId))
+            {
+                return Content("<script>alert('無法取得系統ID'); window.close();</script>", "text/html");
+            }
+
+            Session["CurrentSystemId"] = systemId;
+            Session["CurrentEmpNo"] = empNo;
+
+            // 建立 Forms Authentication 票券，避免 RefreshSession 失敗
+            try
+            {
+                // 可以嘗試取得該員工的完整資料，或使用基本資料
+                var empData = new
+                {
+                    EmpNo = empNo,
+                    SystemId = systemId,
+                    LoginTime = DateTime.Now,
+                    Source = "JWT_TOKEN"
+                };
+
+                string userData = Newtonsoft.Json.JsonConvert.SerializeObject(empData);
+
+                FormsAuthenticationTicket ticket = new FormsAuthenticationTicket(
+                    1,                          // 版本
+                    empNo,                      // 使用從 token 來的員工編號
+                    DateTime.Now,               // 發行時間
+                    DateTime.Now.AddHours(1),   // 過期時間
+                    false,                      // 持久性
+                    userData                    // 用戶資料
+                );
+
+                string encryptedTicket = FormsAuthentication.Encrypt(ticket);
+                HttpCookie authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encryptedTicket);
+                Response.Cookies.Add(authCookie);
+
+                System.Diagnostics.Debug.WriteLine($"建立 Forms Authentication 成功 - EmpNo: {empNo}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"建立 Forms Authentication 失敗: {ex.Message}");
+            }
+
+            // 導向到群組管理
+            return RedirectToAction("GroupManagement", "Limit", new { systemId = systemId });
+        }
+
+        public ActionResult Index()
+        {
+            return null;
+            //string systemId = Session["CurrentSystemId"] as string;
+            //if (string.IsNullOrEmpty(systemId))
+            //{
+            //    return Content("<h3>請透過權限管理連結進入此系統</h3>");
+            //}
+
+            //ViewBag.SystemId = systemId;
+            //return View();
+        }
+    
+        public ActionResult Main()
+        {
+            M_Main m_Main = new M_Main()
+            {
+                Main_Bodies = f_Main.Get_Bodies()
+            };
+
+            return View(m_Main);
+        }
+
+        public JsonResult Get_EmployeeInfo()
+        {
+            VM_Employee.VM_員工部門職稱 ret = SVS_員工基本資料.Get_員工基本資料(this.Emp_NO);
+            return Json(ret, JsonRequestBehavior.AllowGet);
+        }
+
+    }
+}
