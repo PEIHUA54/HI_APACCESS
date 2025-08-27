@@ -1,0 +1,917 @@
+@using HI_APACCESS.Service;
+
+@{
+    ViewBag.Title = "群組權限管理";
+    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
+    var emp_APG_NO = controller.APG_NO;
+    var emp_no = controller.Emp_NO;
+}
+
+<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
+
+<style>
+    .management-section {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        height: 750px;
+        overflow-y: auto;
+    }
+
+    .section-header {
+        background: #f8f9fa;
+        margin: -15px -15px 15px -15px;
+        padding: 12px 15px;
+        border-bottom: 1px solid #dee2e6;
+        font-weight: bold;
+        color: #495057;
+        position: sticky;
+        top: -15px;
+        z-index: 10;
+    }
+
+    .user-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+        .page-item:hover {
+            background-color: #e9ecef !important;
+        }
+
+        .page-item.has-permission {
+            background: #e8f5e8;
+            border-color: #28a745;
+        }
+
+    /* 按鈕權限項目樣式*/
+    .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: white;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+    }
+
+        .btn-item:hover {
+            background-color: #f0f8ff !important;
+        }
+
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+    .page-item, .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+        display: block; 
+    }
+
+        .page-item:hover, .btn-item:hover {
+            background-color: #e9ecef !important;
+        }
+
+        .page-item.has-permission {
+            background: #e8f5e8;
+            border-color: #28a745;
+        }
+
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+    .permission-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 12px; /* 使用 gap 來設定間距 */
+    }
+
+    .permission-checkbox {
+        margin: 0 !important;
+        padding: 0 !important;
+        pointer-events: none; /* 防止直接點擊checkbox，統一由父元素處理 */
+        flex-shrink: 0;
+        width: 16px !important;
+        height: 16px !important;
+        cursor: pointer;
+        transform: scale(1) !important; /* 確保checkbox不會被放大 */
+        -webkit-transform: scale(1) !important;
+        -moz-transform: scale(1) !important;
+        vertical-align: middle;
+        box-sizing: border-box !important;
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+    }
+
+    .permission-title {
+        font-weight: bold;
+        flex: 1; /* 占剩餘空間 */
+        min-width: 0; /* 允許縮小 */
+    }
+
+    .permission-info {
+        font-size: 12px;
+        color: #6c757d;
+        flex-shrink: 0; /* 不縮小 */
+    }
+
+    .group-selector {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+
+    .btn-small {
+        padding: 2px 8px;
+        font-size: 12px;
+    }
+
+    .no-data {
+        text-align: center;
+        color: #6c757d;
+        font-style: italic;
+        padding: 40px 20px;
+    }
+
+    /* 儲存提醒樣式 */
+    .save-reminder {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        display: none;
+    }
+
+        .save-reminder .fa-exclamation-triangle {
+            color: #f39c12;
+            margin-right: 8px;
+        }
+
+    /* 階層顯示樣式 */
+    .parent-page-header {
+        background: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 10px 15px;
+        margin: 10px 0 5px 0;
+        font-weight: bold;
+        color: #1976d2;
+    }
+
+    .child-page-item {
+        margin-left: 20px;
+        position: relative;
+    }
+
+        .child-page-item::before {
+            content: "└─";
+            position: absolute;
+            left: -20px;
+            color: #6c757d;
+            font-family: monospace;
+        }
+
+    /* Modal表格對齊 */
+    .modal-body .form-group label {
+        font-weight: 600;
+        margin-bottom: 5px;
+        display: block;
+    }
+
+    .modal-body .form-control {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .modal-body .row {
+        margin-left: -10px;
+        margin-right: -10px;
+    }
+
+    .modal-body .col-md-6 {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+</style>
+
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">系統群組權限管理New</div>
+</section>
+
+<div class="container-fluid">
+    <!-- 儲存提醒 -->
+    <div class="save-reminder" id="saveReminder">
+        <i class="fas fa-exclamation-triangle"></i>
+        <strong>注意！</strong> 已修改權限設定，請記得「儲存權限」！
+    </div>
+
+    <!-- 群組選擇區 -->
+    <div class="group-selector">
+        <div class="row align-items-center">
+            <div class="col-md-3">
+                <label for="groupSelect" class="form-label mb-0"><strong>選擇群組：</strong></label>
+            </div>
+            <div class="col-md-4">
+                <select class="form-control" id="groupSelect" onchange="loadGroupData()">
+                    <option value="">-- 請選擇群組 --</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button type="button" class="btn btn-primary" onclick="openGroupModal()">
+                    <i class="fas fa-plus"></i> 新增群組
+                </button>
+                <button type="button" class="btn btn-secondary" id="editGroupBtn" onclick="editGroup()" disabled>
+                    <i class="fas fa-edit"></i> 修改
+                </button>
+            </div>
+            <div class="col-md-2 text-right">
+                <button type="button" class="btn btn-success" onclick="saveAllPermissions()" id="saveAllBtn" disabled>
+                    <i class="fas fa-save"></i> 儲存權限
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 三個管理區塊 -->
+    <div class="row">
+        <!-- 左邊：管理使用者 -->
+        <div class="col-md-4">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-users"></i> 管理使用者
+                    <button type="button" class="btn btn-primary" onclick="openUserModal()" id="addUserBtn" disabled>
+                        <i class="fas fa-plus"></i> 新增
+                    </button>
+                </div>
+                <div id="userList">
+                    <div class="no-data">請先選擇群組</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中間：管理頁面 -->
+        <div class="col-md-4">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-file-alt"></i> 管理頁面權限
+                </div>
+                <div id="pageList">
+                    <div class="no-data">請先選擇群組</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右邊：管理按鈕 -->
+        <div class="col-md-4">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-mouse-pointer"></i> 管理按鈕權限
+                </div>
+                <div id="buttonList">
+                    <div class="no-data">請先選擇群組</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- 群組 Modal -->
+
+<div class="modal fade" id="groupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="groupModalTitle">新增群組</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="groupForm">
+                    <div class="form-group">
+                        <label for="groupNo">群組編號</label>
+                        <input type="text" class="form-control" id="groupNo" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="groupName">群組名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="groupName" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveGroup()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 使用者 Modal -->
+
+<div class="modal fade" id="userModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">新增使用者</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <div class="form-group">
+                        <label for="userId">員工編號 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="userId" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="userName">員工姓名 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="userName" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveUser()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        let currentGroup = '';
+        let isEditMode = false;
+        let allFunctions = [];
+        let groupPermissions = {};
+        let hasUnsavedChanges = false;
+
+        $(document).ready(function () {
+            loadGroups();
+            loadAllFunctions();
+        });
+
+        // 顯示/隱藏 儲存提醒
+        function showSaveReminder() {
+            $('#saveReminder').show();
+            hasUnsavedChanges = true;
+        }
+
+        function hideSaveReminder() {
+            $('#saveReminder').hide();
+            hasUnsavedChanges = false;
+        }
+
+        // 載入群組下拉選單
+        function loadGroups() {
+            $.get('@Url.Action("GetGroupSelectList", "Limit")', function (response) {
+                let options = '<option value="">– 請選擇群組 –</option>';
+
+                // 檢查回應是否為陣列
+                if (Array.isArray(response)) {
+                    response.forEach(function (group) {
+                        options += `<option value="${group.value}">${group.text}</option>`;
+                    });
+                } else {
+                    console.log('群組資料格式錯誤:', response);
+                    options += '<option value="">-- 載入失敗 --</option>';
+                }
+
+                $('#groupSelect').html(options);
+            }).fail(function (xhr, status, error) {
+                console.log('載入群組失敗:', error);
+                $('#groupSelect').html('<option value="">-- 載入失敗 --</option>');
+            });
+        }
+
+        // 載入所有頁面
+        function loadAllFunctions() {
+            $.get('@Url.Action("GetVisibleFunctions", "LIMIT")', function (response) {
+                if (response.success) {
+                    allFunctions = response.data || [];
+                } else {
+                    allFunctions = [];
+                }
+            });
+        }
+
+        // 載入群組資料
+        function loadGroupData() {
+            const newGroup = $('#groupSelect').val();
+
+            if (hasUnsavedChanges && currentGroup !== newGroup && currentGroup !== '') {
+                if (!confirm('有未儲存的變更，切換群組將遺失這些變更。確定要繼續嗎？')) {
+                    $('#groupSelect').val(currentGroup);
+                    return;
+                }
+            }
+
+            currentGroup = newGroup;
+            hideSaveReminder();
+
+            if (!currentGroup) {
+                resetAllSections();
+                return;
+            }
+
+            $('#editGroupBtn, #addUserBtn, #saveAllBtn').prop('disabled', false);
+
+            loadUsers();
+            loadPagePermissions();
+        }
+
+        // 重設所有區塊
+        function resetAllSections() {
+            $('#editGroupBtn, #addUserBtn, #saveAllBtn').prop('disabled', true);
+            $('#userList').html('<div class="no-data">請先選擇群組</div>');
+            $('#pageList').html('<div class="no-data">請先選擇群組</div>');
+            $('#buttonList').html('<div class="no-data">請先選擇群組</div>');
+            hideSaveReminder();
+        }
+
+        // 載入使用者列表
+        function loadUsers() {
+            $.get('@Url.Action("GetUsersByGroup", "LIMIT")', { apg_no: currentGroup }, function (response) {
+                if (response.success) {
+                    let html = '';
+                    if (response.data.length > 0) {
+                        response.data.forEach(function (user) {
+                            html += `
+                                <div class="user-item">
+                                    <div>
+                                        <strong>${user.U_ID}</strong><br>
+                                        <small>${user.U_NAME}</small>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-danger btn-small" onclick="deleteUser('${user.U_ID}', '${user.U_NAME}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>`;
+                        });
+                    } else {
+                        html = '<div class="no-data">此群組暫無使用者</div>';
+                    }
+                    $('#userList').html(html);
+                }
+            });
+        }
+
+        // 載入頁面權限
+        function loadPagePermissions() {
+            $.get('@Url.Action("GetGroupPermissions", "LIMIT")', { apg_no: currentGroup }, function (response) {
+                if (response.success) {
+                    groupPermissions = {};
+                    response.data.forEach(function (item) {
+                        if (!groupPermissions[item.FUNC_ID]) {
+                            groupPermissions[item.FUNC_ID] = {
+                                hasPagePermission: item.HasPagePermission,
+                                buttons: {}
+                            };
+                        }
+                        item.ButtonPermissions.forEach(function (btn) {
+                            groupPermissions[item.FUNC_ID].buttons[btn.BTNSEQ] = btn.HasPermission;
+                        });
+                    });
+
+                    renderPageListHierarchical();
+                    updateButtonListHierarchical();
+                }
+            });
+        }
+
+        // 輔助函數
+        function getFuncId(func) {
+            return func.FUNC_ID || func.value || func.func_id;
+        }
+
+        function getParentId(func) {
+            return func.PARENT_ID || func.parent_id || func.parentId;
+        }
+
+        function getFuncName(func) {
+            return func.FUNC_NA || func.text || func.func_na;
+        }
+
+        // 階層式渲染頁面列表
+        function renderPageListHierarchical() {
+            let html = '';
+            if (allFunctions.length === 0) {
+                html = '<div class="no-data">無可用頁面</div>';
+            } else {
+                const parentPages = allFunctions.filter(f => !getParentId(f) || !allFunctions.some(p => getFuncId(p) === getParentId(f)));
+                const childPages = allFunctions.filter(f => getParentId(f) && allFunctions.some(p => getFuncId(p) === getParentId(f)));
+
+                parentPages.forEach(function (parentFunc) {
+                    html += renderPageItem(parentFunc, false);
+                    const children = childPages.filter(c => getParentId(c) === getFuncId(parentFunc));
+                    children.forEach(function (childFunc) {
+                        html += renderPageItem(childFunc, true);
+                    });
+                });
+            }
+            $('#pageList').html(html);
+        }
+
+        // 修正後的頁面項目渲染 - 一列顯示
+        function renderPageItem(func, isChild) {
+            const funcId = getFuncId(func);
+            const funcName = getFuncName(func);
+
+            const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+            const checkedAttr = hasPermission ? 'checked' : '';
+            const itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
+            const childClass = isChild ? 'child-page-item' : '';
+
+            return `
+                <div class="${itemClass} ${childClass}" data-func-id="${funcId}" onclick="togglePagePermissionByClick('${funcId}')">
+                    <div class="permission-content">
+                        <input type="checkbox" class="permission-checkbox" ${checkedAttr}>
+                        <span class="permission-title">${funcName}</span>
+                        <span class="permission-info">頁面ID: ${funcId}</span>
+                    </div>
+                </div>`;
+        }
+
+        // 點擊切換頁面權限
+        function togglePagePermissionByClick(funcId) {
+            const checkbox = $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`);
+            const isChecked = checkbox.prop('checked');
+            checkbox.prop('checked', !isChecked);
+            togglePagePermission(funcId, !isChecked);
+        }
+
+        // 切換頁面權限
+        function togglePagePermission(funcId, hasPermission) {
+            if (!groupPermissions[funcId]) {
+                groupPermissions[funcId] = { buttons: {} };
+            }
+            groupPermissions[funcId].hasPagePermission = hasPermission;
+
+            showSaveReminder();
+
+            if (hasPermission) {
+                const currentPage = allFunctions.find(f => getFuncId(f) === funcId);
+                if (currentPage && getParentId(currentPage)) {
+                    const parentExists = allFunctions.some(f => getFuncId(f) === getParentId(currentPage));
+                    if (parentExists) {
+                        const parentId = getParentId(currentPage);
+                        if (!groupPermissions[parentId]) {
+                            groupPermissions[parentId] = { buttons: {} };
+                        }
+                        if (!groupPermissions[parentId].hasPagePermission) {
+                            groupPermissions[parentId].hasPagePermission = true;
+                            $(`.page-item[data-func-id="${parentId}"] input[type="checkbox"]`).prop('checked', true);
+                            $(`.page-item[data-func-id="${parentId}"]`).addClass('has-permission');
+                            alert(`已自動勾選上層頁面權限：${parentId}`);
+                        }
+                    }
+                }
+            } else {
+                const childPages = allFunctions.filter(f => getParentId(f) === funcId);
+                const hasChildWithPermission = childPages.some(child =>
+                    groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission
+                );
+
+                if (hasChildWithPermission) {
+                    const childNames = childPages
+                        .filter(child => groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission)
+                        .map(child => getFuncName(child))
+                        .join('、');
+
+                    if (!confirm(`取消此頁面權限將同時取消子頁面權限：${childNames}\n\n確定要繼續嗎？`)) {
+                        $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`).prop('checked', true);
+                        return;
+                    } else {
+                        childPages.forEach(child => {
+                            const childId = getFuncId(child);
+                            if (groupPermissions[childId] && groupPermissions[childId].hasPagePermission) {
+                                groupPermissions[childId].hasPagePermission = false;
+                                groupPermissions[childId].buttons = {};
+                                $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', false);
+                                $(`.page-item[data-func-id="${childId}"]`).removeClass('has-permission');
+                            }
+                        });
+                    }
+                }
+
+                groupPermissions[funcId].buttons = {};
+            }
+
+            const pageItem = $(`.page-item[data-func-id="${funcId}"]`);
+            if (hasPermission) {
+                pageItem.addClass('has-permission');
+            } else {
+                pageItem.removeClass('has-permission');
+            }
+
+            updateButtonListHierarchical();
+        }
+
+        // 階層式更新按鈕列表
+        function updateButtonListHierarchical() {
+            let html = '';
+            let pagesWithPermission = [];
+
+            Object.keys(groupPermissions).forEach(function (funcId) {
+                if (groupPermissions[funcId].hasPagePermission) {
+                    pagesWithPermission.push(funcId);
+                }
+            });
+
+            if (pagesWithPermission.length === 0) {
+                $('#buttonList').html('<div class="no-data">請先勾選頁面權限</div>');
+                return;
+            }
+
+            let completedPages = 0;
+            let allPageHtml = '';
+
+            const parentPages = pagesWithPermission.filter(funcId => {
+                const func = allFunctions.find(f => getFuncId(f) === funcId);
+                if (!func) {
+                    return true;
+                }
+                const parentId = getParentId(func);
+                return !parentId || !allFunctions.some(p => getFuncId(p) === parentId);
+            });
+
+            const childPages = pagesWithPermission.filter(funcId => {
+                const func = allFunctions.find(f => getFuncId(f) === funcId);
+                if (!func) {
+                    return false;
+                }
+                const parentId = getParentId(func);
+                return parentId && allFunctions.some(p => getFuncId(p) === parentId);
+            });
+
+            const orderedPages = [];
+            parentPages.forEach(parentId => {
+                orderedPages.push(parentId);
+                const children = childPages.filter(childId => {
+                    const childFunc = allFunctions.find(f => getFuncId(f) === childId);
+                    if (!childFunc) {
+                        return false;
+                    }
+                    return getParentId(childFunc) === parentId;
+                });
+                orderedPages.push(...children);
+            });
+
+            if (orderedPages.length === 0) {
+                $('#buttonList').html('<div class="no-data">沒有可顯示的頁面</div>');
+                return;
+            }
+
+            orderedPages.forEach(function (funcId) {
+                const funcData = allFunctions.find(f => getFuncId(f) === funcId);
+                const funcName = funcData ? getFuncName(funcData) : funcId;
+                const isChild = funcData && getParentId(funcData) && allFunctions.some(p => getFuncId(p) === getParentId(funcData));
+
+                $.get('@Url.Action("GetButtonsByFuncId", "LIMIT")', { func_id: funcId }, function (response) {
+                    if (response.success && response.data.length > 0) {
+                        let pageHtml = '';
+
+                        if (isChild && funcData) {
+                            const parentFunc = allFunctions.find(f => getFuncId(f) === getParentId(funcData));
+                            if (parentFunc && !allPageHtml.includes(`parent-header-${getFuncId(parentFunc)}`)) {
+                                pageHtml += `
+                                    <div class="parent-page-header" id="parent-header-${getFuncId(parentFunc)}">
+                                        <i class="fas fa-folder"></i> ${getFuncName(parentFunc)}
+                                        <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${getFuncId(parentFunc)})</small>
+                                    </div>`;
+                            }
+                        }
+
+                        pageHtml += `
+                            <div class="page-section ${isChild ? 'child-section' : ''}" style="margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; ${isChild ? 'margin-left: 20px;' : ''}">
+                                <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057;">
+                                    <i class="fas fa-file-alt"></i> ${funcName}
+                                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                                </div>
+                                <div class="buttons-container" style="padding: 10px;">`;
+
+                        response.data.forEach(function (btn) {
+                            const hasPermission = groupPermissions[funcId].buttons[btn.BTNSEQ] || false;
+                            const checkedAttr = hasPermission ? 'checked' : '';
+                            const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
+
+                            // 修正後的按鈕項目 - 一列顯示
+                            pageHtml += `
+                                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')">
+                                    <div class="permission-content">
+                                        <input type="checkbox" class="permission-checkbox" ${checkedAttr}>
+                                        <span class="permission-title">${btn.BTN_NAME}</span>
+                                        <span class="permission-info">ID: ${btn.BTNID}</span>
+                                    </div>
+                                </div>`;
+                        });
+
+                        pageHtml += '</div></div>';
+                        allPageHtml += pageHtml;
+                    }
+
+                    completedPages++;
+                    if (completedPages === orderedPages.length) {
+                        if (allPageHtml === '') {
+                            $('#buttonList').html('<div class="no-data">選中的頁面都沒有定義按鈕</div>');
+                        } else {
+                            $('#buttonList').html(allPageHtml);
+                        }
+                    }
+                }).fail(function (xhr, status, error) {
+                    completedPages++;
+                    if (completedPages === orderedPages.length) {
+                        if (allPageHtml === '') {
+                            $('#buttonList').html('<div class="no-data">選中的頁面都沒有定義按鈕</div>');
+                        } else {
+                            $('#buttonList').html(allPageHtml);
+                        }
+                    }
+                });
+            });
+        }
+
+        // 點擊切換按鈕權限
+        function toggleButtonPermissionByClick(funcId, btnSeq) {
+            const checkbox = $(`.btn-item`).filter(function() {
+                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
+            }).find('input[type="checkbox"]');
+
+            const isChecked = checkbox.prop('checked');
+            checkbox.prop('checked', !isChecked);
+            toggleButtonPermission(funcId, btnSeq, !isChecked);
+        }
+
+        // 切換按鈕權限
+        function toggleButtonPermission(funcId, btnSeq, hasPermission) {
+            groupPermissions[funcId].buttons[btnSeq] = hasPermission;
+            showSaveReminder();
+
+            const btnItem = $(`.btn-item`).filter(function () {
+                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
+            });
+
+            if (hasPermission) {
+                btnItem.addClass('has-permission');
+            } else {
+                btnItem.removeClass('has-permission');
+            }
+        }
+
+        // 儲存所有權限
+        function saveAllPermissions() {
+            const funcIds = [];
+            const buttonPermissions = [];
+
+            Object.keys(groupPermissions).forEach(function (funcId) {
+                if (groupPermissions[funcId].hasPagePermission) {
+                    funcIds.push(funcId);
+
+                    Object.keys(groupPermissions[funcId].buttons).forEach(function (btnSeq) {
+                        if (groupPermissions[funcId].buttons[btnSeq]) {
+                            buttonPermissions.push(`${funcId}|${btnSeq}`);
+                        }
+                    });
+                }
+            });
+
+            $.post('@Url.Action("BatchSetPermissions", "LIMIT")', {
+                apg_no: currentGroup,
+                funcIds: funcIds,
+                buttonPermissions: buttonPermissions
+            }, function (response) {
+                if (response.success) {
+                    alert('權限設定儲存成功！');
+                    hideSaveReminder();
+                } else {
+                    alert('儲存失敗：' + response.message);
+                }
+            });
+        }
+
+        // 群組管理函數
+        function openGroupModal() {
+            isEditMode = false;
+            $('#groupModalTitle').text('新增群組');
+            $('#groupForm')[0].reset();
+
+            $.get('@Url.Action("GetNextGroupNo", "LIMIT")', function (response) {
+                if (response.success) {
+                    $('#groupNo').val(response.data);
+                }
+            });
+
+            $('#groupModal').modal('show');
+        }
+
+        function editGroup() {
+            if (!currentGroup) return;
+
+            isEditMode = true;
+            $('#groupModalTitle').text('修改群組');
+
+            $.get('@Url.Action("GetGroup", "LIMIT")', { apg_no: currentGroup }, function (response) {
+                if (response.success) {
+                    $('#groupNo').val(response.data.APG_NO);
+                    $('#groupName').val(response.data.APG_NAME);
+                    $('#groupModal').modal('show');
+                }
+            });
+        }
+
+        function saveGroup() {
+            const formData = {
+                APG_NO: $('#groupNo').val(),
+                APG_NAME: $('#groupName').val()
+            };
+
+            if (!formData.APG_NAME.trim()) {
+                alert('請輸入群組名稱');
+                return;
+            }
+
+            const url = isEditMode ? '@Url.Action("UpdateGroup", "LIMIT")' : '@Url.Action("AddGroup", "LIMIT")';
+
+            $.post(url, formData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#groupModal').modal('hide');
+                    loadGroups();
+                    if (isEditMode) {
+                        $('#groupSelect').val(currentGroup);
+                        loadGroupData();
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        // 使用者管理函數
+        function openUserModal() {
+            $('#userForm')[0].reset();
+            $('#userModal').modal('show');
+        }
+
+        function saveUser() {
+            const formData = {
+                APG_NO: currentGroup,
+                U_ID: $('#userId').val(),
+                U_NAME: $('#userName').val()
+            };
+
+            if (!formData.U_ID.trim() || !formData.U_NAME.trim()) {
+                alert('請輸入員工編號和姓名');
+                return;
+            }
+
+            $.post('@Url.Action("AddUser", "LIMIT")', formData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#userModal').modal('hide');
+                    loadUsers();
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deleteUser(userId, userName) {
+            if (confirm(`確定要將 "${userName}" 從群組中移除嗎？`)) {
+                $.post('@Url.Action("DeleteUser", "LIMIT")', {
+                    apg_no: currentGroup,
+                    u_id: userId
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+                        loadUsers();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+}
+    </script>
+}
+
