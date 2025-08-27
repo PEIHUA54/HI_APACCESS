@@ -1,0 +1,183 @@
+using HI_APACCESS.Service;
+using HI_APACCESS.ViewModels;
+using Newtonsoft.Json;
+using Serilog;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Web.Mvc;
+using System.Web.Security;
+using System.IO;
+using System.Text.RegularExpressions;
+using HI_APACCESS.Factory.F_LIMIT;
+
+namespace HI_APACCESS.Controllers
+{
+    public abstract class HI_APACCESSBaseController : Controller
+    {
+        private FormsAuthenticationTicket ticket;
+        private string str_AD_Form;
+        private string str_UserData_Form;
+        private string AD;
+        public string Emp_NO_原始;
+        public string Emp_NO;
+        private VM_Employee.VM_員工部門職稱 Emp_Data;
+        public string APG_NO;
+        public List<VM_Employee.WebTree_Node> WebTrees;
+
+        public HI_APACCESSBaseController()
+        {
+            // 優先檢查 Session 中是否有從 JWT token 來的員工資料
+            string tokenEmpNo = null;
+            if (System.Web.HttpContext.Current?.Session["CurrentEmpNo"] != null)
+            {
+                tokenEmpNo = System.Web.HttpContext.Current?.Session["CurrentEmpNo"] as string;
+            } 
+            if (!string.IsNullOrEmpty(tokenEmpNo))
+            {
+                // 使用從 JWT token 來的員工資料
+                this.Emp_NO = tokenEmpNo;
+                this.Emp_NO_原始 = tokenEmpNo;
+                this.AD = tokenEmpNo; 
+            }
+            else
+            {
+                // 原本的邏輯
+                this.Emp_NO_原始 = SVS_員工基本資料.Get_員工編號(SVS_員工基本資料.Get_員工AD());
+                this.AD = SVS_員工基本資料.Get_員工AD();
+                this.Emp_NO = SVS_員工基本資料.Get_員工編號(this.AD).ToUpper().Trim();
+            }
+            this.Emp_Data = SVS_員工基本資料.Get_員工基本資料(this.Emp_NO_原始);
+            this.APG_NO = this.Emp_Data?.APG_NO ?? string.Empty;
+            this.WebTrees = string.IsNullOrEmpty(this.APG_NO) ? new List<VM_Employee.WebTree_Node>() : SVS_員工基本資料.Get_Tree(this.APG_NO);
+        }
+
+        private void GetTicket()
+        {
+            this.ticket = null;
+            var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+            if (authCookie != null && !string.IsNullOrWhiteSpace(authCookie.Value))
+            {
+                var decryptedTicket = FormsAuthentication.Decrypt(authCookie.Value);
+                if (decryptedTicket.Expiration >= DateTime.Now)
+                {
+                    this.ticket = decryptedTicket;
+                    this.str_AD_Form = this.ticket?.Name;
+                    this.str_UserData_Form = this.ticket?.UserData;
+                    this.AD = !string.IsNullOrEmpty(str_AD_Form) ? str_AD_Form : SVS_員工基本資料.Get_員工AD();
+                    //this.Emp_NO = SVS_員工基本資料.Get_員工編號(this.AD).ToUpper().Trim();
+                    this.Emp_Data = !string.IsNullOrEmpty(this.str_UserData_Form) ? JsonConvert.DeserializeObject<VM_Employee.VM_員工部門職稱>(this.str_UserData_Form) : SVS_員工基本資料.Get_員工基本資料(this.Emp_NO_原始);
+                    this.APG_NO = this.Emp_Data?.APG_NO ?? string.Empty;
+                    this.WebTrees = string.IsNullOrEmpty(this.APG_NO) ? new List<VM_Employee.WebTree_Node>() : SVS_員工基本資料.Get_Tree(this.APG_NO);
+                }
+            }
+        }
+
+        protected override void HandleUnknownAction(string actionName)
+        {
+            this.Redirect("/?wrongView=" + actionName).ExecuteResult(this.ControllerContext);
+        }
+
+        protected override void OnException(ExceptionContext filterContext)
+        {
+            base.OnException(filterContext);
+
+            var exception = filterContext.Exception;
+            var user = filterContext.RequestContext.HttpContext.User;
+
+            if ((exception is CryptographicException)
+                || (exception is HttpAntiForgeryException && (user == null || !user.Identity.IsAuthenticated)))
+            {
+                HandleAuthenticationException(filterContext);
+                return;
+            }
+
+            if (exception is HttpAntiForgeryException)
+            {
+                var action = filterContext.RequestContext.RouteData.Values["action"] as string;
+                var controller = filterContext.RequestContext.RouteData.Values["controller"] as string;
+                if (action == "Login" && controller == "Account" && user != null && user.Identity.IsAuthenticated)
+                {
+                    HandleAuthenticationException(filterContext);
+                    return;
+                }
+            }
+
+            ILogger log = SVS_Serilog._log;
+            log.Error<string>(exception, exception.Message, exception.StackTrace);
+        }
+
+        private void HandleAuthenticationException(ExceptionContext filterContext)
+        {
+            filterContext.ExceptionHandled = true;
+            Session.Abandon();
+            FormsAuthentication.SignOut();
+            filterContext.Result = new RedirectResult(Url.Action("Login", "Account"));
+        }
+
+        private static string[] List_排除清單_ctrl => Array.ConvertAll(new string[] { "Account", "Home", "SYSTEM_SET", "LIMIT" }, x => x.ToUpper());
+        private static string[] List_排除清單_action => Array.ConvertAll(new string[]
+        {
+          "Login", "Logout", "RefreshSession", "Main" //其他
+          ,"PageManagement","GroupManagement","Index","LIMIT","TokenEntry"
+
+        }, x => x.ToUpper());
+
+        //頁面權限統一控管，沒有權限就導去公佈欄頁面
+        //參考： https://stackoverflow.com/questions/18913600/add-a-default-parameter-to-all-actions 
+        protected override void OnActionExecuting(ActionExecutingContext filterContext)
+        {
+            base.OnActionExecuting(filterContext);
+
+            if (filterContext.ActionDescriptor is ReflectedActionDescriptor actionDescriptor)
+            {
+                string ReturnType = actionDescriptor.MethodInfo.ReturnType.Name;
+                string ctrlName = filterContext.ActionDescriptor.ControllerDescriptor.ControllerName.ToUpper();
+                string actionName = filterContext.ActionDescriptor.ActionName.ToUpper();
+
+                if (ctrlName == "LIMIT" || ctrlName == "HOME" ||
+                    new[] { "PAGEMANAGEMENT", "GROUPMANAGEMENT", "TokenEntry", "INDEX" , "DevTest" }.Contains(actionName))
+                {
+                    return; // 直接通過，不做權限檢查
+                }
+
+                if (ReturnType == "ActionResult"
+                    && filterContext.HttpContext.Request.HttpMethod == "GET"
+                    && !filterContext.HttpContext.Request.IsAjaxRequest())
+                {
+                    var _List_排除清單_ctrl = List_排除清單_ctrl.Select(x => x.ToUpper()).ToArray();
+                    var _List_排除清單_action = List_排除清單_action.Select(x => x.ToUpper()).ToArray();
+
+                    if (WebTrees != null
+                        && !_List_排除清單_ctrl.Contains(ctrlName)
+                        && !WebTrees.Any(x => string.IsNullOrEmpty(x.PARENT_ID) && x.FUNC_ID == ctrlName))
+                    {
+                        filterContext.Result = new RedirectResult(Url.Action("Main", "Home"));
+                        return;
+                    }
+                }
+            }
+        }
+        protected string CurrentSystemId
+        {
+            get
+            {
+                return Session["CurrentSystemId"] as string;
+            }
+        }
+
+        //CurrentSystemId  =>這邊會沒值
+        protected F_LIMIT GetLimitService()
+        {
+            //string CurrentSystemId = "HI_POSIMG"; //測試用 先寫死HI_POSIMG
+            string currentSystemId = Session["CurrentSystemId"] as string;
+            if (string.IsNullOrEmpty(currentSystemId)) // 使用變數
+            {
+                throw new InvalidOperationException("系統ID遺失，請重新登入");
+            }
+            return new F_LIMIT(currentSystemId); // 使用變數
+        }
+
+    }
+}
