@@ -1,0 +1,713 @@
+using HI_APACCESS.Factory;
+using HI_APACCESS.Factory.F_LIMIT;
+using HI_APACCESS.Models.M_LIMIT;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.Mvc;
+using X.PagedList;
+using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
+
+namespace HI_APACCESS.Controllers
+{
+    public class LIMITController : HI_APACCESSBaseController
+    {
+        //private F_LIMIT F_LIMIT = new F_LIMIT();
+
+        #region 主頁面
+
+        // 群組管理頁面
+        public ActionResult GroupManagement(string systemId)
+        {
+            if (string.IsNullOrEmpty(systemId))
+            {
+                systemId = Session["CurrentSystemId"]?.ToString();
+            }
+            else
+            {
+                // 同步更新 Session
+                Session["CurrentSystemId"] = systemId;
+            }
+
+            ViewBag.SystemId = systemId;
+            ViewBag.Title = "群組權限管理 - " + systemId; 
+            return View();
+        }
+
+        // 系統頁面設定
+        public ActionResult PageManagement(string systemId = null)
+        {
+            if (string.IsNullOrEmpty(systemId))
+            {
+                systemId = Session["CurrentSystemId"]?.ToString();
+            }
+
+            if (string.IsNullOrEmpty(systemId))
+            {
+                return Content("<h3>系統ID遺失，請重新透過權限管理連結進入</h3>");
+            }
+
+            ViewBag.SystemId = systemId;
+            ViewBag.Title = "系統頁面設定 - " + systemId;
+            return View();
+        }
+
+        #endregion
+
+        #region 群組相關 AJAX 
+
+        // 新增群組
+        [HttpPost]
+        public JsonResult AddGroup(GroupModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    if (string.IsNullOrEmpty(model.APG_NO))
+                    {
+                        model.APG_NO = service.GetNextGroupNo();
+                    }
+
+                    var result = service.InsertGroup(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "群組新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "群組新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增群組發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 修改群組
+        [HttpPost]
+        public JsonResult UpdateGroup(GroupModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    var result = service.UpdateGroup(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "群組修改成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "群組修改失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改群組發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 刪除群組
+        [HttpPost]
+        public JsonResult DeleteGroup(string apg_no)
+        {
+            try
+            {
+                var service = GetLimitService();
+                if (!service.CanDeleteGroup(apg_no))
+                {
+                    return Json(new { success = false, message = "該群組尚有人員，無法刪除" });
+                }
+
+                var result = service.DeleteGroup(apg_no);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "群組刪除成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "群組刪除失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "刪除群組發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 取得群組資料
+        [HttpGet]
+        public JsonResult GetGroup(string apg_no)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var group = service.GetGroupByNo(apg_no);
+                if (group != null)
+                {
+                    return Json(new { success = true, data = group }, JsonRequestBehavior.AllowGet);
+                }
+                return Json(new { success = false, message = "找不到群組資料" }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得群組資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        #endregion
+
+        #region 使用者相關 AJAX
+
+        // 取得群組人員
+        [HttpGet]
+        public JsonResult GetUsersByGroup(string apg_no)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var users = service.GetUsersByGroup(apg_no);
+                return Json(new { success = true, data = users }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得人員資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 新增使用者
+        [HttpPost]
+        public JsonResult AddUser(UserModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    var result = service.InsertUser(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "使用者新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "使用者新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增使用者發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 刪除使用者
+        [HttpPost]
+        public JsonResult DeleteUser(string apg_no, string u_id)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var result = service.DeleteUser(apg_no, u_id);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "使用者刪除成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "使用者刪除失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "刪除使用者發生錯誤：" + ex.Message });
+            }
+        }
+
+        #endregion
+
+        #region 頁面相關 AJAX
+
+        // 取得所有頁面
+        [HttpGet]
+        public JsonResult GetAllFunctions()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var functions = service.GetAllFunctions();
+                return Json(new { success = true, data = functions }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得頁面資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 新增頁面
+        [HttpPost]
+        public JsonResult AddFunction(FuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    var result = service.InsertFunction(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "頁面新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "頁面新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增頁面發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 修改頁面
+        [HttpPost]
+        public JsonResult UpdateFunction(FuncModel model, string originalFuncId)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    var result = service.UpdateFunction(model, originalFuncId, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "頁面修改成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "頁面修改失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改頁面發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 刪除頁面
+        [HttpPost]
+        public JsonResult DeleteFunction(string func_id)
+        {
+            try
+            {
+                var service = GetLimitService();
+                if (!service.CanDeleteFunction(func_id))
+                {
+                    return Json(new { success = false, message = "該頁面尚有權限設定，無法刪除" });
+                }
+
+                var result = service.DeleteFunction(func_id);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "頁面刪除成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "頁面刪除失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
+            }
+        }
+
+        #endregion
+
+        #region 按鈕相關 AJAX
+
+        // 取得頁面的按鈕列表
+        [HttpGet]
+        public JsonResult GetButtonsByFuncId(string func_id)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var buttons = service.GetButtonsByFuncId(func_id);
+                return Json(new { success = true, data = buttons }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得按鈕資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 新增按鈕
+        [HttpPost]
+        public JsonResult AddButton(RFuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID))
+                    {
+                        return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                    }
+
+                    if (string.IsNullOrEmpty(model.BTNSEQ))
+                    {
+                        model.BTNSEQ = service.GetNextButtonSeq(model.FUNC_ID);
+                    }
+
+                    var result = service.InsertButton(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "按鈕新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "按鈕新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增按鈕發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 修改按鈕
+        [HttpPost]
+        public JsonResult UpdateButton(RFuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetLimitService();
+                    if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID, model.BTNSEQ))
+                    {
+                        return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                    }
+
+                    var result = service.UpdateButton(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "按鈕修改成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "按鈕修改失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改按鈕發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 刪除按鈕
+        [HttpPost]
+        public JsonResult DeleteButton(string func_id, string btnseq)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var result = service.DeleteButton(func_id, btnseq);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "按鈕刪除成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "按鈕刪除失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "刪除按鈕發生錯誤：" + ex.Message });
+            }
+        }
+
+        #endregion
+
+        #region 權限設定相關 AJAX
+
+        // 取得群組權限設定
+        [HttpGet]
+        public JsonResult GetGroupPermissions(string apg_no)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var permissions = service.GetPermissionSettings(apg_no);
+                return Json(new { success = true, data = permissions }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得權限設定發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 批量設定權限
+        [HttpPost]
+        public JsonResult BatchSetPermissions(string apg_no, string[] funcIds, string[] buttonPermissions)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var funcIdList = funcIds?.ToList() ?? new List<string>();
+                var buttonPermissionList = buttonPermissions?.ToList() ?? new List<string>();
+
+                var result = service.BatchSetPermissions(apg_no, funcIdList, buttonPermissionList, Emp_NO);
+                if (result == "success")
+                {
+                    return Json(new { success = true, message = "權限設定成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "權限設定失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "批量設定權限發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 取得顯示的頁面 (用於權限設定)
+        [HttpGet]
+        public JsonResult GetVisibleFunctions()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var functions = service.GetVisibleFunctions();
+                var result = functions.Select(f => new
+                {
+                    value = f.FUNC_ID,
+                    text = $"{f.FUNC_ID} - {f.FUNC_NA}",
+                    FUNC_ID = f.FUNC_ID,
+                    FUNC_NA = f.FUNC_NA,
+                    PARENT_ID = f.PARENT_ID,
+                    SORT_NO = f.SORT_NO,
+                    IS_SHOW = f.IS_SHOW
+                }).ToList();
+                return Json(new { success = true, data = result }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = "取得頁面資料發生錯誤：" + ex.Message
+                }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 檢查頁面是否為父級頁面 (有子頁面)
+        [HttpGet]
+        public JsonResult IsParentPage(string func_id)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var allFunctions = service.GetAllFunctions();
+                var hasChildren = allFunctions.Any(f => f.PARENT_ID == func_id);
+                return Json(new { success = true, isParent = hasChildren }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "檢查頁面類型發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        #endregion
+
+        #region 下拉式選單資料
+
+        // 取得群組下拉選單
+        [HttpGet]
+        public JsonResult GetGroupSelectList()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var groups = service.GetAllGroups();
+                var selectList = groups.Select(g => new { value = g.APG_NO, text = $"{g.APG_NO} - {g.APG_NAME}" }).ToList();
+                return Json(selectList, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得群組清單發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 取得頁面下拉選單
+        [HttpGet]
+        public JsonResult GetFunctionSelectList()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var functions = service.GetAllFunctions();
+                var selectList = functions.Select(f => new { value = f.FUNC_ID, text = $"{f.FUNC_ID} - {f.FUNC_NA}" }).ToList();
+                return Json(selectList, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得頁面清單發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 取得父頁面下拉選單
+        [HttpGet]
+        public JsonResult GetParentPageSelectList()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var functions = service.GetAllFunctions()
+                    .Where(f => f.SYS_ID == CurrentSystemId && (f.PARENT_ID == "HOME" || string.IsNullOrEmpty(f.PARENT_ID)))
+                    .ToList();
+
+                var selectList = new List<object>();
+                selectList.Add(new { value = "", text = "-- 請選擇 --" });
+                selectList.Add(new { value = "HOME", text = "HOME - 首頁" });
+
+                foreach (var func in functions.Where(f => f.FUNC_ID != "HOME"))
+                {
+                    selectList.Add(new { value = func.FUNC_ID, text = $"{func.FUNC_ID} - {func.FUNC_NA}" });
+                }
+
+                return Json(selectList, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得父頁面清單發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        #endregion
+
+        #region 輔助方法(取得下一個號碼)
+
+        // 取得下一個群組編號
+        [HttpGet]
+        public JsonResult GetNextGroupNo()
+        {
+            try
+            {
+                var service = GetLimitService();
+                var nextNo = service.GetNextGroupNo();
+                return Json(new { success = true, data = nextNo }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得群組編號發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 取得下一個按鈕序號
+        [HttpGet]
+        public JsonResult GetNextButtonSeq(string func_id)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var nextSeq = service.GetNextButtonSeq(func_id);
+                return Json(new { success = true, data = nextSeq }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得按鈕序號發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        #endregion
+
+        #region 排序相關
+
+        // 移動單個項目
+        [HttpPost]
+        public JsonResult MoveItem(string funcId, string direction, string parentId)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var result = service.MoveItem(funcId, direction, parentId, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "排序調整成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "排序調整失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "排序調整發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 移動整組
+        [HttpPost]
+        public JsonResult MoveGroup(string funcId, string direction)
+        {
+            try
+            {
+                var service = GetLimitService();
+                var result = service.MoveGroup(funcId, direction, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "群組排序調整成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "群組排序調整失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "群組排序調整發生錯誤：" + ex.Message });
+            }
+        }
+
+        #endregion
+    }
+
+}
