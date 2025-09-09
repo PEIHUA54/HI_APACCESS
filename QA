@@ -1,1 +1,377 @@
- 
+ using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+/// <summary>
+/// 請求參數類別
+/// </summary>
+public class GetFunctionAndAccessUrlRequest
+{
+/// <summary>
+/// 系統ID
+/// </summary>
+public string sys_id { get; set; }
+
+```
+    /// <summary>
+    /// 類型：1=頁面&按鈕設定，2=權限設定
+    /// </summary>
+    public string type { get; set; }
+
+    /// <summary>
+    /// 環境：TEST=測試，PROD=正式
+    /// </summary>
+    public string environment { get; set; }
+}
+
+/// <summary>
+/// 回應參數類別
+/// </summary>
+public class GetFunctionAndAccessUrlResponse
+{
+    /// <summary>
+    /// 結果代碼
+    /// </summary>
+    public string code { get; set; }
+
+    /// <summary>
+    /// 回傳訊息
+    /// </summary>
+    public string message { get; set; }
+
+    /// <summary>
+    /// 功能連結URL
+    /// </summary>
+    public string url { get; set; }
+}
+
+/// <summary>
+/// 主要功能類別
+/// </summary>
+public class AccessUrlService
+{
+    // 環境設定字典
+    private readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+    {
+        { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" }
+    };
+
+    // 類型設定字典
+    private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+    {
+        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
+        { "2", "TokenEntry_PERM" }   // 權限設定
+    };
+
+    // 授權的系統ID列表（可依實際需求調整）
+    private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
+    {
+        "HI_POS", "HI_CRM", "HI_ERP", "HI_WMS"
+    };
+
+    /// <summary>
+    /// 取得頁面跟權限設定功能連結
+    /// </summary>
+    /// <param name="request">請求參數</param>
+    /// <returns>回應結果</returns>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        try
+        {
+            // 參數驗證
+            var validationResult = ValidateRequest(request);
+            if (validationResult.code != "0000")
+            {
+                return validationResult;
+            }
+
+            // 檢查系統權限
+            if (!AuthorizedSystems.Contains(request.sys_id))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "0001",
+                    message = "查無權限",
+                    url = ""
+                };
+            }
+
+            // 產生 Token（這裡使用簡單的範例，實際應用建議使用更安全的方式）
+            string token = GenerateToken(request.sys_id, request.type, request.environment);
+
+            // 建立URL
+            string baseUrl = EnvironmentUrls[request.environment];
+            string action = TypeActions[request.type];
+            string url = $"{baseUrl}/Home/{action}?token={token}";
+
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "0000",
+                message = "成功",
+                url = url
+            };
+        }
+        catch (Exception ex)
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "9999",
+                message = $"系統錯誤：{ex.Message}",
+                url = ""
+            };
+        }
+    }
+
+    /// <summary>
+    /// JSON 字串版本的 GetFunctionAndAccessUrl（方便其他系統呼叫）
+    /// </summary>
+    /// <param name="requestJson">JSON 格式的請求參數</param>
+    /// <returns>JSON 格式的回應結果</returns>
+    public string GetFunctionAndAccessUrl(string requestJson)
+    {
+        try
+        {
+            var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(requestJson);
+            var response = GetFunctionAndAccessUrl(request);
+            return JsonConvert.SerializeObject(response, Formatting.Indented);
+        }
+        catch (JsonException ex)
+        {
+            var errorResponse = new GetFunctionAndAccessUrlResponse
+            {
+                code = "8888",
+                message = $"JSON 格式錯誤：{ex.Message}",
+                url = ""
+            };
+            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
+        }
+        catch (Exception ex)
+        {
+            var errorResponse = new GetFunctionAndAccessUrlResponse
+            {
+                code = "9999",
+                message = $"系統錯誤：{ex.Message}",
+                url = ""
+            };
+            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
+        }
+    }
+
+    /// <summary>
+    /// 參數驗證
+    /// </summary>
+    /// <param name="request">請求參數</param>
+    /// <returns>驗證結果</returns>
+    private GetFunctionAndAccessUrlResponse ValidateRequest(GetFunctionAndAccessUrlRequest request)
+    {
+        if (request == null)
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1001",
+                message = "請求參數不可為空",
+                url = ""
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(request.sys_id))
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1002",
+                message = "系統ID不可為空",
+                url = ""
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(request.type))
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1003",
+                message = "類型不可為空",
+                url = ""
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(request.environment))
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1004",
+                message = "環境參數不可為空",
+                url = ""
+            };
+        }
+
+        if (!TypeActions.ContainsKey(request.type))
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1005",
+                message = "類型參數錯誤，只接受 1 或 2",
+                url = ""
+            };
+        }
+
+        if (!EnvironmentUrls.ContainsKey(request.environment))
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "1006",
+                message = "環境參數錯誤，只接受 TEST 或 PROD",
+                url = ""
+            };
+        }
+
+        return new GetFunctionAndAccessUrlResponse { code = "0000" };
+    }
+
+    /// <summary>
+    /// 產生 Token（簡單範例，實際應用建議使用更安全的方式）
+    /// </summary>
+    /// <param name="sysId">系統ID</param>
+    /// <param name="type">類型</param>
+    /// <param name="environment">環境</param>
+    /// <returns>Token</returns>
+    private string GenerateToken(string sysId, string type, string environment)
+    {
+        string rawData = $"{sysId}_{type}_{environment}_{DateTime.Now:yyyyMMddHHmmss}";
+        
+        // 這裡使用簡單的編碼，實際應用建議使用 JWT 或其他安全的 Token 產生方式
+        var bytes = Encoding.UTF8.GetBytes(rawData);
+        return Convert.ToBase64String(bytes);
+    }
+}
+
+/// <summary>
+/// 主要對外公開的類別
+/// </summary>
+public class Class1
+{
+    private readonly AccessUrlService _service;
+
+    public Class1()
+    {
+        _service = new AccessUrlService();
+    }
+
+    /// <summary>
+    /// 取得頁面跟權限設定功能連結 - 物件版本
+    /// </summary>
+    /// <param name="request">請求參數</param>
+    /// <returns>回應結果</returns>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        return _service.GetFunctionAndAccessUrl(request);
+    }
+
+    /// <summary>
+    /// 取得頁面跟權限設定功能連結 - JSON 版本
+    /// </summary>
+    /// <param name="requestJson">JSON 格式的請求參數</param>
+    /// <returns>JSON 格式的回應結果</returns>
+    public string GetFunctionAndAccessUrl(string requestJson)
+    {
+        return _service.GetFunctionAndAccessUrl(requestJson);
+    }
+
+    /// <summary>
+    /// 取得頁面跟權限設定功能連結 - 參數分開版本
+    /// </summary>
+    /// <param name="sysId">系統ID</param>
+    /// <param name="type">類型</param>
+    /// <param name="environment">環境</param>
+    /// <returns>JSON 格式的回應結果</returns>
+    public string GetFunctionAndAccessUrl(string sysId, string type, string environment)
+    {
+        var request = new GetFunctionAndAccessUrlRequest
+        {
+            sys_id = sysId,
+            type = type,
+            environment = environment
+        };
+
+        return _service.GetFunctionAndAccessUrl(request);
+    }
+}
+```
+
+}
+
+我來幫您開發這個 DLL 專案。根據您的需求，我們需要建立一個可以被其他系統呼叫的 DLL，提供 `GetFunctionAndAccessUrl` 功能。以下是完整的實作步驟：​​​​​​​​​​​​​​​​
+
+現在我為您提供完整的開發步驟：
+
+## 步驟說明：
+
+### 1. **加入 NuGet 套件**
+
+首先需要安裝 Newtonsoft.Json 套件來處理 JSON：
+
+```
+Install-Package Newtonsoft.Json
+```
+
+### 2. **專案設定**
+
+確保您的專案設定：
+
+- 目標 Framework: .NET Framework 4.5 或以上
+- 輸出類型: 類別庫 (Class Library)
+
+### 3. **使用方式**
+
+其他系統可以透過以下方式呼叫：
+
+```csharp
+// 方式1：使用物件參數
+var dll = new HI_APACCESS_DLL_FRAMEWORK.Class1();
+var request = new GetFunctionAndAccessUrlRequest
+{
+    sys_id = "HI_POS",
+    type = "1", 
+    environment = "TEST"
+};
+var response = dll.GetFunctionAndAccessUrl(request);
+
+// 方式2：使用JSON字串
+string jsonRequest = @"{
+    ""sys_id"":""HI_POS"",
+    ""type"":""1"",
+    ""environment"": ""TEST""
+}";
+string jsonResponse = dll.GetFunctionAndAccessUrl(jsonRequest);
+
+// 方式3：使用個別參數
+string result = dll.GetFunctionAndAccessUrl("HI_POS", "1", "TEST");
+```
+
+### 4. **主要功能特點**
+
+- ✅ 完整的參數驗證
+- ✅ 權限檢查機制
+- ✅ 多種呼叫方式
+- ✅ 完整的錯誤代碼處理
+- ✅ JSON 格式支援
+- ✅ Token 產生機制
+
+### 5. **錯誤代碼表**
+
+- `0000`: 成功
+- `0001`: 查無權限
+- `1001-1006`: 參數驗證錯誤
+- `8888`: JSON 格式錯誤
+- `9999`: 系統錯誤
+
+### 6. **建置 DLL**
+
+建置專案後，將產生的 `.dll` 檔案提供給其他系統引用即可。
+
+這個實作提供了完整的功能，包含參數驗證、權限檢查、多種呼叫方式，並且可以輕鬆擴充和維護。您可以根據實際需求調整授權系統列表、環境設定和 Token 產生邏輯。​​​​​​​​​​​​​​​​
