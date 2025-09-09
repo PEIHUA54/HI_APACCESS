@@ -1,0 +1,43 @@
+我要開發DLL 讓其他系統可以呼叫GetFunctionAndAccessUrl  引用HI_APACCESS_DLL_FRAMEWORK
+GetFunctionAndAccessUrl (取得頁面跟權限設定功能連結)
+目的: 取得頁面按鈕設定跟權限設定的功能連結URL
+(1). Request傳送參數說明：三個參數
+1:sys_id (系統ID、string 、Y必填)	
+2:type (類型、string、Y 必填)=> 1:頁面&按鈕設定、2:權限設定
+3:environment(環境、string、Y必填) => TEST:測試、PROD:正式
+(2). Request範例：
+{
+  "sys_id":"HI_POS",
+  "type":"1",
+  "environment": "TEST"
+}
+(3)Response回覆參數說明：
+結果回覆
+url連結 、string	
+(4).Response回傳範例
+{
+  "url":  "http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token=123"
+}
+
+** 代碼說明
+(1). 結果代碼表
+0000(代碼)、成功(說明)、成功(回傳訊息)
+0001(代碼)、失敗(說明)、查無權限(回傳訊息)
+####(代碼)、  、其他錯誤訊息(回傳訊息)
+或可以增加其他的代碼說明
+
+我現在開好專案了 要寫.NET FRAMEWORK
+但是下一步要怎麼寫?
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public class Class1
+    {
+    }
+}
