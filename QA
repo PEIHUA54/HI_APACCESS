@@ -1,321 +1,157 @@
-我會根據你的需求來修改程式碼，解決以下問題：
+你的觀察很正確！問題確實出在群組權限管理的程式碼中。讓我找出問題所在：
 
-1. 拿掉父層不可以新增按鈕的條件
-1. 修正父層新增按鈕 SQL 操作失敗問題
-1. 新增頁面的 modal 增加 VIEW_H(CONTROLLER名稱)、VIEW_HB(ACTION名稱) 欄位
+## 問題分析
 
-## 1. 修改 Model
-
-首先修改 `FuncModel` 加入新欄位：
-
-```csharp
-public class FuncModel
-{
-    public string SYS_ID { get; set; }
-    public string FUNC_ID { get; set; }
-    public string FUNC_NA { get; set; }
-    public string PARENT_ID { get; set; }
-    public string SORT_NO { get; set; }
-    public string IS_SHOW { get; set; }
-    public string MEMO { get; set; }
-    public string VIEW_H { get; set; }   // 新增：CONTROLLER名稱
-    public string VIEW_HB { get; set; }  // 新增：ACTION名稱
-    public string CREATOR { get; set; }
-    public DateTime? CREATE_TIME { get; set; }
-    public string EDITOR { get; set; }
-    public DateTime? EDIT_TIME { get; set; }
-}
-```
-
-## 2. 修改 F_AP 方法區
-
-```csharp
-#region 頁面管理
-
-// 取得所有頁面 (排除系統名稱頁面)
-public List<FuncModel> GetAllFunctions()
-{
-    string sql = @"
-    SELECT [SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], 
-           [VIEW_H], [VIEW_HB], [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME],
-           CASE 
-               WHEN [PARENT_ID] IS NULL OR [PARENT_ID] = '' OR [PARENT_ID] = 'HOME' 
-               THEN CAST(ISNULL([SORT_NO], '999') AS VARCHAR(10)) + '.0'
-              ELSE (
-                    SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
-                                  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
-                    FROM [HI_TMMAIN].[dbo].[AP_FUNC] p 
-                    WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] =@SYS_ID
-                )
-           END as SortPath
-    FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
-    WHERE [SYS_ID] =  @SYS_ID  AND [FUNC_ID] !=  @SYS_ID
-    ORDER BY SortPath, [FUNC_ID]";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", _sysId)
-    };
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    return SVS_DBmanager.ConvertToList<FuncModel>(dt);
-}
-
-// 新增頁面
-public string InsertFunction(FuncModel model, string creator)
-{
-    // 如果沒有提供排序號，自動分配
-    if (string.IsNullOrEmpty(model.SORT_NO))
-    {
-        model.SORT_NO = GetNextSortNo(model.PARENT_ID);
-    }
-    string sql = @"
-    INSERT INTO [HI_TMMAIN].[dbo].[AP_FUNC] 
-    ([SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], [VIEW_H], [VIEW_HB], [CREATOR], [CREATE_TIME])
-    VALUES (@SYS_ID, @FUNC_ID, @FUNC_NA, @PARENT_ID, @SORT_NO, @IS_SHOW, @MEMO, @VIEW_H, @VIEW_HB, @CREATOR, GETDATE())";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", _sysId),
-        new SqlParameter("@FUNC_ID", model.FUNC_ID),
-        new SqlParameter("@FUNC_NA", model.FUNC_NA),
-        new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
-        new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
-        new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
-        new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
-        new SqlParameter("@VIEW_H", model.VIEW_H ?? (object)DBNull.Value),
-        new SqlParameter("@VIEW_HB", model.VIEW_HB ?? (object)DBNull.Value),
-        new SqlParameter("@CREATOR", creator)
-    };
-
-    return SVS_DBmanager.ExecuteSQL(sql, parameters);
-}
-
-// 更新頁面
-public string UpdateFunction(FuncModel model, string originalFuncId, string editor)
-{
-    string sql = @"
-    UPDATE [HI_TMMAIN].[dbo].[AP_FUNC] 
-    SET [FUNC_ID] = @NEW_FUNC_ID,[FUNC_NA] = @FUNC_NA, [PARENT_ID] = @PARENT_ID, [SORT_NO] = @SORT_NO, 
-        [IS_SHOW] = @IS_SHOW, [MEMO] = @MEMO, [VIEW_H] = @VIEW_H, [VIEW_HB] = @VIEW_HB, 
-        [EDITOR] = @EDITOR, [EDIT_TIME] = GETDATE()
-    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @ORIGINAL_FUNC_ID";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", _sysId),
-        new SqlParameter("@ORIGINAL_FUNC_ID", originalFuncId),
-        new SqlParameter("@NEW_FUNC_ID", model.FUNC_ID),
-        new SqlParameter("@FUNC_NA", model.FUNC_NA),
-        new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
-        new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
-        new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
-        new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
-        new SqlParameter("@VIEW_H", model.VIEW_H ?? (object)DBNull.Value),
-        new SqlParameter("@VIEW_HB", model.VIEW_HB ?? (object)DBNull.Value),
-        new SqlParameter("@EDITOR", editor)
-    };
-
-    return SVS_DBmanager.ExecuteSQL(sql, parameters);
-}
-
-#endregion
-```
-
-## 3. 修改 View 的頁面 Modal
-
-```html
-<!-- 頁面 Modal -->
-<div class="modal fade" id="pageModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="pageModalTitle">新增頁面</h5>
-                <button type="button" class="close" data-dismiss="modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="pageForm">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="funcId">頁面ID <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="funcId" required>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="sortNo">排序</label>
-                                <input type="number" class="form-control" id="sortNo"
-                                       placeholder="留空將自動分配">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="funcName">頁面名稱 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="funcName" required>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="parentId">上層ID <span class="text-danger">*</span></label>
-                                <select class="form-control" id="parentId" required>
-                                    <option value="">-- 載入中 --</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="isShow">是否顯示</label>
-                                <select class="form-control" id="isShow">
-                                    <option value="Y">是</option>
-                                    <option value="N">否</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- 新增：Controller 和 Action 欄位 -->
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="viewH">CONTROLLER名稱</label>
-                                <input type="text" class="form-control" id="viewH" 
-                                       placeholder="例：Home">
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="viewHB">ACTION名稱</label>
-                                <input type="text" class="form-control" id="viewHB" 
-                                       placeholder="例：Index">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="memo">備註</label>
-                        <textarea class="form-control" id="memo" rows="2"
-                                  placeholder="頁面說明、備註"></textarea>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" onclick="savePage()">儲存</button>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-            </div>
-        </div>
-    </div>
-</div>
-```
-
-## 4. 修改 JavaScript
+在你提供的群組權限管理程式碼中，`updateButtonListHierarchical()` 函數有這段邏輯：
 
 ```javascript
-// 修改 selectPage 函數，移除父層不能新增按鈕的限制
-function selectPage(funcId, funcName, isChild) {
-    currentSelectedPage = funcId;
-    renderPageListHierarchical(); // 重新渲染以顯示選中狀態
+// 只顯示該父頁面下的所有子頁面
+children.forEach(childFunc => {
+    const funcId = getFuncId(childFunc);
+    // 只處理子頁面的按鈕
+    loadButtonsForPage(getFuncId(childFunc));
+});
+```
 
-    // 移除父層頁面的限制，所有頁面都可以新增按鈕
-    $('#buttonSection').removeClass('hide-add-button');
-    loadButtons(funcId, funcName);
-    $('#addButtonBtn').prop('disabled', false);
-}
+這段程式碼只會載入和顯示**子頁面**的按鈕，完全忽略了父頁面本身可能也有按鈕。
 
-// 修改 editPage 函數，加入新欄位
-function editPage(funcId) {
-    isPageEditMode = true;
-    originalFuncId = funcId; // 儲存原始ID
-    $('#pageModalTitle').text('修改頁面');
+## 解決方案
 
-    const page = allPages.find(p => p.FUNC_ID === funcId);
-    if (page) {
-        $('#funcId').val(page.FUNC_ID).prop('readonly', false);
-        $('#funcName').val(page.FUNC_NA);
-        $('#sortNo').val(page.SORT_NO || '');
-        $('#isShow').val(page.IS_SHOW || 'Y');
-        $('#memo').val(page.MEMO || '');
-        $('#viewH').val(page.VIEW_H || '');     // 新增
-        $('#viewHB').val(page.VIEW_HB || '');   // 新增
-        
-        // 載入父頁面選項
-        loadParentPageOptions();
-        setTimeout(function () {
-            $('#parentId').val(page.PARENT_ID || '');
-        }, 300);
-        $('#pageModal').modal('show');
-    }
-}
+修改 `updateButtonListHierarchical()` 函數，讓它同時顯示父頁面和子頁面的按鈕：
 
-// 修改 savePage 函數，加入新欄位
-function savePage() {
-    const formData = {
-        FUNC_ID: $('#funcId').val(),
-        FUNC_NA: $('#funcName').val(),
-        PARENT_ID: $('#parentId').val() || null,
-        SORT_NO: $('#sortNo').val() || null,
-        IS_SHOW: $('#isShow').val(),
-        MEMO: $('#memo').val() || null,
-        VIEW_H: $('#viewH').val() || null,      // 新增
-        VIEW_HB: $('#viewHB').val() || null     // 新增
-    };
-
-    if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
-        alert('請輸入頁面ID和頁面名稱');
+```javascript
+// 階層式更新按鈕列表
+function updateButtonListHierarchical() {
+    if (allFunctions.length === 0) {
+        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
         return;
     }
 
-    // 新增頁面時檢查上層ID是否為必填
-    if (!isPageEditMode && !formData.PARENT_ID) {
-        alert('請選擇上層ID');
-        return;
-    }
+    // 建立父子關係映射
+    const parentChildMap = {};
+    const parentPages = [];
 
-    let url, postData;
-    if (isPageEditMode) {
-        url = '@Url.Action("UpdateFunction", "AP")';
-        postData = Object.assign(formData, { originalFuncId: originalFuncId });
-    } else {
-        url = '@Url.Action("AddFunction", "AP")';
-        postData = formData;
-    }
+    // 分離父頁面和子頁面
+    allFunctions.forEach(func => {
+        const funcId = getFuncId(func);
+        const parentId = getParentId(func);
 
-    $.post(url, postData, function (response) {
-        if (response.success) {
-            alert(response.message);
-            $('#pageModal').modal('hide');
-            loadPages();
-            if (isPageEditMode) {
-                setTimeout(function () {
-                    currentSelectedPage = formData.FUNC_ID;
-                    renderPageListHierarchical();
-                }, 500);
+        if (!parentId || parentId === '' || parentId === 'HOME') {
+            // 父頁面
+            parentPages.push(func);
+            if (!parentChildMap[funcId]) {
+                parentChildMap[funcId] = [];
             }
         } else {
-            alert(response.message);
+            // 子頁面 - 只要顯示的子頁面
+            if (func.IS_SHOW === 'Y') {
+                if (!parentChildMap[parentId]) {
+                    parentChildMap[parentId] = [];
+                }
+                parentChildMap[parentId].push(func);
+            }
         }
+    });
+
+    // 父頁面按SORT_NO排序
+    parentPages.sort((a, b) => {
+        const aSort = parseInt(a.SORT_NO) || 999;
+        const bSort = parseInt(b.SORT_NO) || 999;
+        return aSort - bSort;
+    });
+
+    // 每個父頁面的子頁面按SORT_NO排序
+    Object.keys(parentChildMap).forEach(parentId => {
+        parentChildMap[parentId].sort((a, b) => {
+            const aSort = parseInt(a.SORT_NO) || 999;
+            const bSort = parseInt(b.SORT_NO) || 999;
+            return aSort - bSort;
+        });
+    });
+
+    let html = '';
+
+    // 按父頁面順序顯示
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const parentName = getFuncName(parentFunc);
+        const children = parentChildMap[parentId] || [];
+
+        // 父頁面標題
+        html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+        </div>`;
+
+        // 先顯示父頁面本身的按鈕（如果有的話）
+        html += renderPageButtonSection(parentFunc, false);
+
+        // 再顯示該父頁面下的所有子頁面
+        children.forEach(childFunc => {
+            html += renderPageButtonSection(childFunc, true);
+        });
+    });
+
+    $('#buttonList').html(html);
+
+    // 載入每個頁面的按鈕
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const children = parentChildMap[parentId] || [];
+        
+        // 載入父頁面的按鈕
+        loadButtonsForPage(parentId);
+        
+        // 載入子頁面的按鈕
+        children.forEach(childFunc => {
+            loadButtonsForPage(getFuncId(childFunc));
+        });
     });
 }
 
-// 修改 openPageModal 函數，清空新欄位
-function openPageModal() {
-    isPageEditMode = false;
-    $('#pageModalTitle').text('新增頁面');
-    $('#pageForm')[0].reset();
-    $('#isShow').val('Y');
-    $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
-    $('#viewH').val('');      // 清空新欄位
-    $('#viewHB').val('');     // 清空新欄位
-    
-    // 載入父頁面選項
-    loadParentPageOptions();
-    $('#pageModal').modal('show');
+// 渲染頁面按鈕區塊（確保這個函數存在）
+function renderPageButtonSection(func, isChild) {
+    const funcId = getFuncId(func);
+    const funcName = getFuncName(func);
+    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+    // 頁面區塊樣式
+    const sectionStyle = hasPagePermission
+        ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa;' + (isChild ? ' margin-left: 20px;' : ' margin-left: 10px;')
+        : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6;' + (isChild ? ' margin-left: 20px;' : ' margin-left: 10px;');
+
+    // 區分父頁面和子頁面的圖示
+    const pageIcon = isChild ? 'fas fa-file-alt' : 'fas fa-folder-open';
+    const pageType = isChild ? '子頁面' : '父頁面';
+
+    return `
+        <div class="page-section ${isChild ? 'child-section' : 'parent-section'}" id="page-section-${funcId}" style="${sectionStyle}">
+            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                <span>
+                    <i class="${pageIcon}"></i> ${funcName} <small class="text-muted">[${pageType}]</small>
+                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                </span>
+                <div style="display: flex; gap: 5px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>
+        </div>`;
 }
 ```
 
-## 主要修改重點：
+## 主要修改點：
 
-1. **移除父層限制**：在 `selectPage` 函數中移除了父層頁面不能新增按鈕的條件
-1. **修正 SQL**：在 `InsertFunction` 和 `UpdateFunction` 中加入 `VIEW_H` 和 `VIEW_HB` 欄位
-1. **新增欄位**：在頁面 Modal 中加入 Controller 和 Action 名稱的輸入欄位
-1. **JavaScript 對應**：修改相關 JavaScript 函數處理新欄位
+1. **同時載入父頁面和子頁面按鈕**：在最後的 `parentPages.forEach` 中，先載入父頁面的按鈕，再載入子頁面的按鈕
+1. **顯示區分**：在 `renderPageButtonSection` 中加入 `[父頁面]` 或 `[子頁面]` 標示
+1. **樣式調整**：父頁面和子頁面有不同的縮排和圖示
 
-這樣修改後，父層頁面也可以新增按鈕，且新增/修改頁面時會包含 Controller 和 Action 名稱欄位。​​​​​​​​​​​​​​​​
+這樣修改後，權限設定頁面就會同時顯示父頁面和子頁面的按鈕了。​​​​​​​​​​​​​​​​
