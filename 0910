@@ -1,0 +1,69 @@
+using POSFILE_APPLY.Factory;
+using POSFILE_APPLY.Service;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Claims;
+using System.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Text;
+using System.Web;
+using System.Web.Mvc;
+using X.PagedList;
+using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
+using HI_APACCESS_DLL_FRAMEWORK; // 加入 DLL 參考
+
+namespace POSFILE_APPLY.Controllers
+{
+    public class APController : POSFILE_APPLYBaseController
+    {
+        // 權限管理導向 Action
+        public ActionResult AP_ACCESS_SYS()
+        {
+            try
+            {
+                string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);  //HI_POS、HI_POSIMG、POS_LOG
+
+#if DEBUG
+                string url = $"http://localhost:53088/Home/TokenEntry?token={token}";
+#else
+                string url = $"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry?token={token}";
+#endif
+                string script = $@"
+                    <script>
+                       window.open('{url}', '_blank');                       
+                       window.location.href='{Url.Action("Main","Home")}';
+                    </script>";
+                return Content(script, "text/html");
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
+        }
+
+        // 系統頁面定義管理導向 Action
+        public ActionResult AP_ACCESS_SYS_FUNC()
+        {
+            try
+            {
+                string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO); //HI_POS、HI_POSIMG、POS_LOG
+# if DEBUG
+                string url = $"http://localhost:53088/Home/TokenEntry_FUNC?token={token}";
+#else
+                 string url = $"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token={token}";
+#endif
+                string script = $@"
+                    <script>
+                       window.open('{url}', '_blank');                       
+                       window.location.href='{Url.Action("Main", "Home")}';
+                    </script>";
+                return Content(script, "text/html");
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
+        }
+    }
+}
