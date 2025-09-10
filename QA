@@ -1,5 +1,1328 @@
-按鈕定義管理
-父層也可以有自己的btn 因為有些頁面只有父層那頁
-1.拿掉父層不可以新增按鈕的條件
-2.父層新增按鈕 sql 操作失敗 無法insert
-3.新增頁面的modal 需要增加 VIEW_H(CONTROLLER名稱)、VIEW_HB(ACTION名稱) 欄位，修改也是，跟新增按鈕一樣
+CONTROLLER:
+    #region 頁面相關 AJAX
+
+    // 取得所有頁面
+    [HttpGet]
+    public JsonResult GetAllFunctions()
+    {
+        try
+        {
+            var service = GetAPService();
+            var functions = service.GetAllFunctions();
+            return Json(new { success = true, data = functions }, JsonRequestBehavior.AllowGet);
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "取得頁面資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+        }
+    }
+
+    // 新增頁面
+    [HttpPost]
+    public JsonResult AddFunction(FuncModel model)
+    {
+        try
+        {
+            model.SYS_ID = CurrentSystemId;
+
+            if (ModelState.IsValid)
+            {
+                var service = GetAPService();
+                var result = service.InsertFunction(model, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "頁面新增成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "頁面新增失敗：" + result });
+                }
+            }
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "新增頁面發生錯誤：" + ex.Message });
+        }
+    }
+
+    // 修改頁面
+    [HttpPost]
+    public JsonResult UpdateFunction(FuncModel model, string originalFuncId)
+    {
+        try
+        {
+            model.SYS_ID = CurrentSystemId;
+
+            if (ModelState.IsValid)
+            {
+                var service = GetAPService();
+                var result = service.UpdateFunction(model, originalFuncId, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "頁面修改成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "頁面修改失敗：" + result });
+                }
+            }
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "修改頁面發生錯誤：" + ex.Message });
+        }
+    }
+
+    // 刪除頁面
+    [HttpPost]
+    public JsonResult DeleteFunction(string func_id)
+    {
+        try
+        {
+            var service = GetAPService();
+            if (!service.CanDeleteFunction(func_id))
+            {
+                return Json(new { success = false, message = "該頁面尚有權限設定，無法刪除" });
+            }
+
+            var result = service.DeleteFunction(func_id);
+            if (result == null || !result.Contains("fail"))
+            {
+                return Json(new { success = true, message = "頁面刪除成功" });
+            }
+            else
+            {
+                return Json(new { success = false, message = "頁面刪除失敗：" + result });
+            }
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
+        }
+    }
+
+    #endregion
+
+    #region 按鈕相關 AJAX
+
+    // 取得頁面的按鈕列表
+    [HttpGet]
+    public JsonResult GetButtonsByFuncId(string func_id)
+    {
+        try
+        {
+            var service = GetAPService();
+            var buttons = service.GetButtonsByFuncId(func_id);
+            return Json(new { success = true, data = buttons }, JsonRequestBehavior.AllowGet);
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "取得按鈕資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+        }
+    }
+
+    // 新增按鈕
+    [HttpPost]
+    public JsonResult AddButton([Bind]RFuncModel model)
+    {
+        try
+        {
+            model.SYS_ID = CurrentSystemId;
+
+            if (ModelState.IsValid)
+            {
+                var service = GetAPService();
+                if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID))
+                {
+                    return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                }
+
+                if (string.IsNullOrEmpty(model.BTNSEQ))
+                {
+                    model.BTNSEQ = service.GetNextButtonSeq(model.FUNC_ID);
+                }
+
+                var result = service.InsertButton(model, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "按鈕新增成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "按鈕新增失敗：" + result });
+                }
+            }
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "新增按鈕發生錯誤：" + ex.Message });
+        }
+    }
+
+    // 修改按鈕
+    [HttpPost]
+    public JsonResult UpdateButton([Bind] RFuncModel model)
+    {
+        try
+        {
+            model.SYS_ID = CurrentSystemId;
+
+            if (ModelState.IsValid)
+            {
+                var service = GetAPService();
+                if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID, model.BTNSEQ))
+                {
+                    return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                }
+
+                var result = service.UpdateButton(model, Emp_NO);
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "按鈕修改成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "按鈕修改失敗：" + result });
+                }
+            }
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "修改按鈕發生錯誤：" + ex.Message });
+        }
+    }
+
+    // 刪除按鈕
+    [HttpPost]
+    public JsonResult DeleteButton(string func_id, string btnseq)
+    {
+        try
+        {
+            var service = GetAPService();
+            var result = service.DeleteButton(func_id, btnseq);
+            if (result == null || !result.Contains("fail"))
+            {
+                return Json(new { success = true, message = "按鈕刪除成功" });
+            }
+            else
+            {
+                return Json(new { success = false, message = "按鈕刪除失敗：" + result });
+            }
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, message = "刪除按鈕發生錯誤：" + ex.Message });
+        }
+    }
+
+
+    // 檢查按鈕ID是否存在
+    [HttpGet]
+    public JsonResult CheckButtonIdExists(string func_id, string btnid, string btnseq = "")
+    {
+        try
+        {
+            var service = GetAPService();
+            bool exists = service.IsButtonIdExists(func_id, btnid, btnseq);
+            return Json(new { exists = exists }, JsonRequestBehavior.AllowGet);
+        }
+        catch (Exception ex)
+        {
+            return Json(new { exists = false, error = ex.Message }, JsonRequestBehavior.AllowGet);
+        }
+    }
+
+    #endregion
+
+F_AP:
+        #region 頁面管理
+
+        // 取得所有頁面 (排除系統名稱頁面)
+        public List<FuncModel> GetAllFunctions()
+        {
+            string sql = @"
+	        SELECT [SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], 
+               [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME],
+               CASE 
+                   WHEN [PARENT_ID] IS NULL OR [PARENT_ID] = '' OR [PARENT_ID] = 'HOME' 
+                   THEN CAST(ISNULL([SORT_NO], '999') AS VARCHAR(10)) + '.0'
+                  ELSE (
+						SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
+									  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
+						FROM [HI_TMMAIN].[dbo].[AP_FUNC] p 
+						WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] =@SYS_ID
+					)
+               END as SortPath
+        FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
+        WHERE [SYS_ID] =  @SYS_ID  AND [FUNC_ID] !=  @SYS_ID
+        ORDER BY SortPath, [FUNC_ID]
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", _sysId)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<FuncModel>(dt);
+        }
+
+        // 取得顯示的頁面 (用於權限設定，排除隱藏和系統名稱頁面) =>頁面權限管理
+        public List<FuncModel> GetVisibleFunctions()
+        {
+            string sql = @"
+    SELECT [SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO],
+               [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME],
+              CASE 
+                   WHEN [PARENT_ID] IS NULL OR [PARENT_ID] = '' OR [PARENT_ID] = 'HOME' 
+                   THEN CAST(ISNULL([SORT_NO], '999') AS VARCHAR(10)) + '.0'
+                  ELSE (
+						SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
+									  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
+						FROM [HI_TMMAIN].[dbo].[AP_FUNC] p 
+						WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] =@SYS_ID
+					)
+               END as SortPath
+        FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
+        WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] != @SYS_ID AND [IS_SHOW] = 'Y'
+        ORDER BY SortPath, [FUNC_ID]
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+{
+    new SqlParameter("@SYS_ID", _sysId)
+};
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<FuncModel>(dt);
+
+        }
+
+        // 新增頁面
+        public string InsertFunction(FuncModel model, string creator)
+        {
+            // 如果沒有提供排序號，自動分配
+            if (string.IsNullOrEmpty(model.SORT_NO))
+            {
+                model.SORT_NO = GetNextSortNo(model.PARENT_ID);
+            }
+            string sql = @"
+            INSERT INTO [HI_TMMAIN].[dbo].[AP_FUNC] 
+            ([SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], [CREATOR], [CREATE_TIME])
+            VALUES (@SYS_ID, @FUNC_ID, @FUNC_NA, @PARENT_ID, @SORT_NO, @IS_SHOW, @MEMO, @CREATOR, GETDATE())";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId),
+            new SqlParameter("@FUNC_ID", model.FUNC_ID),
+            new SqlParameter("@FUNC_NA", model.FUNC_NA),
+            new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
+            new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
+            new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
+            new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
+            new SqlParameter("@CREATOR", creator)
+        };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 更新頁面
+        public string UpdateFunction(FuncModel model, string originalFuncId, string editor)
+        {
+            string sql = @"
+            UPDATE [HI_TMMAIN].[dbo].[AP_FUNC] 
+            SET [FUNC_ID] = @NEW_FUNC_ID,[FUNC_NA] = @FUNC_NA, [PARENT_ID] = @PARENT_ID, [SORT_NO] = @SORT_NO, 
+                [IS_SHOW] = @IS_SHOW, [MEMO] = @MEMO, [EDITOR] = @EDITOR, [EDIT_TIME] = GETDATE()
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @ORIGINAL_FUNC_ID";
+            //TODO :這句 問題導致沒辦法修改
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId),
+            new SqlParameter("@ORIGINAL_FUNC_ID", originalFuncId),
+            new SqlParameter("@NEW_FUNC_ID", model.FUNC_ID),
+            new SqlParameter("@FUNC_NA", model.FUNC_NA),
+            new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
+            new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
+            new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
+            new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
+            new SqlParameter("@EDITOR", editor)
+        };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 刪除頁面
+        public string DeleteFunction(string func_id)
+        {
+            try
+            {
+                // 1. 刪除該頁面的所有按鈕定義
+                string deleteButtonsSQL = @"
+DELETE FROM [HI_TMMAIN].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
+
+                List<SqlParameter> buttonsParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
+
+                // 2. 刪除該頁面的按鈕權限設定
+                string deleteButtonPermSQL = @"
+    DELETE FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
+
+                List<SqlParameter> buttonPermParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
+
+                // 3. 刪除該頁面的頁面權限設定
+                string deleteFuncPermSQL = @"
+    DELETE FROM [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
+
+                List<SqlParameter> funcPermParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
+
+                // 4. 最後刪除頁面本身
+                string deleteFuncSQL = @"
+    DELETE FROM [HI_TMMAIN].[dbo].[AP_FUNC] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
+
+                List<SqlParameter> funcParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
+
+                // 依序執行刪除
+                SVS_DBmanager.ExecuteSQL(deleteButtonsSQL, buttonsParameters);
+                SVS_DBmanager.ExecuteSQL(deleteButtonPermSQL, buttonPermParameters);
+                SVS_DBmanager.ExecuteSQL(deleteFuncPermSQL, funcPermParameters);
+                return SVS_DBmanager.ExecuteSQL(deleteFuncSQL, funcParameters);
+            }
+            catch (Exception ex)
+            {
+                return "fail," + ex.Message;
+            }
+        }
+
+        #endregion
+
+        #region 按鈕管理
+
+        // 取得該頁面的所有按鈕
+        public List<RFuncModel> GetButtonsByFuncId(string func_id)
+        {
+            string sql = @"
+          SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
+[CONTROLLER], [ACTION], [LOC], [ONCLICK],
+[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+FROM [HI_TMMAIN].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+ORDER BY CAST([BTNSEQ] AS INT)
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId),
+            new SqlParameter("@FUNC_ID", func_id)
+        };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<RFuncModel>(dt);
+        }
+
+        // 取得所有按鈕
+        public List<RFuncModel> GetAllButtons()
+        {
+            string sql = @"
+           SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
+[CONTROLLER], [ACTION], [LOC], [ONCLICK],
+[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+FROM [HI_TMMAIN].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID
+ORDER BY [FUNC_ID], CAST([BTNSEQ] AS INT)
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId)
+        };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<RFuncModel>(dt);
+        }
+
+        // 新增按鈕
+        public string InsertButton(RFuncModel model, string creator)
+        {
+            string sql = @"
+          INSERT INTO [HI_TMMAIN].[dbo].[AP_RFUNC]
+            ([SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
+            [CONTROLLER], [ACTION], [LOC], [ONCLICK],
+            [CREATOR], [CREATE_TIME])
+            VALUES (@SYS_ID, @FUNC_ID, @BTNSEQ, @BTNID, @BTN_NAME,
+            @CONTROLLER, @ACTION, @LOC, @ONCLICK,
+            @CREATOR, GETDATE())";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", _sysId),
+                new SqlParameter("@FUNC_ID", model.FUNC_ID),
+                new SqlParameter("@BTNSEQ", model.BTNSEQ),
+                new SqlParameter("@BTNID", model.BTNID),
+                new SqlParameter("@BTN_NAME", model.BTN_NAME),
+                new SqlParameter("@CONTROLLER", (object)model.CONTROLLER ?? DBNull.Value),
+                new SqlParameter("@ACTION", (object)model.ACTION ?? DBNull.Value),
+                new SqlParameter("@LOC", (object)model.LOC ?? DBNull.Value),
+                new SqlParameter("@ONCLICK", (object)model.ONCLICK ?? DBNull.Value),
+                new SqlParameter("@CREATOR", creator)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 更新按鈕
+        public string UpdateButton(RFuncModel model, string editor)
+        {
+            string sql = @"
+           UPDATE [HI_TMMAIN].[dbo].[AP_RFUNC]
+            SET 
+            [BTNID] = @BTNID, [BTN_NAME] = @BTN_NAME,
+            [CONTROLLER] = @CONTROLLER, [ACTION] = @ACTION,
+            [LOC] = @LOC, [ONCLICK] = @ONCLICK,
+            [EDITOR] = @EDITOR, [EDIT_TIME] = GETDATE()
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND [BTNSEQ] = @BTNSEQ";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", _sysId),
+                new SqlParameter("@FUNC_ID", model.FUNC_ID),
+                new SqlParameter("@BTNSEQ", model.BTNSEQ),
+                new SqlParameter("@BTNID", model.BTNID),
+                new SqlParameter("@BTN_NAME", model.BTN_NAME),
+                new SqlParameter("@CONTROLLER", (object)model.CONTROLLER ?? DBNull.Value),
+                new SqlParameter("@ACTION", (object)model.ACTION ?? DBNull.Value),
+                new SqlParameter("@LOC", (object)model.LOC ?? DBNull.Value),
+                new SqlParameter("@ONCLICK", (object)model.ONCLICK ?? DBNull.Value),
+                new SqlParameter("@EDITOR", editor)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 刪除按鈕
+        public string DeleteButton(string func_id, string btnseq)
+        {
+            try
+            {
+                // 1. 先刪除該按鈕的權限設定
+                string deleteButtonPermSQL = @"
+    DELETE FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG]
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND [BTNSEQ] = @BTNSEQ";
+
+                List<SqlParameter> permParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id),
+                    new SqlParameter("@BTNSEQ", btnseq)
+                };
+
+                // 執行權限刪除
+                var permResult = SVS_DBmanager.ExecuteSQL(deleteButtonPermSQL, permParameters);
+
+                // 2. 再刪除按鈕定義
+                string deleteButtonSQL = @"
+    DELETE FROM [HI_TMMAIN].[dbo].[AP_RFUNC] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND [BTNSEQ] = @BTNSEQ";
+
+                List<SqlParameter> buttonParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id),
+                    new SqlParameter("@BTNSEQ", btnseq)
+                };
+
+                // 執行按鈕定義刪除
+                return SVS_DBmanager.ExecuteSQL(deleteButtonSQL, buttonParameters);
+            }
+            catch (Exception ex)
+            {
+                return "fail," + ex.Message;
+            }
+
+        }
+
+        #endregion
+
+VIEW:
+@using HI_APACCESS.Service;
+
+@{
+    ViewBag.Title = "系統頁面設定";
+    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
+    var emp_APG_NO = controller.APG_NO;
+    var emp_no = controller.Emp_NO;
+}
+
+<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
+
+<style>
+   我有寫好
+</style>
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">系統頁面設定 : @ViewBag.SystemId</div>
+</section>
+
+<div class="container-fluid">
+    <br />
+    <!-- 兩個管理區塊 -->
+    <div class="row">
+        <!-- 左邊：頁面管理 -->
+        <div class="col-md-6">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-file-alt"></i> 頁面定義管理 (AP_FUNC)
+                    <button type="button" class="btn btn-primary" onclick="openPageModal()">
+                        <i class="fas fa-plus"></i> 新增頁面
+                    </button>
+                </div>
+                <!-- 排序操作提示 -->
+                <div class="sort-operation-hint" id="sortHint">
+                    <i class="fas fa-info-circle"></i> 使用上移/下移按鈕調整排序，變更會立即儲存
+                </div>
+
+                <div id="pageList">
+                    <div class="no-data">
+                        <i class="fas fa-spinner fa-spin"></i><br>
+                        載入中...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右邊：按鈕管理 -->
+        <div class="col-md-6" id="buttonSection">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-mouse-pointer"></i> 按鈕定義管理 (AP_RFUNC)
+                    <button type="button" class="btn btn-success" onclick="openButtonModal()" id="addButtonBtn" disabled>
+                        <i class="fas fa-plus"></i> 新增按鈕
+                    </button>
+                </div>
+                <div id="buttonList">
+                    <div class="no-data">請先選擇左側的頁面</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 頁面 Modal -->
+<div class="modal fade" id="pageModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="pageModalTitle">新增頁面</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="pageForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="funcId">頁面ID <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="funcId" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sortNo">排序</label>
+                                <input type="number" class="form-control" id="sortNo"
+                                       placeholder="留空將自動分配">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="funcName">頁面名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="funcName" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="parentId">上層ID <span class="text-danger">*</span></label>
+                                <select class="form-control" id="parentId" required>
+                                    <option value="">-- 載入中 --</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="isShow">是否顯示</label>
+                                <select class="form-control" id="isShow">
+                                    <option value="Y">是</option>
+                                    <option value="N">否</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="memo">備註</label>
+                        <textarea class="form-control" id="memo" rows="2"
+                                  placeholder="頁面說明、備註"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="savePage()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 按鈕 Modal -->
+<div class="modal fade" id="buttonModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="buttonModalTitle">新增按鈕</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="buttonForm">
+                    <input type="hidden" id="buttonFuncId">
+                    <input type="hidden" id="buttonBtnSeq">
+
+                    <div class="alert alert-info">
+                        <small>
+                            <i class="fas fa-info-circle"></i>
+                            頁面 : <strong id="selectedPageName">-</strong>
+                        </small>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="btnId">按鈕ID  <span class="text-danger">*</span> </label>
+                                <input type="text" class="form-control" id="btnId" required
+                                       placeholder="例：btn_insert">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="btnSeqDisplay">按鈕序號</label>
+                                <input type="text" class="form-control" id="btnSeqDisplay" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="btnName">按鈕名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="btnName" required
+                               placeholder="例：新增">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="controller">按鈕CONTROLLER</label>
+                                <input type="text" class="form-control" id="controller">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="action">按鈕ACTION</label>
+                                <input type="text" class="form-control" id="action">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="loc">按鈕位置</label>
+                                <input type="text" class="form-control" id="loc">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="onclick">CLICK觸發事件</label>
+                                <textarea class="form-control" id="onclick" row="3"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveButton()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+@section Scripts {
+    <script>
+        let currentSelectedPage = '';
+        let isPageEditMode = false;
+        let isButtonEditMode = false;
+        let originalFuncId = '';
+        let allPages = [];
+
+        $(document).ready(function () {
+            loadPages();
+        });
+
+        // 載入所有頁面
+        function loadPages() {
+            $('#pageList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+            $.get('@Url.Action("GetAllFunctions", "AP")', function (response) {
+                if (response.success) {
+                    allPages = response.data;
+                    renderPageListHierarchical();
+                } else {
+                    $('#pageList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 載入父頁面下拉選單
+        function loadParentPageOptions() {
+            $.get('@Url.Action("GetParentPageSelectList", "AP")', function (response) {
+                let options = '';
+
+
+                if (Array.isArray(response)) {
+                    response.forEach(function (item) {
+                        options += `<option value="${item.value}">${item.text}</option>`;
+                    });
+                } else {
+                    console.log('父頁面資料格式錯誤:', response);
+                    options = '<option value="">-- 載入失敗 --</option>';
+                }
+
+                $('#parentId').html(options);
+                // 新增頁面時預設選擇 HOME
+                if (!isPageEditMode) {
+                    $('#parentId').val('HOME');
+                }
+            }).fail(function () {
+                $('#parentId').html('<option value="">-- 載入失敗 --</option>');
+            });
+        }
+
+        // 階層式渲染頁面列表
+        function renderPageListHierarchical() {
+            let html = '';
+
+
+            if (allPages.length === 0) {
+                html = '<div class="no-data">尚未建立任何頁面<br><button type="button" class="btn btn-primary btn-sm mt-2" onclick="openPageModal()">新增第一個頁面</button></div>';
+            } else {
+                // 顯示操作提示
+                $('#sortHint').show();
+
+                // 建立所有 FUNC_ID 的集合，用於判斷父子關係
+                const allFuncIds = new Set(allPages.map(p => p.FUNC_ID));
+
+                // 分離父頁面和子頁面，並按排序號排序
+                const parentPages = allPages.filter(p =>
+                    !p.PARENT_ID ||
+                    p.PARENT_ID === '' ||
+                    !allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                const childPages = allPages.filter(p =>
+                    p.PARENT_ID &&
+                    p.PARENT_ID !== '' &&
+                    allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                // 先顯示沒有父級的頁面
+                parentPages.forEach(function (parentPage, parentIndex) {
+                    html += renderPageItem(parentPage, false, parentIndex, parentPages.length);
+
+                    // 顯示其子頁面
+                    const children = childPages.filter(c => c.PARENT_ID === parentPage.FUNC_ID);
+                    children.forEach(function (childPage, childIndex) {
+                        html += renderPageItem(childPage, true, childIndex, children.length, parentPage.FUNC_ID);
+                    });
+                });
+            }
+
+            $('#pageList').html(html);
+        }
+
+        // 渲染單個頁面項目
+        function renderPageItem(page, isChild, index, totalCount, parentId = null) {
+            const isSelected = page.FUNC_ID === currentSelectedPage;
+            const selectedClass = isSelected ? 'selected' : '';
+            const hierarchyClass = isChild ? 'child-page-item' : 'parent-page-item';
+
+            // 檢查是否為隱藏頁面
+            const isHidden = page.IS_SHOW === 'N';
+            const hiddenClass = isHidden ? 'hidden-page' : '';
+
+            const showBadge = page.IS_SHOW === 'Y' ?
+                '<span class="badge badge-success badge-sm">顯示</span>' :
+                '<span class="badge badge-secondary badge-sm">隱藏</span>';
+
+            // 計算顯示的排序號
+            let displaySortNo = page.SORT_NO || 'N/A';
+            if (isChild && parentId) {
+                const parentPage = allPages.find(p => p.FUNC_ID === parentId);
+                const parentSort = parentPage ? (parentPage.SORT_NO || '1') : '1';
+                const childSort = page.SORT_NO || '1';
+                displaySortNo = `${parentSort}-${childSort}`;
+            }
+
+            // 排序控制按鈕 - 隱藏頁面不顯示排序箭頭
+            let sortControls = '';
+            if (!isHidden) {
+                if (isChild) {
+                    // 子頁面排序控制
+                    sortControls = `
+                <div class="sort-controls">
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'up', '${parentId}')"
+                            ${index === 0 ? 'disabled' : ''} title="上移">
+                        <i class="fas fa-chevron-up"></i>
+                    </button>
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'down', '${parentId}')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="下移">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>`;
+                } else {
+                    // 父頁面排序控制
+                    sortControls = `
+                <div class="group-sort-controls">
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'up')"
+                            ${index === 0 ? 'disabled' : ''} title="整組上移">
+                        <i class="fas fa-angle-double-up"></i> 組上移
+                    </button>
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'down')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="整組下移">
+                        <i class="fas fa-angle-double-down"></i> 組下移
+                    </button>
+                </div>`;
+                }
+            }
+
+            return `
+    <div class="page-item ${selectedClass} ${hierarchyClass} ${hiddenClass}" onclick="selectPage('${page.FUNC_ID}', '${page.FUNC_NA}', ${isChild})">
+        <div class="item-header">
+            <div class="item-title">${page.FUNC_NA}</div>
+            <div class="item-actions">
+                ${showBadge}
+                <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="event.stopPropagation(); editPage('${page.FUNC_ID}')">
+                    <i class="fas fa-edit"></i>修改
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="event.stopPropagation(); deletePage('${page.FUNC_ID}', '${page.FUNC_NA}')">
+                    <i class="fas fa-trash"></i>刪除
+                </button>
+            </div>
+        </div>
+        <div class="item-info">
+            <div>
+                頁面ID: ${page.FUNC_ID}
+                ${page.PARENT_ID ? ' | 上層: ' + page.PARENT_ID : ''}
+                ${page.MEMO ? '<br>備註: ' + page.MEMO : ''}
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span class="sort-info">排序: ${displaySortNo}</span>
+                ${sortControls}
+            </div>
+        </div>
+    </div>`;
+        }
+
+        // 移動單個項目
+        function moveItem(funcId, direction, parentId) {
+            $.post('@Url.Action("MoveItem", "AP")', {
+                funcId: funcId,
+                direction: direction,
+                parentId: parentId
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                            }
+                        }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 移動整組
+        function moveGroup(funcId, direction) {
+            $.post('@Url.Action("MoveGroup", "AP")', {
+                funcId: funcId,
+                direction: direction
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                            }
+                        }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 選擇頁面
+        function selectPage(funcId, funcName, isChild) {
+            currentSelectedPage = funcId;
+            renderPageListHierarchical(); // 重新渲染以顯示選中狀態
+
+            // 如果選擇的是父層頁面，隱藏新增按鈕並顯示提示
+            if (!isChild && allPages.some(p => p.PARENT_ID === funcId)) {
+                $('#buttonSection').addClass('hide-add-button');
+                $('#buttonList').html('<div class="no-data">父層頁面無須定義按鈕<br><small class="text-muted">請選擇子頁面來管理按鈕</small></div>');
+            } else {
+                $('#buttonSection').removeClass('hide-add-button');
+                loadButtons(funcId, funcName);
+                $('#addButtonBtn').prop('disabled', false);
+            }
+        }
+
+        // 載入按鈕
+        function loadButtons(funcId, funcName) {
+            $('#buttonList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
+                if (response.success) {
+                    renderButtonList(response.data, funcName);
+                } else {
+                    $('#buttonList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 渲染按鈕列表
+        function renderButtonList(buttons, funcName) {
+            let html = '';
+
+            if (buttons.length === 0) {
+                html = `
+            <div class="no-data">
+                頁面 "${funcName}" 尚未定義按鈕
+                <br>
+            </div>`;
+            } else {
+                buttons.forEach(function (btn) {
+                    html += `
+                <div class="button-item">
+                    <div class="item-header">
+                        <div class="item-title">${btn.BTN_NAME}</div>
+                        <div class="item-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="editButton('${btn.FUNC_ID}', '${btn.BTNSEQ}')">
+                                <i class="fas fa-edit"></i>修改
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="deleteButton('${btn.FUNC_ID}', '${btn.BTNSEQ}', '${btn.BTN_NAME}')">
+                                <i class="fas fa-trash"></i>刪除
+                            </button>
+                        </div>
+                    </div>
+                    <div class="item-info">
+                        <div class="button-details">
+                            <span class="detail-item">按鈕ID: ${btn.BTNID}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">序號: ${btn.BTNSEQ}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Controller: ${btn.CONTROLLER || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Action: ${btn.ACTION || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">LOC: ${btn.LOC || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">OnClick: ${btn.ONCLICK || ' '}</span>
+                        </div>
+                  </div>
+                </div>`;
+                });
+            }
+
+            $('#buttonList').html(html);
+        }
+
+        // 頁面管理函數
+        function openPageModal() {
+            isPageEditMode = false;
+            $('#pageModalTitle').text('新增頁面');
+            $('#pageForm')[0].reset();
+            $('#isShow').val('Y');
+            $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
+            // 載入父頁面選項
+            loadParentPageOptions();
+            $('#pageModal').modal('show');
+        }
+
+        function editPage(funcId) {
+            isPageEditMode = true;
+            originalFuncId = funcId; // 儲存原始ID
+            $('#pageModalTitle').text('修改頁面');
+
+
+            const page = allPages.find(p => p.FUNC_ID === funcId);
+            if (page) {
+                $('#funcId').val(page.FUNC_ID).prop('readonly', false);
+                $('#funcName').val(page.FUNC_NA);
+                $('#sortNo').val(page.SORT_NO || '');
+                $('#isShow').val(page.IS_SHOW || 'Y');
+                $('#memo').val(page.MEMO || '');
+                // 載入父頁面選項
+                loadParentPageOptions();
+                setTimeout(function () {
+                    $('#parentId').val(page.PARENT_ID || '');
+                }, 300);
+                $('#pageModal').modal('show');
+            }
+        }
+
+        function savePage() {
+            const formData = {
+                FUNC_ID: $('#funcId').val(),
+                FUNC_NA: $('#funcName').val(),
+                PARENT_ID: $('#parentId').val() || null,
+                SORT_NO: $('#sortNo').val() || null,
+                IS_SHOW: $('#isShow').val(),
+                MEMO: $('#memo').val() || null
+            };
+
+
+            if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
+                alert('請輸入頁面ID和頁面名稱');
+                return;
+            }
+
+            // 新增頁面時檢查上層ID是否為必填
+            if (!isPageEditMode && !formData.PARENT_ID) {
+                alert('請選擇上層ID');
+                return;
+            }
+
+
+            let url, postData;
+            if (isPageEditMode) {
+                url = '@Url.Action("UpdateFunction", "AP")';
+                postData = Object.assign(formData, { originalFuncId: originalFuncId });
+            } else {
+                url = '@Url.Action("AddFunction", "AP")';
+                postData = formData;
+            }
+
+
+            $.post(url, postData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#pageModal').modal('hide');
+                    loadPages();
+                    if (isPageEditMode) {
+                        setTimeout(function () {
+                            currentSelectedPage = formData.FUNC_ID;
+                            renderPageListHierarchical();
+                        }, 500);
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deletePage(funcId, funcName) {
+            if (confirm(`確定要刪除頁面 "${funcName}" 嗎？\n注意：這將同時刪除該頁面的所有按鈕定義！`)) {
+                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+                        // 如果刪除的是當前選中的頁面，清空選擇
+                        if (currentSelectedPage === funcId) {
+                            currentSelectedPage = '';
+                            $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
+                            $('#addButtonBtn').prop('disabled', true);
+                            $('#buttonSection').removeClass('hide-add-button');
+                        }
+
+                        // 自動重新載入頁面列表
+                        loadPages();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 按鈕管理函數
+        function openButtonModal() {
+            if (!currentSelectedPage) return;
+
+
+            isButtonEditMode = false;
+            $('#buttonModalTitle').text('新增按鈕');
+            $('#buttonForm')[0].reset();
+            $('#buttonFuncId').val(currentSelectedPage);
+
+            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+            $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : currentSelectedPage);
+
+            // 取得下一個按鈕序號
+            $.get('@Url.Action("GetNextButtonSeq", "AP")', { func_id: currentSelectedPage }, function (response) {
+                if (response.success) {
+                    $('#buttonBtnSeq').val(response.data);
+                    $('#btnSeqDisplay').val(response.data);
+                }
+            });
+
+            $('#buttonModal').modal('show');
+        }
+
+        function editButton(funcId, btnSeq) {
+            isButtonEditMode = true;
+            $('#buttonModalTitle').text('修改按鈕');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
+                if (response.success) {
+                    const button = response.data.find(b => b.BTNSEQ === btnSeq);
+                    if (button) {
+                        $('#buttonFuncId').val(button.FUNC_ID);
+                        $('#buttonBtnSeq').val(button.BTNSEQ);
+                        $('#btnSeqDisplay').val(button.BTNSEQ);
+                        $('#btnId').val(button.BTNID);
+                        $('#btnName').val(button.BTN_NAME);
+                        $('#controller').val(button.CONTROLLER || '');
+                        $('#action').val(button.ACTION || '');
+                        $('#loc').val(button.LOC || '');
+                        $('#onclick').val(button.ONCLICK || '');
+
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === funcId);
+                        $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : funcId);
+
+                        $('#buttonModal').modal('show');
+                    }
+                }
+            });
+
+        }
+
+        function saveButton() {
+            const formData = {
+                FUNC_ID: $('#buttonFuncId').val(),
+                BTNSEQ: $('#buttonBtnSeq').val(),
+                BTNID: $('#btnId').val(),
+                BTN_NAME: $('#btnName').val(),
+                CONTROLLER: $('#controller').val() || null,
+                ACTION: $('#action').val() || null,
+                LOC: $('#loc').val() || null,
+                ONCLICK: $('#onclick').val() || null
+            };
+
+
+            if (!formData.BTNID.trim() || !formData.BTN_NAME.trim()) {
+                alert('請輸入按鈕ID和按鈕名稱');
+                return;
+            }
+
+            const url = isButtonEditMode ? '@Url.Action("UpdateButton", "AP")' : '@Url.Action("AddButton", "AP")';
+
+            $.post(url, formData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#buttonModal').modal('hide');
+
+                    // 自動重新載入按鈕列表
+                    if (currentSelectedPage) {
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                        if (selectedPageData) {
+                            loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                        }
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deleteButton(funcId, btnSeq, btnName) {
+            if (confirm(`確定要刪除按鈕 "${btnName}" 嗎？`)) {
+                $.post('@Url.Action("DeleteButton", "AP")', {
+                    func_id: funcId,
+                    btnseq: btnSeq
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+
+                        // 自動重新載入按鈕列表
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                            }
+                        }
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 重新載入
+        function refreshData() {
+            // 重新載入頁面列表
+            loadPages();
+
+            // 如果有選中的頁面，重新載入其按鈕
+            if (currentSelectedPage) {
+                setTimeout(function () {
+                    const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                    if (selectedPageData) {
+                        const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                        selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                    }
+                }, 500);
+            }
+        }
+
+    </script>
+}
