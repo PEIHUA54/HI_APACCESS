@@ -1,3 +1,274 @@
+我理解你要保持原本的樣式，只在父層底下用分隔線來區分父層按鈕和子層按鈕。修改 `updateButtonListHierarchical()` 函數：
+
+```javascript
+// 階層式更新按鈕列表
+function updateButtonListHierarchical() {
+    if (allFunctions.length === 0) {
+        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+        return;
+    }
+
+    // 建立父子關係映射
+    const parentChildMap = {};
+    const parentPages = [];
+
+    // 分離父頁面和子頁面，並過濾隱藏的子頁面
+    allFunctions.forEach(func => {
+        const funcId = getFuncId(func);
+        const parentId = getParentId(func);
+
+        if (!parentId || parentId === '' || parentId === 'HOME') {
+            // 父頁面
+            parentPages.push(func);
+            if (!parentChildMap[funcId]) {
+                parentChildMap[funcId] = [];
+            }
+        } else {
+            // 子頁面 - 只要顯示的子頁面
+            if (func.IS_SHOW === 'Y') {
+                if (!parentChildMap[parentId]) {
+                    parentChildMap[parentId] = [];
+                }
+                parentChildMap[parentId].push(func);
+            }
+        }
+    });
+
+    // 父頁面按SORT_NO排序
+    parentPages.sort((a, b) => {
+        const aSort = parseInt(a.SORT_NO) || 999;
+        const bSort = parseInt(b.SORT_NO) || 999;
+        return aSort - bSort;
+    });
+
+    // 每個父頁面的子頁面按SORT_NO排序
+    Object.keys(parentChildMap).forEach(parentId => {
+        parentChildMap[parentId].sort((a, b) => {
+            const aSort = parseInt(a.SORT_NO) || 999;
+            const bSort = parseInt(b.SORT_NO) || 999;
+            return aSort - bSort;
+        });
+    });
+
+    let html = '';
+
+    // 按父頁面順序顯示
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const parentName = getFuncName(parentFunc);
+        const children = parentChildMap[parentId] || [];
+
+        // 父頁面標題
+        html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+        </div>`;
+
+        // 先顯示父頁面本身的按鈕區塊（如果父頁面有按鈕的話）
+        const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
+        const parentSectionStyle = parentHasPagePermission
+            ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
+            : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
+
+        html += `
+        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
+            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                <span>
+                    <i class="fas fa-folder-open"></i> ${parentName} (父層)
+                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+                </span>
+                <div style="display: flex; gap: 5px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>
+        </div>`;
+
+        // 如果有子頁面，加入分隔線
+        if (children.length > 0) {
+            html += `
+            <div style="margin: 10px 20px; border-top: 2px solid #6c757d; position: relative;">
+                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: white; padding: 0 10px; color: #6c757d; font-size: 12px;">
+                    子頁面
+                </div>
+            </div>`;
+
+            // 顯示該父頁面下的所有子頁面
+            children.forEach(childFunc => {
+                const funcId = getFuncId(childFunc);
+                const funcName = getFuncName(childFunc);
+                const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+                // 頁面區塊樣式
+                const sectionStyle = hasPagePermission
+                    ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
+                    : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
+
+                html += `
+                <div class="page-section child-section" id="page-section-${funcId}" style="${sectionStyle}">
+                    <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                        <span>
+                            <i class="fas fa-file-alt"></i> ${funcName}
+                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                        </span>
+                        <div style="display: flex; gap: 5px;">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-check-square"></i> 全勾選
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-square"></i> 全取消
+                            </button>
+                        </div>
+                    </div>
+                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
+                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+                    </div>
+                </div>`;
+            });
+        }
+    });
+
+    $('#buttonList').html(html);
+
+    // 現在載入每個頁面的按鈕
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const children = parentChildMap[parentId] || [];
+        
+        // 載入父頁面的按鈕
+        loadButtonsForPage(parentId);
+        
+        // 載入子頁面的按鈕
+        children.forEach(childFunc => {
+            loadButtonsForPage(getFuncId(childFunc));
+        });
+    });
+}
+```
+
+同時修改 `togglePagePermission` 函數，讓勾選頁面權限時自動勾選該頁面的所有按鈕：
+
+```javascript
+// 切換頁面權限
+function togglePagePermission(funcId, hasPermission) {
+    if (!groupPermissions[funcId]) {
+        groupPermissions[funcId] = { buttons: {} };
+    }
+    groupPermissions[funcId].hasPagePermission = hasPermission;
+
+    showSaveReminder();
+
+    if (hasPermission) {
+        // 勾選頁面時，自動全勾該頁面的所有按鈕
+        $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (btnResponse) {
+            if (btnResponse.success && btnResponse.data) {
+                if (!groupPermissions[funcId]) {
+                    groupPermissions[funcId] = { buttons: {} };
+                }
+                btnResponse.data.forEach(function (btn) {
+                    groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
+                });
+                refreshButtonsDisplay(funcId);   // 只刷新這個頁面的按鈕顯示
+                showSaveReminder();
+            }
+        });
+
+        // 原有的父子頁面邏輯保持不變...
+        if (isParentPage(allFunctions.find(f => getFuncId(f) === funcId))) {
+            const childPages = allFunctions.filter(f => getParentId(f) === funcId);
+            childPages.forEach(function (childFunc) {
+                const childId = getFuncId(childFunc);
+                if (!groupPermissions[childId]) {
+                    groupPermissions[childId] = { buttons: {} };
+                }
+                groupPermissions[childId].hasPagePermission = true;
+                $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', true);
+                $(`.page-item[data-func-id="${childId}"]`).addClass('has-permission');
+
+                // 自動勾選該子頁面的所有按鈕權限
+                $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: childId }, function (btnResponse) {
+                    if (btnResponse.success && btnResponse.data) {
+                        btnResponse.data.forEach(function (btn) {
+                            groupPermissions[childId].buttons[btn.BTNSEQ] = true;
+                        });
+                    }
+                });
+            });
+        }
+
+        const currentPage = allFunctions.find(f => getFuncId(f) === funcId);
+        if (currentPage && getParentId(currentPage)) {
+            const parentExists = allFunctions.some(f => getFuncId(f) === getParentId(currentPage));
+            if (parentExists) {
+                const parentId = getParentId(currentPage);
+                if (!groupPermissions[parentId]) {
+                    groupPermissions[parentId] = { buttons: {} };
+                }
+                if (!groupPermissions[parentId].hasPagePermission) {
+                    groupPermissions[parentId].hasPagePermission = true;
+                    $(`.page-item[data-func-id="${parentId}"] input[type="checkbox"]`).prop('checked', true);
+                    $(`.page-item[data-func-id="${parentId}"]`).addClass('has-permission');
+                    alert(`已自動勾選上層頁面權限：${parentId}`);
+                }
+            }
+        }
+    } else {
+        // 原有的取消邏輯保持不變...
+        const childPages = allFunctions.filter(f => getParentId(f) === funcId);
+        const hasChildWithPermission = childPages.some(child =>
+            groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission
+        );
+
+        if (hasChildWithPermission) {
+            const childNames = childPages
+                .filter(child => groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission)
+                .map(child => getFuncName(child))
+                .join('、');
+
+            if (!confirm(`取消此頁面權限將同時取消子頁面權限：${childNames}\n\n確定要繼續嗎？`)) {
+                $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`).prop('checked', true);
+                return;
+            } else {
+                childPages.forEach(child => {
+                    const childId = getFuncId(child);
+                    if (groupPermissions[childId] && groupPermissions[childId].hasPagePermission) {
+                        groupPermissions[childId].hasPagePermission = false;
+                        groupPermissions[childId].buttons = {};
+                        $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', false);
+                        $(`.page-item[data-func-id="${childId}"]`).removeClass('has-permission');
+                    }
+                });
+            }
+        }
+
+        groupPermissions[funcId].buttons = {};
+    }
+
+    const pageItem = $(`.page-item[data-func-id="${funcId}"]`);
+    if (hasPermission) {
+        pageItem.addClass('has-permission');
+    } else {
+        pageItem.removeClass('has-permission');
+    }
+
+    updateButtonListHierarchical();
+}
+```
+
+這樣修改後：
+
+1. 保持原本的樣式風格
+1. 父層和子層之間用灰色分隔線區分
+1. 父層和子層都有各自的「全勾選」和「全取消」按鈕
+1. 勾選頁面權限時會自動勾選該頁面的所有按鈕權限​​​​​​​​​​​​​​​​
 我理解了，你要的是父層頁面和父層按鈕都在同一個藍色區塊內，然後用分隔線區分父層按鈕和子層區域。修改如下：
 
 ```javascript
