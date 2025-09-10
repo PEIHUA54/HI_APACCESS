@@ -1,227 +1,172 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using Microsoft.IdentityModel.Tokens;
-using Newtonsoft.Json;
+我理解了，你要的是父層頁面和父層按鈕都在同一個藍色區塊內，然後用分隔線區分父層按鈕和子層區域。修改如下：
 
-namespace HI_APACCESS_DLL_FRAMEWORK
-{
-/// <summary>
-/// 請求參數
-/// </summary>
-public class GetFunctionAndAccessUrlRequest
-{
-public string sys_id { get; set; }        // 系統ID
-public string type { get; set; }          // 1=頁面設定, 2=權限設定
-public string environment { get; set; }   // TEST=測試, PROD=正式
-}
+```javascript
+// 階層式更新按鈕列表
+function updateButtonListHierarchical() {
+    if (allFunctions.length === 0) {
+        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+        return;
+    }
 
-```
-/// <summary>
-/// 回應結果
-/// </summary>
-public class GetFunctionAndAccessUrlResponse
-{
-    public string code { get; set; }     // 結果代碼
-    public string message { get; set; }  // 訊息
-    public string url { get; set; }      // 功能連結
-}
+    // 建立父子關係映射
+    const parentChildMap = {};
+    const parentPages = [];
 
-/// <summary>
-/// 核心服務
-/// </summary>
-public class AccessUrlService
-{
-    // 環境網址設定 - 修正為正確的路徑
-    private readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
-    {
-        { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
-        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
-        { "DEBUG", "http://localhost:53088" }  // 新增 DEBUG 環境
-    };
+    // 分離父頁面和子頁面，並過濾隱藏的子頁面
+    allFunctions.forEach(func => {
+        const funcId = getFuncId(func);
+        const parentId = getParentId(func);
 
-    // 功能類型設定 - 修正為正確的 Action
-    private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
-    {
-        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定 - 對應原本的路徑
-        { "2", "TokenEntry" }        // 權限設定 - 對應原本的路徑
-    };
-
-    // 【可選】授權系統清單 - 如果您不需要限制可以註解掉
-    private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
-    {
-        "HI_POS" // 只允許 HI_POS 系統呼叫，可以加入其他系統ID
-        // "HI_CRM", "HI_ERP" // 如果有其他系統需要使用可以加入
-    };
-
-    /// <summary>
-    /// 主要功能：取得功能連結（DLL 內部產生 Token）
-    /// </summary>
-    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
-    {
-        try
-        {
-            // 基本參數檢查
-            if (request == null || string.IsNullOrWhiteSpace(request.sys_id) || 
-                string.IsNullOrWhiteSpace(request.type) || string.IsNullOrWhiteSpace(request.environment))
-            {
-                return new GetFunctionAndAccessUrlResponse
-                {
-                    code = "1001",
-                    message = "參數不完整",
-                    url = ""
-                };
+        if (!parentId || parentId === '' || parentId === 'HOME') {
+            // 父頁面
+            parentPages.push(func);
+            if (!parentChildMap[funcId]) {
+                parentChildMap[funcId] = [];
             }
-
-            // 檢查類型是否正確
-            if (!TypeActions.ContainsKey(request.type))
-            {
-                return new GetFunctionAndAccessUrlResponse
-                {
-                    code = "1002", 
-                    message = "類型錯誤，只接受 1 或 2",
-                    url = ""
-                };
+        } else {
+            // 子頁面 - 只要顯示的子頁面
+            if (func.IS_SHOW === 'Y') {
+                if (!parentChildMap[parentId]) {
+                    parentChildMap[parentId] = [];
+                }
+                parentChildMap[parentId].push(func);
             }
-
-            // 檢查環境是否正確
-            if (!EnvironmentUrls.ContainsKey(request.environment))
-            {
-                return new GetFunctionAndAccessUrlResponse
-                {
-                    code = "1003",
-                    message = "環境錯誤，只接受 TEST、PROD 或 DEBUG", 
-                    url = ""
-                };
-            }
-
-            // 【可選】檢查系統權限 - 如果不需要限制可以註解掉這段
-            if (!AuthorizedSystems.Contains(request.sys_id))
-            {
-                return new GetFunctionAndAccessUrlResponse
-                {
-                    code = "0001",
-                    message = "查無權限",
-                    url = ""
-                };
-            }
-
-            // DLL 內部產生 JWT Token
-            string token = GenerateJwtToken(request.sys_id);
-
-            // 組合最終 URL（包含 Token）
-            string baseUrl = EnvironmentUrls[request.environment];
-            string action = TypeActions[request.type];
-            string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
-
-            // 回傳成功結果
-            return new GetFunctionAndAccessUrlResponse
-            {
-                code = "0000",
-                message = "成功",
-                url = finalUrl
-            };
         }
-        catch (Exception ex)
-        {
-            return new GetFunctionAndAccessUrlResponse
-            {
-                code = "9999",
-                message = "系統錯誤：" + ex.Message,
-                url = ""
-            };
+    });
+
+    // 父頁面按SORT_NO排序
+    parentPages.sort((a, b) => {
+        const aSort = parseInt(a.SORT_NO) || 999;
+        const bSort = parseInt(b.SORT_NO) || 999;
+        return aSort - bSort;
+    });
+
+    // 每個父頁面的子頁面按SORT_NO排序
+    Object.keys(parentChildMap).forEach(parentId => {
+        parentChildMap[parentId].sort((a, b) => {
+            const aSort = parseInt(a.SORT_NO) || 999;
+            const bSort = parseInt(b.SORT_NO) || 999;
+            return aSort - bSort;
+        });
+    });
+
+    let html = '';
+
+    // 按父頁面順序顯示
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const parentName = getFuncName(parentFunc);
+        const children = parentChildMap[parentId] || [];
+
+        // 父頁面標題
+        html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+        </div>`;
+
+        // 父頁面區塊（包含父頁面本身的按鈕）
+        const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
+        const parentSectionStyle = parentHasPagePermission
+            ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
+            : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
+
+        html += `
+        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
+            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                <span>
+                    <i class="fas fa-folder-open"></i> ${parentName} (父層)
+                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+                </span>
+                <div style="display: flex; gap: 5px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>`;
+
+        // 如果有子頁面，在父層區塊內加入分隔線，然後繼續在同一個區塊內顯示子頁面
+        if (children.length > 0) {
+            html += `
+            <div style="margin: 10px 15px; border-top: 2px solid #6c757d; position: relative;">
+                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #f8f9fa; padding: 0 10px; color: #6c757d; font-size: 12px; font-weight: bold;">
+                    子頁面
+                </div>
+            </div>`;
+
+            // 在同一個父層區塊內顯示子頁面
+            children.forEach(childFunc => {
+                const funcId = getFuncId(childFunc);
+                const funcName = getFuncName(childFunc);
+                const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+                html += `
+                <div class="child-page-section" style="margin: 10px; border: 1px solid #ccc; border-radius: 4px; background: ${hasPagePermission ? '#fff' : '#f5f5f5'}; ${!hasPagePermission ? 'opacity: 0.6;' : ''}">
+                    <div class="page-header" style="background: #f1f3f4; padding: 8px 12px; border-bottom: 1px solid #ccc; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
+                        <span>
+                            <i class="fas fa-file-alt"></i> ${funcName}
+                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                        </span>
+                        <div style="display: flex; gap: 5px;">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-check-square"></i> 全勾選
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-square"></i> 全取消
+                            </button>
+                        </div>
+                    </div>
+                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 8px;">
+                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+                    </div>
+                </div>`;
+            });
         }
-    }
 
-    /// <summary>
-    /// 產生 JWT Token（整合 JwtHelper 的邏輯）
-    /// </summary>
-    private string GenerateJwtToken(string systemId, string empNo = null)
-    {
-        var claims = new[]
-        {
-            new Claim("systemId", systemId),
-            new Claim("empNo", empNo ?? "SYSTEM_USER")
-        };
+        // 結束父頁面區塊
+        html += `</div>`;
+    });
 
-        string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+    $('#buttonList').html(html);
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: "hi_ap_access_dll",
-            audience: "hi_ap_access_web",
-            claims: claims,
-            expires: DateTime.Now.AddHours(1),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
-}
-
-/// <summary>
-/// 主要對外類別
-/// </summary>
-public class Class1
-{
-    private readonly AccessUrlService _service;
-
-    public Class1()
-    {
-        _service = new AccessUrlService();
-    }
-
-    /// <summary>
-    /// 方法1：使用物件參數
-    /// </summary>
-    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
-    {
-        return _service.GetFunctionAndAccessUrl(request);
-    }
-
-    /// <summary>
-    /// 方法2：使用JSON字串 (最常用)
-    /// </summary>
-    public string GetFunctionAndAccessUrl(string requestJson)
-    {
-        try
-        {
-            var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(requestJson);
-            var response = _service.GetFunctionAndAccessUrl(request);
-            return JsonConvert.SerializeObject(response, Formatting.Indented);
-        }
-        catch (Exception ex)
-        {
-            var errorResponse = new GetFunctionAndAccessUrlResponse
-            {
-                code = "8888",
-                message = "JSON格式錯誤：" + ex.Message,
-                url = ""
-            };
-            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
-        }
-    }
-
-    /// <summary>
-    /// 方法3：直接傳入三個參數（最簡單，推薦使用）
-    /// </summary>
-    public string GetFunctionAndAccessUrl(string sysId, string type, string environment)
-    {
-        var request = new GetFunctionAndAccessUrlRequest
-        {
-            sys_id = sysId,
-            type = type,
-            environment = environment
-        };
-
-        var response = _service.GetFunctionAndAccessUrl(request);
-        return JsonConvert.SerializeObject(response, Formatting.Indented);
-    }
+    // 現在載入每個頁面的按鈕
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const children = parentChildMap[parentId] || [];
+        
+        // 載入父頁面的按鈕
+        loadButtonsForPage(parentId);
+        
+        // 載入子頁面的按鈕
+        children.forEach(childFunc => {
+            loadButtonsForPage(getFuncId(childFunc));
+        });
+    });
 }
 ```
 
-}
+這樣的結構是：
+
+```
+┌─────────────────────────────────────┐
+│ 父頁面標題 (灰色背景)                │
+│ ├─ 父層頁面名稱                     │
+│ ├─ 全勾選/全取消 按鈕               │
+│ ├─ 父層按鈕列表                     │
+│ ├─────── 子頁面分隔線 ──────────    │
+│ ├─ 子頁面1                          │
+│ │  ├─ 全勾選/全取消                │
+│ │  └─ 子頁面1按鈕列表              │
+│ ├─ 子頁面2                          │
+│ │  ├─ 全勾選/全取消                │
+│ │  └─ 子頁面2按鈕列表              │
+└─────────────────────────────────────┘
+```
+
+父層頁面和父層按鈕都在同一個藍色區塊內，用分隔線將子頁面區域區分開來，但子頁面仍在父層的大區塊內。​​​​​​​​​​​​​​​​
