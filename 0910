@@ -1,3 +1,218 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using Newtonsoft.Json;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+/// <summary>
+/// 請求參數
+/// </summary>
+public class GetFunctionAndAccessUrlRequest
+{
+public string sys_id { get; set; }        // 系統ID
+public string type { get; set; }          // 1=頁面設定, 2=權限設定
+public string environment { get; set; }   // TEST=測試, PROD=正式
+}
+
+```
+/// <summary>
+/// 回應結果
+/// </summary>
+public class GetFunctionAndAccessUrlResponse
+{
+    public string code { get; set; }     // 結果代碼
+    public string message { get; set; }  // 訊息
+    public string url { get; set; }      // 功能連結
+}
+
+/// <summary>
+/// 核心服務
+/// </summary>
+public class AccessUrlService
+{
+    // 環境網址設定 - 修正為正確的路徑
+    private readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+    {
+        { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        { "DEBUG", "http://localhost:53088" }  // 新增 DEBUG 環境
+    };
+
+    // 功能類型設定 - 修正為正確的 Action
+    private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+    {
+        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定 - 對應原本的路徑
+        { "2", "TokenEntry" }        // 權限設定 - 對應原本的路徑
+    };
+
+    // 【可選】授權系統清單 - 如果您不需要限制可以註解掉
+    private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
+    {
+        "HI_POS" // 只允許 HI_POS 系統呼叫，可以加入其他系統ID
+        // "HI_CRM", "HI_ERP" // 如果有其他系統需要使用可以加入
+    };
+
+    /// <summary>
+    /// 主要功能：取得功能連結
+    /// 注意：這個方法不產生 Token，需要外部傳入 Token
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        try
+        {
+            // 基本參數檢查
+            if (request == null || string.IsNullOrWhiteSpace(request.sys_id) || 
+                string.IsNullOrWhiteSpace(request.type) || string.IsNullOrWhiteSpace(request.environment))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1001",
+                    message = "參數不完整",
+                    url = ""
+                };
+            }
+
+            // 檢查類型是否正確
+            if (!TypeActions.ContainsKey(request.type))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1002", 
+                    message = "類型錯誤，只接受 1 或 2",
+                    url = ""
+                };
+            }
+
+            // 檢查環境是否正確
+            if (!EnvironmentUrls.ContainsKey(request.environment))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1003",
+                    message = "環境錯誤，只接受 TEST、PROD 或 DEBUG", 
+                    url = ""
+                };
+            }
+
+            // 【可選】檢查系統權限 - 如果不需要限制可以註解掉這段
+            if (!AuthorizedSystems.Contains(request.sys_id))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "0001",
+                    message = "查無權限",
+                    url = ""
+                };
+            }
+
+            // 組合基礎 URL（不包含 Token，因為需要外部提供真正的 JWT Token）
+            string baseUrl = EnvironmentUrls[request.environment];
+            string action = TypeActions[request.type];
+            string baseUrlOnly = $"{baseUrl}/Home/{action}";
+
+            // 回傳成功結果（不含 Token）
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "0000",
+                message = "成功",
+                url = baseUrlOnly
+            };
+        }
+        catch (Exception ex)
+        {
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "9999",
+                message = "系統錯誤：" + ex.Message,
+                url = ""
+            };
+        }
+    }
+
+    /// <summary>
+    /// 產生簡單 Token
+    /// </summary>
+    private string GenerateSimpleToken(string sysId, string type)
+    {
+        // 簡單的 Token 產生方式
+        string rawData = $"{sysId}_{type}_{DateTime.Now:yyyyMMddHHmmss}";
+        var bytes = Encoding.UTF8.GetBytes(rawData);
+        return Convert.ToBase64String(bytes);
+    }
+}
+
+/// <summary>
+/// 主要對外類別
+/// </summary>
+public class Class1
+{
+    private readonly AccessUrlService _service;
+
+    public Class1()
+    {
+        _service = new AccessUrlService();
+    }
+
+    /// <summary>
+    /// 方法1：使用物件參數
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        return _service.GetFunctionAndAccessUrl(request);
+    }
+
+    /// <summary>
+    /// 方法2：使用JSON字串 (最常用)
+    /// </summary>
+    public string GetFunctionAndAccessUrl(string requestJson)
+    {
+        try
+        {
+            var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(requestJson);
+            var response = _service.GetFunctionAndAccessUrl(request);
+            return JsonConvert.SerializeObject(response, Formatting.Indented);
+        }
+        catch (Exception ex)
+        {
+            var errorResponse = new GetFunctionAndAccessUrlResponse
+            {
+                code = "8888",
+                message = "JSON格式錯誤：" + ex.Message,
+                url = ""
+            };
+            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
+        }
+    }
+
+    /// <summary>
+    /// 方法3：直接傳入三個參數，並加上 Token
+    /// </summary>
+    public string GetFunctionAndAccessUrlWithToken(string sysId, string type, string environment, string token)
+    {
+        var request = new GetFunctionAndAccessUrlRequest
+        {
+            sys_id = sysId,
+            type = type,
+            environment = environment
+        };
+
+        var response = _service.GetFunctionAndAccessUrl(request);
+        
+        if (response.code == "0000" && !string.IsNullOrEmpty(token))
+        {
+            // 加上外部提供的 Token
+            response.url = $"{response.url}?token={token}";
+        }
+        
+        return JsonConvert.SerializeObject(response, Formatting.Indented);
+    }
+}
+```
+
+}
+
+
 using POSFILE_APPLY.Factory;
 using POSFILE_APPLY.Service;
 using System;
@@ -17,22 +232,27 @@ namespace POSFILE_APPLY.Controllers
 {
 public class APController : POSFILE_APPLYBaseController
 {
-// 權限管理導向 Action（使用 DLL 版本）
+// 權限管理導向 Action（使用 DLL + 原本的 JWT Token）
 public ActionResult AP_ACCESS_SYS()
 {
 try
 {
-// 使用 DLL 取得連結
-var api = new Class1();
+// 1. 先用原本的方式產生 JWT Token
+string jwtToken = new JwtHelper().GenerateToken(“HI_POSIMG”, this.Emp_NO);
+
+```
+            // 2. 使用 DLL 取得基礎 URL
+            var api = new Class1();
+```
 
 #if DEBUG
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “TEST”);
+string jsonResult = api.GetFunctionAndAccessUrlWithToken(“HI_POSIMG”, “2”, “DEBUG”, jwtToken);
 #else
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “PROD”);
+string jsonResult = api.GetFunctionAndAccessUrlWithToken(“HI_POSIMG”, “2”, “TEST”, jwtToken);
 #endif
 
 ```
-            // 解析 DLL 回傳的結果
+            // 3. 解析 DLL 回傳的結果
             dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
             
             if (response.code == "0000")
@@ -57,23 +277,26 @@ string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “PRO
         }
     }
 
-    // 系統頁面定義管理導向 Action（使用 DLL 版本）
+    // 系統頁面定義管理導向 Action（使用 DLL + 原本的 JWT Token）
     public ActionResult AP_ACCESS_SYS_FUNC()
     {
         try
         {
-            // 使用 DLL 取得連結
+            // 1. 先用原本的方式產生 JWT Token
+            string jwtToken = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);
+            
+            // 2. 使用 DLL 取得基礎 URL
             var api = new Class1();
 ```
 
 #if DEBUG
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “TEST”);
+string jsonResult = api.GetFunctionAndAccessUrlWithToken(“HI_POSIMG”, “1”, “DEBUG”, jwtToken);
 #else
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “PROD”);
+string jsonResult = api.GetFunctionAndAccessUrlWithToken(“HI_POSIMG”, “1”, “TEST”, jwtToken);
 #endif
 
 ```
-            // 解析 DLL 回傳的結果
+            // 3. 解析 DLL 回傳的結果
             dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
             
             if (response.code == "0000")
