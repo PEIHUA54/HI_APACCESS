@@ -1,3 +1,119 @@
+
+當然可以！修改 `loadButtonsForPage` 函數，讓沒有按鈕的頁面顯示更緊湊的樣式：
+
+```javascript
+// 載入指定頁面的按鈕
+function loadButtonsForPage(funcId) {
+    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+    $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
+        let buttonHtml = '';
+
+        if (response.success && response.data && response.data.length > 0) {
+            // 有按鈕時，使用正常的容器樣式
+            response.data.forEach(function (btn) {
+                const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
+                const checkedAttr = hasPermission ? 'checked' : '';
+                const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
+                const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
+
+                buttonHtml += `
+                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
+                    <div class="permission-content">
+                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
+                        <span class="permission-title">${btn.BTN_NAME}</span>
+                        <span class="permission-info">ID: ${btn.BTNID}</span>
+                    </div>
+                </div>`;
+            });
+            
+            // 更新該頁面的按鈕容器 - 正常高度
+            $(`#buttons-${funcId}`).html(buttonHtml).css({
+                'padding': '10px',
+                'min-height': 'auto'
+            });
+        } else {
+            // 沒有按鈕時，使用緊湊樣式
+            buttonHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #6c757d; font-size: 12px;">此頁面無按鈕</div>';
+            
+            // 更新該頁面的按鈕容器 - 緊湊高度
+            $(`#buttons-${funcId}`).html(buttonHtml).css({
+                'padding': '0',
+                'min-height': '30px'
+            });
+        }
+    }).fail(function () {
+        // 載入失敗時也使用緊湊樣式
+        const errorHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #dc3545; font-size: 12px;">載入失敗</div>';
+        $(`#buttons-${funcId}`).html(errorHtml).css({
+            'padding': '0',
+            'min-height': '30px'
+        });
+    });
+}
+```
+
+或者，如果你想要在 HTML 生成階段就處理，可以在 `updateButtonListHierarchical` 中先檢查是否有按鈕，然後動態調整容器樣式：
+
+```javascript
+// 在 updateButtonListHierarchical 函數中，修改按鈕容器的部分
+// 將原本的：
+<div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
+    <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+</div>
+
+// 改為：
+<div class="buttons-container" id="buttons-${funcId}" style="padding: 10px; min-height: 50px;">
+    <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+</div>
+```
+
+然後在 `loadButtonsForPage` 中動態調整：
+
+```javascript
+// 載入指定頁面的按鈕
+function loadButtonsForPage(funcId) {
+    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+    $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
+        const buttonContainer = $(`#buttons-${funcId}`);
+        let buttonHtml = '';
+
+        if (response.success && response.data && response.data.length > 0) {
+            // 有按鈕 - 恢復正常高度
+            buttonContainer.css('min-height', 'auto');
+            
+            response.data.forEach(function (btn) {
+                const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
+                const checkedAttr = hasPermission ? 'checked' : '';
+                const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
+                const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
+
+                buttonHtml += `
+                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
+                    <div class="permission-content">
+                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
+                        <span class="permission-title">${btn.BTN_NAME}</span>
+                        <span class="permission-info">ID: ${btn.BTNID}</span>
+                    </div>
+                </div>`;
+            });
+        } else {
+            // 沒有按鈕 - 設定緊湊高度
+            buttonContainer.css('min-height', '35px');
+            buttonHtml = '<div class="no-data-compact" style="text-align: center; color: #6c757d; font-size: 12px; line-height: 35px;">此頁面無按鈕</div>';
+        }
+
+        buttonContainer.html(buttonHtml);
+    }).fail(function () {
+        const buttonContainer = $(`#buttons-${funcId}`);
+        buttonContainer.css('min-height', '35px');
+        buttonContainer.html('<div class="no-data-compact" style="text-align: center; color: #dc3545; font-size: 12px; line-height: 35px;">載入失敗</div>');
+    });
+}
+```
+
+這樣修改後，沒有按鈕的頁面只會顯示一個緊湊的「此頁面無按鈕」提示，節省空間。有按鈕的頁面則保持原本的樣式和空間。​​​​​​​​​​​​​​​​
 我理解你要保持原本的樣式，只在父層底下用分隔線來區分父層按鈕和子層按鈕。修改 `updateButtonListHierarchical()` 函數：
 
 ```javascript
