@@ -11,24 +11,34 @@ using System.Web;
 using System.Web.Mvc;
 using X.PagedList;
 using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
-using HI_APACCESS_DLL_FRAMEWORK; // 加入 DLL 參考
+using HI_APACCESS_DLL_FRAMEWORK; // 引用 DLL
 
 namespace POSFILE_APPLY.Controllers
 {
-    public class APController : POSFILE_APPLYBaseController
-    {
-        // 權限管理導向 Action
-        public ActionResult AP_ACCESS_SYS()
-        {
-            try
-            {
-                string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);  //HI_POS、HI_POSIMG、POS_LOG
+public class APController : POSFILE_APPLYBaseController
+{
+// 權限管理導向 Action（使用 DLL 版本）
+public ActionResult AP_ACCESS_SYS()
+{
+try
+{
+// 使用 DLL 取得連結
+var api = new Class1();
 
 #if DEBUG
-                string url = $"http://localhost:53088/Home/TokenEntry?token={token}";
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “TEST”);
 #else
-                string url = $"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry?token={token}";
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “PROD”);
 #endif
+
+```
+            // 解析 DLL 回傳的結果
+            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+            
+            if (response.code == "0000")
+            {
+                string url = response.url;
+                
                 string script = $@"
                     <script>
                        window.open('{url}', '_blank');                       
@@ -36,23 +46,40 @@ namespace POSFILE_APPLY.Controllers
                     </script>";
                 return Content(script, "text/html");
             }
-            catch (Exception ex)
+            else
             {
-                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+                return Content($"<script>alert('取得權限管理連結失敗：{response.message}');</script>", "text/html");
             }
         }
-
-        // 系統頁面定義管理導向 Action
-        public ActionResult AP_ACCESS_SYS_FUNC()
+        catch (Exception ex)
         {
-            try
-            {
-                string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO); //HI_POS、HI_POSIMG、POS_LOG
-# if DEBUG
-                string url = $"http://localhost:53088/Home/TokenEntry_FUNC?token={token}";
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+        }
+    }
+
+    // 系統頁面定義管理導向 Action（使用 DLL 版本）
+    public ActionResult AP_ACCESS_SYS_FUNC()
+    {
+        try
+        {
+            // 使用 DLL 取得連結
+            var api = new Class1();
+```
+
+#if DEBUG
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “TEST”);
 #else
-                 string url = $"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token={token}";
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “PROD”);
 #endif
+
+```
+            // 解析 DLL 回傳的結果
+            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+            
+            if (response.code == "0000")
+            {
+                string url = response.url;
+                
                 string script = $@"
                     <script>
                        window.open('{url}', '_blank');                       
@@ -60,10 +87,97 @@ namespace POSFILE_APPLY.Controllers
                     </script>";
                 return Content(script, "text/html");
             }
-            catch (Exception ex)
+            else
             {
-                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+                return Content($"<script>alert('取得頁面功能管理連結失敗：{response.message}');</script>", "text/html");
             }
         }
+        catch (Exception ex)
+        {
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+        }
     }
+
+    // 【保留】原本的方法（備用）
+    public ActionResult AP_ACCESS_SYS_OLD()
+    {
+        try
+        {
+            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);  //HI_POS、HI_POSIMG、POS_LOG
+```
+
+#if DEBUG
+string url = $“http://localhost:53088/Home/TokenEntry?token={token}”;
+#else
+string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry?token={token}”;
+#endif
+string script = $@”
+<script>
+window.open(’{url}’, ‘_blank’);  
+window.location.href=’{Url.Action(“Main”,“Home”)}’;
+</script>”;
+return Content(script, “text/html”);
+}
+catch (Exception ex)
+{
+return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
+}
+}
+
+```
+    // 【保留】原本的方法（備用）
+    public ActionResult AP_ACCESS_SYS_FUNC_OLD()
+    {
+        try
+        {
+            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO); //HI_POS、HI_POSIMG、POS_LOG
+```
+
+#if DEBUG
+string url = $“http://localhost:53088/Home/TokenEntry_FUNC?token={token}”;
+#else
+string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token={token}”;
+#endif
+string script = $@”
+<script>
+window.open(’{url}’, ‘_blank’);  
+window.location.href=’{Url.Action(“Main”, “Home”)}’;
+</script>”;
+return Content(script, “text/html”);
+}
+catch (Exception ex)
+{
+return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
+}
+}
+
+```
+    // 測試 DLL 功能的方法
+    public ActionResult TestDLL()
+    {
+        try
+        {
+            var api = new Class1();
+            
+            string result1 = api.GetFunctionAndAccessUrl("HI_POSIMG", "1", "TEST");
+            string result2 = api.GetFunctionAndAccessUrl("HI_POSIMG", "2", "TEST");
+            
+            string html = $@"
+                <h3>DLL 測試結果</h3>
+                <p><strong>頁面功能設定 (類型1)：</strong></p>
+                <pre>{result1}</pre>
+                <p><strong>權限設定 (類型2)：</strong></p>
+                <pre>{result2}</pre>
+            ";
+            
+            return Content(html, "text/html");
+        }
+        catch (Exception ex)
+        {
+            return Content($"<h3>DLL 測試失敗</h3><p>{ex.Message}</p>", "text/html");
+        }
+    }
+}
+```
+
 }
