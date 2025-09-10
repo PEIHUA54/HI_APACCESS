@@ -1,184 +1,227 @@
-using POSFILE_APPLY.Factory;
-using POSFILE_APPLY.Service;
 using System;
 using System.Collections.Generic;
-using System.IdentityModel.Claims;
-using System.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using System.Text;
-using System.Web;
-using System.Web.Mvc;
-using X.PagedList;
-using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
-using HI_APACCESS_DLL_FRAMEWORK; // 引用 DLL
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
 
-namespace POSFILE_APPLY.Controllers
+namespace HI_APACCESS_DLL_FRAMEWORK
 {
-public class APController : POSFILE_APPLYBaseController
+/// <summary>
+/// 請求參數
+/// </summary>
+public class GetFunctionAndAccessUrlRequest
 {
-// 權限管理導向 Action（使用 DLL，超簡單版本）
-public ActionResult AP_ACCESS_SYS()
-{
-try
-{
-// 只需要三個參數，DLL 會處理一切
-var api = new Class1();
-
-#if DEBUG
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “DEBUG”);
-#else
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “2”, “TEST”);
-#endif
+public string sys_id { get; set; }        // 系統ID
+public string type { get; set; }          // 1=頁面設定, 2=權限設定
+public string environment { get; set; }   // TEST=測試, PROD=正式
+}
 
 ```
-            // 解析結果並導向
-            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
-            
-            if (response.code == "0000")
+/// <summary>
+/// 回應結果
+/// </summary>
+public class GetFunctionAndAccessUrlResponse
+{
+    public string code { get; set; }     // 結果代碼
+    public string message { get; set; }  // 訊息
+    public string url { get; set; }      // 功能連結
+}
+
+/// <summary>
+/// 核心服務
+/// </summary>
+public class AccessUrlService
+{
+    // 環境網址設定 - 修正為正確的路徑
+    private readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+    {
+        { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        { "DEBUG", "http://localhost:53088" }  // 新增 DEBUG 環境
+    };
+
+    // 功能類型設定 - 修正為正確的 Action
+    private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+    {
+        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定 - 對應原本的路徑
+        { "2", "TokenEntry" }        // 權限設定 - 對應原本的路徑
+    };
+
+    // 【可選】授權系統清單 - 如果您不需要限制可以註解掉
+    private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
+    {
+        "HI_POS" // 只允許 HI_POS 系統呼叫，可以加入其他系統ID
+        // "HI_CRM", "HI_ERP" // 如果有其他系統需要使用可以加入
+    };
+
+    /// <summary>
+    /// 主要功能：取得功能連結（DLL 內部產生 Token）
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        try
+        {
+            // 基本參數檢查
+            if (request == null || string.IsNullOrWhiteSpace(request.sys_id) || 
+                string.IsNullOrWhiteSpace(request.type) || string.IsNullOrWhiteSpace(request.environment))
             {
-                string url = response.url; // 這個 URL 已經包含 Token 了
-                
-                string script = $@"
-                    <script>
-                       window.open('{url}', '_blank');                       
-                       window.location.href='{Url.Action("Main","Home")}';
-                    </script>";
-                return Content(script, "text/html");
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1001",
+                    message = "參數不完整",
+                    url = ""
+                };
             }
-            else
+
+            // 檢查類型是否正確
+            if (!TypeActions.ContainsKey(request.type))
             {
-                return Content($"<script>alert('取得權限管理連結失敗：{response.message}');</script>", "text/html");
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1002", 
+                    message = "類型錯誤，只接受 1 或 2",
+                    url = ""
+                };
             }
+
+            // 檢查環境是否正確
+            if (!EnvironmentUrls.ContainsKey(request.environment))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1003",
+                    message = "環境錯誤，只接受 TEST、PROD 或 DEBUG", 
+                    url = ""
+                };
+            }
+
+            // 【可選】檢查系統權限 - 如果不需要限制可以註解掉這段
+            if (!AuthorizedSystems.Contains(request.sys_id))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "0001",
+                    message = "查無權限",
+                    url = ""
+                };
+            }
+
+            // DLL 內部產生 JWT Token
+            string token = GenerateJwtToken(request.sys_id);
+
+            // 組合最終 URL（包含 Token）
+            string baseUrl = EnvironmentUrls[request.environment];
+            string action = TypeActions[request.type];
+            string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+            // 回傳成功結果
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "0000",
+                message = "成功",
+                url = finalUrl
+            };
         }
         catch (Exception ex)
         {
-            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "9999",
+                message = "系統錯誤：" + ex.Message,
+                url = ""
+            };
         }
     }
 
-    // 系統頁面定義管理導向 Action（使用 DLL，超簡單版本）
-    public ActionResult AP_ACCESS_SYS_FUNC()
+    /// <summary>
+    /// 產生 JWT Token（整合 JwtHelper 的邏輯）
+    /// </summary>
+    private string GenerateJwtToken(string systemId, string empNo = null)
+    {
+        var claims = new[]
+        {
+            new Claim("systemId", systemId),
+            new Claim("empNo", empNo ?? "SYSTEM_USER")
+        };
+
+        string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: "hi_ap_access_dll",
+            audience: "hi_ap_access_web",
+            claims: claims,
+            expires: DateTime.Now.AddHours(1),
+            signingCredentials: creds
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+
+/// <summary>
+/// 主要對外類別
+/// </summary>
+public class Class1
+{
+    private readonly AccessUrlService _service;
+
+    public Class1()
+    {
+        _service = new AccessUrlService();
+    }
+
+    /// <summary>
+    /// 方法1：使用物件參數
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        return _service.GetFunctionAndAccessUrl(request);
+    }
+
+    /// <summary>
+    /// 方法2：使用JSON字串 (最常用)
+    /// </summary>
+    public string GetFunctionAndAccessUrl(string requestJson)
     {
         try
         {
-            // 只需要三個參數，DLL 會處理一切
-            var api = new Class1();
-```
-
-#if DEBUG
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “DEBUG”);
-#else
-string jsonResult = api.GetFunctionAndAccessUrl(“HI_POSIMG”, “1”, “TEST”);
-#endif
-
-```
-            // 解析結果並導向
-            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
-            
-            if (response.code == "0000")
-            {
-                string url = response.url; // 這個 URL 已經包含 Token 了
-                
-                string script = $@"
-                    <script>
-                       window.open('{url}', '_blank');                       
-                       window.location.href='{Url.Action("Main", "Home")}';
-                    </script>";
-                return Content(script, "text/html");
-            }
-            else
-            {
-                return Content($"<script>alert('取得頁面功能管理連結失敗：{response.message}');</script>", "text/html");
-            }
+            var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(requestJson);
+            var response = _service.GetFunctionAndAccessUrl(request);
+            return JsonConvert.SerializeObject(response, Formatting.Indented);
         }
         catch (Exception ex)
         {
-            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            var errorResponse = new GetFunctionAndAccessUrlResponse
+            {
+                code = "8888",
+                message = "JSON格式錯誤：" + ex.Message,
+                url = ""
+            };
+            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
         }
     }
 
-    // 【保留】原本的方法（備用）
-    public ActionResult AP_ACCESS_SYS_OLD()
+    /// <summary>
+    /// 方法3：直接傳入三個參數（最簡單，推薦使用）
+    /// </summary>
+    public string GetFunctionAndAccessUrl(string sysId, string type, string environment)
     {
-        try
+        var request = new GetFunctionAndAccessUrlRequest
         {
-            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);  //HI_POS、HI_POSIMG、POS_LOG
-```
+            sys_id = sysId,
+            type = type,
+            environment = environment
+        };
 
-#if DEBUG
-string url = $“http://localhost:53088/Home/TokenEntry?token={token}”;
-#else
-string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry?token={token}”;
-#endif
-string script = $@”
-<script>
-window.open(’{url}’, ‘_blank’);  
-window.location.href=’{Url.Action(“Main”,“Home”)}’;
-</script>”;
-return Content(script, “text/html”);
-}
-catch (Exception ex)
-{
-return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
-}
-}
-
-```
-    // 【保留】原本的方法（備用）
-    public ActionResult AP_ACCESS_SYS_FUNC_OLD()
-    {
-        try
-        {
-            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO); //HI_POS、HI_POSIMG、POS_LOG
-```
-
-#if DEBUG
-string url = $“http://localhost:53088/Home/TokenEntry_FUNC?token={token}”;
-#else
-string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token={token}”;
-#endif
-string script = $@”
-<script>
-window.open(’{url}’, ‘_blank’);  
-window.location.href=’{Url.Action(“Main”, “Home”)}’;
-</script>”;
-return Content(script, “text/html”);
-}
-catch (Exception ex)
-{
-return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
-}
-}
-
-```
-    // 測試 DLL 功能的方法
-    public ActionResult TestDLL()
-    {
-        try
-        {
-            var api = new Class1();
-            
-            string result1 = api.GetFunctionAndAccessUrl("HI_POSIMG", "1", "TEST");
-            string result2 = api.GetFunctionAndAccessUrl("HI_POSIMG", "2", "TEST");
-            
-            string html = $@"
-                <h3>DLL 測試結果</h3>
-                <p><strong>頁面功能設定 (類型1)：</strong></p>
-                <pre>{result1}</pre>
-                <p><strong>權限設定 (類型2)：</strong></p>
-                <pre>{result2}</pre>
-            ";
-            
-            return Content(html, "text/html");
-        }
-        catch (Exception ex)
-        {
-            return Content($"<h3>DLL 測試失敗</h3><p>{ex.Message}</p>", "text/html");
-        }
+        var response = _service.GetFunctionAndAccessUrl(request);
+        return JsonConvert.SerializeObject(response, Formatting.Indented);
     }
 }
 ```
 
 }
-
