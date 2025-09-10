@@ -1,174 +1,216 @@
-using HI_APACCESS.Factory.F_Home;
-using HI_APACCESS.Models.M_Home;
-using HI_APACCESS.Service;
-using HI_APACCESS.ViewModels;
-using System.Web.Mvc;
-using System.Security.Claims;
-using HI_APACCESS.Service.Validation;
-using System.Web.Security;
-using System.Web;
 using System;
+using System.Collections.Generic;
+using System.Text;
+using Newtonsoft.Json;
 
-namespace HI_APACCESS.Controllers
+namespace HI_APACCESS_DLL_FRAMEWORK
 {
-    public class HomeController : HI_APACCESSBaseController
+/// <summary>
+/// 請求參數
+/// </summary>
+public class GetFunctionAndAccessUrlRequest
+{
+public string sys_id { get; set; }        // 系統ID
+public string type { get; set; }          // 1=頁面設定, 2=權限設定
+public string environment { get; set; }   // TEST=測試, PROD=正式
+}
+
+```
+/// <summary>
+/// 回應結果
+/// </summary>
+public class GetFunctionAndAccessUrlResponse
+{
+    public string code { get; set; }     // 結果代碼
+    public string message { get; set; }  // 訊息
+    public string url { get; set; }      // 功能連結
+}
+
+/// <summary>
+/// 核心服務
+/// </summary>
+public class AccessUrlService
+{
+    // 環境網址設定 - 修正為正確的路徑
+    private readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
     {
-        readonly F_Main f_Main = new F_Main();
+        { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        { "DEBUG", "http://localhost:53088" }  // 新增 DEBUG 環境
+    };
 
-        [HttpGet]
-        public ActionResult Entry()
+    // 功能類型設定 - 修正為正確的 Action
+    private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+    {
+        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定 - 對應原本的路徑
+        { "2", "TokenEntry" }        // 權限設定 - 對應原本的路徑
+    };
+
+    // 【可選】授權系統清單 - 如果您不需要限制可以註解掉
+    private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
+    {
+        "HI_POS" // 只允許 HI_POS 系統呼叫，可以加入其他系統ID
+        // "HI_CRM", "HI_ERP" // 如果有其他系統需要使用可以加入
+    };
+
+    /// <summary>
+    /// 主要功能：取得功能連結（DLL 內部產生 Token）
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        try
         {
-            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-            var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentEmpNo"] = empNo;
-           
-            // 導向到群組管理
-            return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
-        }
-
-
-        [HttpGet]
-        public ActionResult Entry_FUNC()
-        {
-            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-            var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentEmpNo"] = empNo;
-
-            // 導向到頁面管理
-            return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
-        }
-
-
-        #region 原本
-        [HttpGet]
-        [TokenAuthorize]
-        public ActionResult TokenEntry_OLD()
-        {
-            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-            var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-            if (string.IsNullOrEmpty(systemId))
+            // 基本參數檢查
+            if (request == null || string.IsNullOrWhiteSpace(request.sys_id) || 
+                string.IsNullOrWhiteSpace(request.type) || string.IsNullOrWhiteSpace(request.environment))
             {
-                return Content("<script>alert('無法取得系統ID'); window.close();</script>", "text/html");
-            }
-
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentEmpNo"] = empNo;
-
-            // 建立 Forms Authentication 票券，避免 RefreshSession 失敗
-            try
-            {
-                // 可以嘗試取得該員工的完整資料，或使用基本資料
-                var empData = new
+                return new GetFunctionAndAccessUrlResponse
                 {
-                    EmpNo = empNo,
-                    SystemId = systemId,
-                    LoginTime = DateTime.Now,
-                    Source = "JWT_TOKEN"
+                    code = "1001",
+                    message = "參數不完整",
+                    url = ""
                 };
-
-                string userData = Newtonsoft.Json.JsonConvert.SerializeObject(empData);
-
-                FormsAuthenticationTicket ticket = new FormsAuthenticationTicket(
-                    1,                          // 版本
-                    empNo,                      // 使用從 token 來的員工編號
-                    DateTime.Now,               // 發行時間
-                    DateTime.Now.AddHours(1),   // 過期時間
-                    false,                      // 持久性
-                    userData                    // 用戶資料
-                );
-
-                string encryptedTicket = FormsAuthentication.Encrypt(ticket);
-                HttpCookie authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encryptedTicket);
-                Response.Cookies.Add(authCookie);
-
-                System.Diagnostics.Debug.WriteLine($"建立 Forms Authentication 成功 - EmpNo: {empNo}");
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"建立 Forms Authentication 失敗: {ex.Message}");
             }
 
-            // 導向到群組管理
-            return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
-        }
-
-
-        [HttpGet]
-        [TokenAuthorize]
-        public ActionResult TokenEntry_FUNC_OLD()
-        {
-            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-            var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-            if (string.IsNullOrEmpty(systemId))
+            // 檢查類型是否正確
+            if (!TypeActions.ContainsKey(request.type))
             {
-                return Content("<script>alert('無法取得系統ID'); window.close();</script>", "text/html");
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1002", 
+                    message = "類型錯誤，只接受 1 或 2",
+                    url = ""
+                };
             }
 
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentEmpNo"] = empNo;
-
-            var empData = new
+            // 檢查環境是否正確
+            if (!EnvironmentUrls.ContainsKey(request.environment))
             {
-                EmpNo = empNo,
-                SystemId = systemId,
-                LoginTime = DateTime.Now,
-                Source = "JWT_TOKEN"
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "1003",
+                    message = "環境錯誤，只接受 TEST、PROD 或 DEBUG", 
+                    url = ""
+                };
+            }
+
+            // 【可選】檢查系統權限 - 如果不需要限制可以註解掉這段
+            if (!AuthorizedSystems.Contains(request.sys_id))
+            {
+                return new GetFunctionAndAccessUrlResponse
+                {
+                    code = "0001",
+                    message = "查無權限",
+                    url = ""
+                };
+            }
+
+            // DLL 內部產生 Token
+            string token = GenerateJwtToken(request.sys_id);
+
+            // 組合最終 URL（包含 Token）
+            string baseUrl = EnvironmentUrls[request.environment];
+            string action = TypeActions[request.type];
+            string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+            // 回傳成功結果
+            return new GetFunctionAndAccessUrlResponse
+            {
+                code = "0000",
+                message = "成功",
+                url = finalUrl
             };
-
-            string userData = Newtonsoft.Json.JsonConvert.SerializeObject(empData);
-
-            FormsAuthenticationTicket ticket = new FormsAuthenticationTicket(
-                1,
-                empNo,
-                DateTime.Now,
-                DateTime.Now.AddHours(1),
-                false,
-                userData
-            );
-
-            string encryptedTicket = FormsAuthentication.Encrypt(ticket);
-            HttpCookie authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encryptedTicket);
-            Response.Cookies.Add(authCookie);
-
-            // 導向到頁面管理
-            return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
         }
-        #endregion
-
-        public ActionResult Index()
+        catch (Exception ex)
         {
-            return null;
-            //string systemId = Session["CurrentSystemId"] as string;
-            //if (string.IsNullOrEmpty(systemId))
-            //{
-            //    return Content("<h3>請透過權限管理連結進入此系統</h3>");
-            //}
-
-            //ViewBag.SystemId = systemId;
-            //return View();
-        }
-
-        public ActionResult Main()
-        {
-            M_Main m_Main = new M_Main()
+            return new GetFunctionAndAccessUrlResponse
             {
-                Main_Bodies = f_Main.Get_Bodies()
+                code = "9999",
+                message = "系統錯誤：" + ex.Message,
+                url = ""
             };
-
-            return View(m_Main);
         }
-
-        public JsonResult Get_EmployeeInfo()
-        {
-            VM_Employee.VM_員工部門職稱 ret = SVS_員工基本資料.Get_員工基本資料(this.Emp_NO);
-            return Json(ret, JsonRequestBehavior.AllowGet);
-        }
-
     }
+
+    /// <summary>
+    /// 產生 JWT Token（模擬 JwtHelper 的功能）
+    /// 這裡需要實作真正的 JWT Token 產生邏輯
+    /// </summary>
+    private string GenerateJwtToken(string sysId)
+    {
+        // TODO: 這裡需要實作真正的 JWT Token 產生
+        // 目前先用簡單方式，您需要根據原本的 JwtHelper 邏輯來實作
+        
+        // 暫時的簡單實作（需要替換成真正的 JWT）
+        string payload = $"{sysId}_{DateTime.Now:yyyyMMddHHmmss}_{Guid.NewGuid().ToString("N")[..8]}";
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        return Convert.ToBase64String(bytes);
+        
+        // 實際應該要像這樣實作：
+        // return new JwtHelper().GenerateToken(sysId, empNo);
+        // 但這需要您將 JwtHelper 的邏輯複製到 DLL 中
+    }
+}
+
+/// <summary>
+/// 主要對外類別
+/// </summary>
+public class Class1
+{
+    private readonly AccessUrlService _service;
+
+    public Class1()
+    {
+        _service = new AccessUrlService();
+    }
+
+    /// <summary>
+    /// 方法1：使用物件參數
+    /// </summary>
+    public GetFunctionAndAccessUrlResponse GetFunctionAndAccessUrl(GetFunctionAndAccessUrlRequest request)
+    {
+        return _service.GetFunctionAndAccessUrl(request);
+    }
+
+    /// <summary>
+    /// 方法2：使用JSON字串 (最常用)
+    /// </summary>
+    public string GetFunctionAndAccessUrl(string requestJson)
+    {
+        try
+        {
+            var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(requestJson);
+            var response = _service.GetFunctionAndAccessUrl(request);
+            return JsonConvert.SerializeObject(response, Formatting.Indented);
+        }
+        catch (Exception ex)
+        {
+            var errorResponse = new GetFunctionAndAccessUrlResponse
+            {
+                code = "8888",
+                message = "JSON格式錯誤：" + ex.Message,
+                url = ""
+            };
+            return JsonConvert.SerializeObject(errorResponse, Formatting.Indented);
+        }
+    }
+
+    /// <summary>
+    /// 方法3：直接傳入三個參數（最簡單，推薦使用）
+    /// </summary>
+    public string GetFunctionAndAccessUrl(string sysId, string type, string environment)
+    {
+        var request = new GetFunctionAndAccessUrlRequest
+        {
+            sys_id = sysId,
+            type = type,
+            environment = environment
+        };
+
+        var response = _service.GetFunctionAndAccessUrl(request);
+        return JsonConvert.SerializeObject(response, Formatting.Indented);
+    }
+}
+```
+
 }
