@@ -38,11 +38,11 @@ public class AccessUrlService
         { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" }
     };
 
-    // 功能類型設定
+    // 功能類型設定 - 對應 HI_APACCESS 系統的實際 Action
     private readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
     {
-        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
-        { "2", "TokenEntry_PERM" }   // 權限設定
+        { "1", "PageManagement" },   // 頁面&按鈕設定 -> HI_APACCESS 的 PageManagement
+        { "2", "GroupManagement" }   // 權限設定 -> HI_APACCESS 的 GroupManagement
     };
 
     // 【可選】授權系統清單 - 如果您不需要限制可以註解掉
@@ -206,40 +206,41 @@ public class Class1
 
 }
 
-// 在目標系統的頁面或 Controller 中
-using System;
-using HI_APACCESS_DLL_FRAMEWORK; // 加入這個 using
+// 在 PosFile_Apply 系統中使用 DLL
 
-namespace YourTargetSystem.Controllers
+using HI_APACCESS_DLL_FRAMEWORK; // 加入 DLL 參考
+
+namespace PosFile_Apply.Controllers
 {
-public class SettingController : Controller
+public class AccessController : Controller
 {
-// 頁面設定入口
-public ActionResult GoToPageSetting()
+/// <summary>
+/// ap_access_sys - 對應權限設定入口
+/// </summary>
+public ActionResult ap_access_sys()
 {
 try
 {
 // 建立 DLL 實例
-var accessApi = new Class1();
+var api = new Class1();
 
 ```
-            // 呼叫 API 取得連結
-            // 參數：系統ID, 類型(1=頁面設定), 環境
-            string jsonResult = accessApi.GetFunctionAndAccessUrl("HI_POS", "1", "TEST");
+            // 呼叫 DLL 取得 HI_APACCESS 的 GroupManagement 連結
+            // 參數：系統ID, 類型(2=權限設定), 環境
+            string jsonResult = api.GetFunctionAndAccessUrl("HI_POS", "2", "TEST");
             
-            // 解析 JSON 回傳結果
+            // 解析結果
             dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
             
             if (response.code == "0000")
             {
-                // 成功，導向到設定頁面
-                string settingUrl = response.url;
-                return Redirect(settingUrl);
+                // 成功，導向到 HI_APACCESS 的 GroupManagement
+                return Redirect(response.url.ToString());
             }
             else
             {
-                // 失敗，顯示錯誤訊息
-                ViewBag.ErrorMessage = $"錯誤代碼：{response.code}，訊息：{response.message}";
+                // 失敗處理
+                ViewBag.ErrorMessage = $"取得權限設定連結失敗：{response.message}";
                 return View("Error");
             }
         }
@@ -250,25 +251,29 @@ var accessApi = new Class1();
         }
     }
 
-    // 權限設定入口
-    public ActionResult GoToPermissionSetting()
+    /// <summary>
+    /// ap_access_sys_func - 對應頁面功能設定入口
+    /// </summary>
+    public ActionResult ap_access_sys_func()
     {
         try
         {
-            var accessApi = new Class1();
+            var api = new Class1();
             
-            // 類型 2 = 權限設定
-            string jsonResult = accessApi.GetFunctionAndAccessUrl("HI_POS", "2", "TEST");
+            // 呼叫 DLL 取得 HI_APACCESS 的 PageManagement 連結
+            // 參數：系統ID, 類型(1=頁面設定), 環境
+            string jsonResult = api.GetFunctionAndAccessUrl("HI_POS", "1", "TEST");
             
             dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
             
             if (response.code == "0000")
             {
+                // 導向到 HI_APACCESS 的 PageManagement
                 return Redirect(response.url.ToString());
             }
             else
             {
-                ViewBag.ErrorMessage = response.message;
+                ViewBag.ErrorMessage = $"取得頁面設定連結失敗：{response.message}";
                 return View("Error");
             }
         }
@@ -276,6 +281,32 @@ var accessApi = new Class1();
         {
             ViewBag.ErrorMessage = "系統錯誤：" + ex.Message;
             return View("Error");
+        }
+    }
+
+    /// <summary>
+    /// 測試方法 - 可以用來確認 DLL 是否正常
+    /// </summary>
+    public ActionResult TestDll()
+    {
+        try
+        {
+            var api = new Class1();
+            
+            // 測試權限設定連結
+            string result1 = api.GetFunctionAndAccessUrl("HI_POS", "2", "TEST");
+            ViewBag.PermissionResult = result1;
+            
+            // 測試頁面設定連結
+            string result2 = api.GetFunctionAndAccessUrl("HI_POS", "1", "TEST");
+            ViewBag.PageResult = result2;
+            
+            return View();
+        }
+        catch (Exception ex)
+        {
+            ViewBag.ErrorMessage = ex.Message;
+            return View();
         }
     }
 }
@@ -284,58 +315,115 @@ var accessApi = new Class1();
 }
 
 // 如果是 WebForms 的話
-public partial class SettingPage : System.Web.UI.Page
+namespace PosFile_Apply
 {
-protected void btnPageSetting_Click(object sender, EventArgs e)
+public partial class AccessPage : System.Web.UI.Page
 {
-try
-{
-var accessApi = new HI_APACCESS_DLL_FRAMEWORK.Class1();
-string jsonResult = accessApi.GetFunctionAndAccessUrl(“HI_POS”, “1”, “TEST”);
-
-```
-        // 可以先看看回傳什麼
-        Response.Write("API 回傳：" + jsonResult);
-        
-        // 或者解析後導向
-        dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
-        if (response.code == "0000")
-        {
-            Response.Redirect(response.url.ToString());
-        }
-        else
-        {
-            lblMessage.Text = "錯誤：" + response.message;
-        }
-    }
-    catch (Exception ex)
-    {
-        lblMessage.Text = "系統錯誤：" + ex.Message;
-    }
-}
-```
-
-}
-
-// 簡單測試用的靜態方法
-public static class DllTester
-{
-public static void TestDll()
+// 權限設定按鈕
+protected void btnAccessSys_Click(object sender, EventArgs e)
 {
 try
 {
 var api = new HI_APACCESS_DLL_FRAMEWORK.Class1();
-string result = api.GetFunctionAndAccessUrl(“HI_POS”, “1”, “TEST”);
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POS”, “2”, “TEST”);
 
 ```
-        Console.WriteLine("測試結果：");
-        Console.WriteLine(result);
+            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+            
+            if (response.code == "0000")
+            {
+                Response.Redirect(response.url.ToString());
+            }
+            else
+            {
+                lblMessage.Text = "錯誤：" + response.message;
+            }
+        }
+        catch (Exception ex)
+        {
+            lblMessage.Text = "系統錯誤：" + ex.Message;
+        }
     }
-    catch (Exception ex)
+
+    // 頁面功能設定按鈕
+    protected void btnAccessSysFunc_Click(object sender, EventArgs e)
     {
-        Console.WriteLine("測試失敗：" + ex.Message);
+        try
+        {
+            var api = new HI_APACCESS_DLL_FRAMEWORK.Class1();
+            string jsonResult = api.GetFunctionAndAccessUrl("HI_POS", "1", "TEST");
+            
+            dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+            
+            if (response.code == "0000")
+            {
+                Response.Redirect(response.url.ToString());
+            }
+            else
+            {
+                lblMessage.Text = "錯誤：" + response.message;
+            }
+        }
+        catch (Exception ex)
+        {
+            lblMessage.Text = "系統錯誤：" + ex.Message;
+        }
     }
 }
 ```
 
 }
+
+// Helper 類別版本（推薦使用）
+namespace PosFile_Apply.Helpers
+{
+public static class HiAccessHelper
+{
+/// <summary>
+/// 取得權限設定 URL（對應 ap_access_sys）
+/// </summary>
+public static string GetPermissionSettingUrl(string environment = “TEST”)
+{
+var api = new HI_APACCESS_DLL_FRAMEWORK.Class1();
+string jsonResult = api.GetFunctionAndAccessUrl(“HI_POS”, “2”, environment);
+
+```
+        dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+        
+        if (response.code == "0000")
+        {
+            return response.url;
+        }
+        else
+        {
+            throw new Exception(response.message.ToString());
+        }
+    }
+
+    /// <summary>
+    /// 取得頁面功能設定 URL（對應 ap_access_sys_func）
+    /// </summary>
+    public static string GetPageFunctionSettingUrl(string environment = "TEST")
+    {
+        var api = new HI_APACCESS_DLL_FRAMEWORK.Class1();
+        string jsonResult = api.GetFunctionAndAccessUrl("HI_POS", "1", environment);
+        
+        dynamic response = Newtonsoft.Json.JsonConvert.DeserializeObject(jsonResult);
+        
+        if (response.code == "0000")
+        {
+            return response.url;
+        }
+        else
+        {
+            throw new Exception(response.message.ToString());
+        }
+    }
+}
+```
+
+}
+
+// 預期的 URL 輸出範例：
+// 類型 1 (頁面設定)：http://10.8.254.68/HI_APACCESS_TEST/Home/PageManagement?token=xxx
+// 類型 2 (權限設定)：http://10.8.254.68/HI_APACCESS_TEST/Home/GroupManagement?token=xxx
