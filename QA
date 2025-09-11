@@ -1,150 +1,218 @@
-Request_ 取到的是字串{sys_id=hi_posimg,type=1,environment=test}
-要解析取sys_id、type、environment (model)
-然後再傳回字串結果
+// 在 PosFile_Apply 專案中建立這些 Model 類別
+
+namespace POSFILE_APPLY.Models
 {
-code=0000
-message=成功
-url:"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token=123
+/// <summary>
+/// 請求模型
+/// </summary>
+public class GetUrlRequsetModel
+{
+public string sys_id { get; set; }
+public string type { get; set; }
+public string environment { get; set; }
 }
 
-HI_APACCESS_DLL_FRAMEWORK
-要改成以下寫法
-// 取得功能連結
-  public string GetFunctionAndAccessUrl(string Request_)
-  {
-      var response = new GetFunctionAndAccessUrlResponse();
-      try
-      {
-              
-          GetFunctionAndAccessUrlRequest request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(Request_);
-          // 檢查類型是否正確
-          if (!TypeActions.ContainsKey(request.type))
-          {
-              response = new GetFunctionAndAccessUrlResponse
-              {
-                  code = "1002",
-                  message = "類型錯誤，只接受 1 或 2",
-                  url = ""
-              };
-              return JsonConvert.SerializeObject(response);
-          }
+```
+/// <summary>
+/// 回應模型
+/// </summary>
+public class GetUrlResponseModel
+{
+    public string code { get; set; }
+    public string message { get; set; }
+    public string url { get; set; }
+}
+```
 
-          // 檢查環境是否正確
-          if (!EnvironmentUrls.ContainsKey(request.environment))
-          {
-              response = new GetFunctionAndAccessUrlResponse
-              {
-                  code = "1003",
-                  message = "環境錯誤，只接受 TEST、PROD",
-                  url = ""
-              };
-              return JsonConvert.SerializeObject(response);
-          }
+}
 
-          // 檢查系統權限
-          if (!AuthorizedSystems.Contains(request.sys_id))
-          {
-              response  = new GetFunctionAndAccessUrlResponse
-              {
-                 code = "0001",
-                  message = "查無權限",
-                  url = ""
-              }; 
-              return JsonConvert.SerializeObject(response);
-          }
+// 修正後的 APController
+using POSFILE_APPLY.Factory;
+using POSFILE_APPLY.Service;
+using POSFILE_APPLY.Models;  // 加入 Models 參考
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Claims;
+using System.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Text;
+using System.Web;
+using System.Web.Mvc;
+using X.PagedList;
+using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
+using HI_APACCESS_DLL_FRAMEWORK; // 引用 DLL
+using Newtonsoft.Json;
 
-          // 產 JWT Token
-          string token = GenerateJwtToken(request.sys_id);
-
-          // 組合最終 URL（含 Token）
-          string baseUrl = EnvironmentUrls[request.environment];
-          string action = TypeActions[request.type];
-          string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
-
-          // 回傳成功結果
-          response = new GetFunctionAndAccessUrlResponse
-          {
-              code = "0000",
-              message = "成功",
-              url = finalUrl
-          };
-          return JsonConvert.SerializeObject(response);
-      }
-      catch (Exception ex)
-      {
-          response = new GetFunctionAndAccessUrlResponse
-          {
-              code = "####",
-              message = "系統錯誤：" + ex.Message,
-              url = ""
-          };
-          return JsonConvert.SerializeObject(response);
-      }
-  }
-
-呼叫dll寫法
+namespace POSFILE_APPLY.Controllers
+{
+public class APController : POSFILE_APPLYBaseController
+{
+// 權限管理導向 Action（使用 DLL 新版本）
 public ActionResult AP_ACCESS_SYS()
 {
-     try
+try
+{
+var req_para = new GetUrlRequsetModel()
+{
+sys_id = “HI_POSIMG”,  // 修正：使用正確的系統ID
+environment = “TEST”,
+type = “2”             // 類型2 = 權限設定
+};
 
-     {
-         var req_para = new GetUrlRequsetModel()
-         {
-             sys_id = "HI_APLOG",
-             environment="TEST",
-             type = "2"
-         };
-         string json_input = JsonConvert.SerializeObject(req_para);
-         string response = new AccessUrlService().GetFunctionAndAccessUrl(json_input);
-         GetUrlResponseModel response_ = JsonConvert.DeserializeObject<GetUrlResponseModel>(response);
-         string script = $@"
-             <script>
-                window.open('{response_.url}', '_blank');                       
-                      
-             </script>";
-         return Content(script, "text/html");
-     }
-     catch (Exception ex)
-     {
-         return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
-     }
+```
+            string json_input = JsonConvert.SerializeObject(req_para);
+            string response = new HI_APACCESS_DLL_FRAMEWORK.Class1().GetFunctionAndAccessUrl(json_input);
+            GetUrlResponseModel response_ = JsonConvert.DeserializeObject<GetUrlResponseModel>(response);
+            
+            if (response_.code == "0000")
+            {
+                string script = $@"
+                    <script>
+                       window.open('{response_.url}', '_blank');                       
+                       window.location.href='{Url.Action("Main","Home")}';
+                    </script>";
+                return Content(script, "text/html");
+            }
+            else
+            {
+                return Content($"<script>alert('取得權限管理連結失敗：{response_.message}');</script>", "text/html");
+            }
+        }
+        catch (Exception ex)
+        {
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+        }
+    }
+
+    // 系統頁面定義管理導向 Action（使用 DLL 新版本）
+    public ActionResult AP_ACCESS_SYS_FUNC()
+    {
+        try
+        {
+            var req_para = new GetUrlRequsetModel()
+            {
+                sys_id = "HI_POSIMG",
+                environment = "TEST",
+                type = "1"             // 類型1 = 頁面功能設定
+            };
+            
+            string json_input = JsonConvert.SerializeObject(req_para);
+            string response = new HI_APACCESS_DLL_FRAMEWORK.Class1().GetFunctionAndAccessUrl(json_input);
+            GetUrlResponseModel response_ = JsonConvert.DeserializeObject<GetUrlResponseModel>(response);
+            
+            if (response_.code == "0000")
+            {
+                string script = $@"
+                    <script>
+                       window.open('{response_.url}', '_blank');                       
+                       window.location.href='{Url.Action("Main","Home")}';
+                    </script>";
+                return Content(script, "text/html");
+            }
+            else
+            {
+                return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.message}');</script>", "text/html");
+            }
+        }
+        catch (Exception ex)
+        {
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+        }
+    }
+
+    // 測試 DLL 的方法
+    public ActionResult TestDLL()
+    {
+        try
+        {
+            // 測試權限設定
+            var req1 = new GetUrlRequsetModel()
+            {
+                sys_id = "HI_POSIMG",
+                environment = "TEST",
+                type = "2"
+            };
+            string json1 = JsonConvert.SerializeObject(req1);
+            string response1 = new HI_APACCESS_DLL_FRAMEWORK.Class1().GetFunctionAndAccessUrl(json1);
+            
+            // 測試頁面功能設定
+            var req2 = new GetUrlRequsetModel()
+            {
+                sys_id = "HI_POSIMG",
+                environment = "TEST",
+                type = "1"
+            };
+            string json2 = JsonConvert.SerializeObject(req2);
+            string response2 = new HI_APACCESS_DLL_FRAMEWORK.Class1().GetFunctionAndAccessUrl(json2);
+            
+            string html = $@"
+                <h3>DLL 測試結果</h3>
+                <h4>權限設定 (類型2)：</h4>
+                <pre>{response1}</pre>
+                <h4>頁面功能設定 (類型1)：</h4>
+                <pre>{response2}</pre>
+            ";
+            
+            return Content(html, "text/html");
+        }
+        catch (Exception ex)
+        {
+            return Content($"<h3>DLL 測試失敗</h3><p>{ex.Message}</p>", "text/html");
+        }
+    }
+
+    // 【保留】原本的方法（備用）
+    public ActionResult AP_ACCESS_SYS_OLD()
+    {
+        try
+        {
+            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);
+```
+
+#if DEBUG
+string url = $“http://localhost:53088/Home/TokenEntry?token={token}”;
+#else
+string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry?token={token}”;
+#endif
+string script = $@”
+<script>
+window.open(’{url}’, ‘_blank’);  
+window.location.href=’{Url.Action(“Main”,“Home”)}’;
+</script>”;
+return Content(script, “text/html”);
 }
-然後
-     // 授權系統清單 
-     private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
-       {
-            "HI_POS" , "HI_POSIMG" , "POS_LOG"
-       };
-用資料表
-/****** Script for SelectTopNRows command from SSMS  ******/
-SELECT [SYS_ID]
-      ,[SYS_NAME]
-      ,[CREATE_TIME]
-      ,[CREATOR]
-      ,[EDIT_TIME]
-      ,[EDITOR]
-  FROM [HI_TMMAIN].[dbo].[AP_SYS]
-取系統ID做授權系統清單
-要寫到SQL語法
-要用
-       var service = GetAPService();  //去F_AB方法區取得SQL
-       var result = service.授權系統清單(model, Emp_NO);
-舉例
-  // 根據群組編號取得群組名稱
-  public GroupModel GetGroupByNo(string apg_no)
-  {
-      string sql = @"
-      SELECT [SYS_ID], [APG_NO], [APG_NAME],[PARENT_APG_NO],  [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
-      FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-      WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO"; 
+catch (Exception ex)
+{
+return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
+}
+}
 
-      List<SqlParameter> parameters = new List<SqlParameter>
-      {
-          new SqlParameter("@SYS_ID", _sysId),
-          new SqlParameter("@APG_NO", apg_no)
-      };
+```
+    public ActionResult AP_ACCESS_SYS_FUNC_OLD()
+    {
+        try
+        {
+            string token = new JwtHelper().GenerateToken("HI_POSIMG", this.Emp_NO);
+```
 
-      DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);  //用QueryBySQL
-      var groups = SVS_DBmanager.ConvertToList<GroupModel>(dt); //引用SVS_DBmanager
-      return groups.FirstOrDefault();
-  }
+#if DEBUG
+string url = $“http://localhost:53088/Home/TokenEntry_FUNC?token={token}”;
+#else
+string url = $“http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token={token}”;
+#endif
+string script = $@”
+<script>
+window.open(’{url}’, ‘_blank’);  
+window.location.href=’{Url.Action(“Main”, “Home”)}’;
+</script>”;
+return Content(script, “text/html”);
+}
+catch (Exception ex)
+{
+return Content($”<script>alert(‘導向權限管理系統發生錯誤：{ex.Message}’);</script>”, “text/html”);
+}
+}
+}
+}
+
