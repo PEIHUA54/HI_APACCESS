@@ -1,407 +1,269 @@
-我來幫你實現這兩個功能：
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
 
-## 1. 新增查詢功能和員工下拉選單
-
-### Controller 新增方法
-
-```csharp
-#region 查詢和員工相關 AJAX
-
-// 查詢人員權限
-[HttpGet]
-public JsonResult SearchUserPermissions(string u_id)
+namespace HI_APACCESS.Models.M_AP_SET
 {
-    try
+    // 群組管理
+    public class GroupModel
     {
-        var service = GetAPService();
-        var userInfo = service.GetUserPermissions(u_id);
-        if (userInfo != null)
-        {
-            return Json(new { success = true, data = userInfo }, JsonRequestBehavior.AllowGet);
-        }
-        else
-        {
-            return Json(new { success = false, message = "查無此人員資料" }, JsonRequestBehavior.AllowGet);
-        }
+        public string SYS_ID { get; set; } 
+
+        [Display(Name = "群組編號")]
+        public string APG_NO { get; set; }
+
+        [Display(Name = "群組名稱")]
+        [Required(ErrorMessage = "群組名稱為必填")]
+        public string APG_NAME { get; set; }
+
+        [Display(Name = "主管群編號")]  //主管群組代號
+        public string PARENT_APG_NO { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
     }
-    catch (Exception ex)
+
+    // 頁面管理
+    public class FuncModel
     {
-        return Json(new { success = false, message = "查詢人員權限發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
-    }
-}
+        public string SYS_ID { get; set; } // = "HI_POSIMG";
 
-// 取得員工清單
-[HttpGet]
-public JsonResult GetEmployeeList(string keyword = "")
-{
-    try
+        [Display(Name = "頁面ID")]
+        public string FUNC_ID { get; set; }
+        public string FUNC_ID_OLD { get; set; }
+
+        [Display(Name = "頁面名稱")]
+        [Required(ErrorMessage = "頁面名稱為必填")]
+        public string FUNC_NA { get; set; }
+
+        [Display(Name = "上層ID")]
+        [Required(ErrorMessage = "上層ID為必填")]
+        public string PARENT_ID { get; set; }
+
+        [Display(Name = "頁面CONTROLLER")]
+        public string VIEW_H { get; set; }
+
+        [Display(Name = "頁面VIEW")]
+        public string VIEW_HB { get; set; }
+
+        [Display(Name = "排序")]
+        public string SORT_NO { get; set; }
+
+        [Display(Name = "是否顯示")]
+        public string IS_SHOW { get; set; }
+
+        [Display(Name = "備註")]
+        public string MEMO { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
+    }
+
+    // 按鈕管理
+    public class RFuncModel
     {
-        var service = GetAPService();
-        var employees = service.GetEmployeeList(keyword);
-        return Json(new { success = true, data = employees }, JsonRequestBehavior.AllowGet);
+        public string SYS_ID { get; set; } 
+
+        [Display(Name = "頁面ID")]
+        public string FUNC_ID { get; set; }
+
+        [Display(Name = "按鈕序號")]
+        public string BTNSEQ { get; set; }
+
+        [Display(Name = "按鈕ID")]
+        [Required(ErrorMessage = "按鈕ID為必填")]
+        public string BTNID { get; set; }
+
+        [Display(Name = "按鈕名稱")]
+        [Required(ErrorMessage = "按鈕名稱為必填")]
+        public string BTN_NAME { get; set; }
+
+        [Display(Name = "按鈕CONTROLLER")]
+        public string CONTROLLER { get; set; }
+
+        [Display(Name = "按鈕ACTION")]
+        public string ACTION { get; set; }
+
+        [Display(Name = "按鈕位置")]
+        public string LOC { get; set; }
+
+        [Display(Name = "CLICK觸發事件")]
+        public string ONCLICK { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
     }
-    catch (Exception ex)
+
+    // 群組人員管理
+    public class UserModel
     {
-        return Json(new { success = false, message = "取得員工清單發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
-    }
-}
+        public string SYS_ID { get; set; } //= "HI_POSIMG";
 
-// 根據員工編號取得員工資訊
-[HttpGet]
-public JsonResult GetEmployeeInfo(string emp_no)
-{
-    try
+        [Display(Name = "群組編號")]
+        public string APG_NO { get; set; }
+
+        [Display(Name = "群組名稱")]
+        public string APG_NAME { get; set; }
+
+        [Display(Name = "員工編號")]
+        [Required(ErrorMessage = "員工編號為必填")]
+        public string U_ID { get; set; }
+
+        [Display(Name = "員工姓名")]
+        [Required(ErrorMessage = "員工姓名為必填")]
+        public string U_NAME { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
+    }
+
+    // 頁面權限管理
+    public class FuncPermissionModel
     {
-        var service = GetAPService();
-        var employee = service.GetEmployeeInfo(emp_no);
-        if (employee != null)
-        {
-            return Json(new { success = true, data = employee }, JsonRequestBehavior.AllowGet);
-        }
-        else
-        {
-            return Json(new { success = false, message = "查無此員工" }, JsonRequestBehavior.AllowGet);
-        }
+        public string SYS_ID { get; set; } //= "HI_POSIMG";
+
+        [Display(Name = "頁面ID")]
+        public string FUNC_ID { get; set; }
+
+        [Display(Name = "頁面名稱")]
+        public string FUNC_NA { get; set; }
+
+        [Display(Name = "群組編號")]
+        public string APG_NO { get; set; }
+
+        [Display(Name = "群組名稱")]
+        public string APG_NAME { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
     }
-    catch (Exception ex)
+
+    // 按鈕權限管理
+    public class ButtonPermissionModel
     {
-        return Json(new { success = false, message = "取得員工資訊發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+        public string SYS_ID { get; set; } //= "HI_POSIMG";
+
+        [Display(Name = "頁面ID")]
+        public string FUNC_ID { get; set; }
+
+        [Display(Name = "頁面名稱")]
+        public string FUNC_NA { get; set; }
+
+        [Display(Name = "按鈕序號")]
+        public string BTNSEQ { get; set; }
+
+        [Display(Name = "按鈕ID")]
+        public string BTNID { get; set; }
+
+        [Display(Name = "按鈕名稱")]
+        public string BTN_NAME { get; set; }
+
+        [Display(Name = "群組編號")]
+        public string APG_NO { get; set; }
+
+        [Display(Name = "群組名稱")]
+        public string APG_NAME { get; set; }
+
+        [Display(Name = "建立人員")]
+        public string CREATOR { get; set; }
+
+        [Display(Name = "建立日期")]
+        public string CREATE_TIME { get; set; }
+
+        [Display(Name = "修改人員")]
+        public string EDITOR { get; set; }
+
+        [Display(Name = "修改日期")]
+        public string EDIT_TIME { get; set; }
     }
-}
 
-#endregion
-```
-
-### F_AP 新增方法
-
-```csharp
-#region 查詢和員工管理
-
-// 查詢人員完整權限資訊
-public UserPermissionModel GetUserPermissions(string u_id)
-{
-    string sql = @"
-    SELECT u.[SYS_ID], u.[APG_NO], g.[APG_NAME], u.[U_ID], u.[U_NAME], 
-           u.[CREATOR], u.[CREATE_TIME], u.[EDITOR], u.[EDIT_TIME]
-    FROM [HI_TMMAIN].[dbo].[AP_USER] u
-    LEFT JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-    WHERE u.[SYS_ID] = @SYS_ID AND u.[U_ID] = @U_ID";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
+    // 綜合權限設定ViewModel
+    public class PermissionSettingViewModel
     {
-        new SqlParameter("@SYS_ID", _sysId),
-        new SqlParameter("@U_ID", u_id)
-    };
+        public string PARENT_ID { get; set; }
 
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    if (dt.Rows.Count > 0)
+        public string SORT_NO { get; set; }
+
+        [Display(Name = "群組編號")]
+        public string APG_NO { get; set; }
+
+        [Display(Name = "群組名稱")]
+        public string APG_NAME { get; set; }
+
+        [Display(Name = "頁面ID")]
+        public string FUNC_ID { get; set; }
+
+        [Display(Name = "頁面名稱")]
+        public string FUNC_NA { get; set; }
+
+        public List<ButtonPermissionItem> ButtonPermissions { get; set; } = new List<ButtonPermissionItem>();
+
+        public bool HasPagePermission { get; set; }
+    }
+
+    public class ButtonPermissionItem
     {
-        var userInfo = SVS_DBmanager.ConvertToList<UserModel>(dt).FirstOrDefault();
-        if (userInfo != null)
-        {
-            // 取得該使用者的群組權限
-            var permissions = GetGroupPermissions(userInfo.APG_NO);
-            return new UserPermissionModel
-            {
-                UserInfo = userInfo,
-                Permissions = permissions.data
-            };
-        }
+        public string BTNSEQ { get; set; }
+        public string BTNID { get; set; }
+        public string BTN_NAME { get; set; }
+        public bool HasPermission { get; set; }
     }
-    return null;
-}
 
-// 取得員工清單
-public List<EmployeeModel> GetEmployeeList(string keyword = "")
-{
-    string sql = @"
-    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-    FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
-    WHERE 1=1";
 
-    List<SqlParameter> parameters = new List<SqlParameter>();
-
-    if (!string.IsNullOrWhiteSpace(keyword))
+    // 搜尋條件Enum
+    public enum SearchType
     {
-        sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
-        parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
-    }
-
-    sql += " ORDER BY [EMP_NO]";
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
-}
-
-// 根據員工編號取得員工資訊
-public EmployeeModel GetEmployeeInfo(string emp_no)
-{
-    string sql = @"
-    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-    FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
-    WHERE [EMP_NO] = @EMP_NO";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@EMP_NO", emp_no)
-    };
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    var employees = SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
-    return employees.FirstOrDefault();
-}
-
-#endregion
-```
-
-### 新增 Model
-
-```csharp
-public class EmployeeModel
-{
-    public string EMP_NO { get; set; }      // 員工編號
-    public string EMP_NAME { get; set; }    // 員工姓名
-    public string ORGAN_CAP { get; set; }   // 部門
-    public string POST_NAME { get; set; }   // 階職
-}
-
-public class UserPermissionModel
-{
-    public UserModel UserInfo { get; set; }
-    public List<GroupPermissionModel> Permissions { get; set; }
-}
-```
-
-### 修改 View
-
-在群組選擇區上方加入查詢功能：
-
-```html
-<!-- 查詢功能區 -->
-<div class="search-section" style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-    <div class="row align-items-center">
-        <div class="col-md-2">
-            <label class="form-label mb-0"><strong>查詢人員權限：</strong></label>
-        </div>
-        <div class="col-md-4">
-            <div class="input-group">
-                <input type="text" class="form-control" id="searchUserId" placeholder="請輸入員工編號">
-                <div class="input-group-append">
-                    <button type="button" class="btn btn-info" onclick="searchUserPermissions()">
-                        <i class="fas fa-search"></i> 查詢
-                    </button>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-2">
-            <button type="button" class="btn btn-secondary" onclick="clearSearch()">
-                <i class="fas fa-times"></i> 清除
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- 查詢結果顯示區 -->
-<div id="searchResult" style="display: none; background: #e3f2fd; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-    <h6><i class="fas fa-user"></i> 查詢結果</h6>
-    <div id="searchResultContent"></div>
-</div>
-```
-
-修改使用者 Modal：
-
-```html
-<!-- 使用者 Modal -->
-<div class="modal fade" id="userModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">新增使用者</h5>
-                <button type="button" class="close" data-dismiss="modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="userForm">
-                    <div class="form-group">
-                        <label for="userIdSelect">員工編號 <span class="text-danger">*</span></label>
-                        <select class="form-control" id="userIdSelect" onchange="onEmployeeSelect()" required>
-                            <option value="">-- 請選擇員工 --</option>
-                        </select>
-                        <small class="form-text text-muted">
-                            可直接輸入員工編號搜尋，例如輸入 "3B7" 會顯示所有相關編號
-                        </small>
-                    </div>
-                    <div class="form-group">
-                        <label for="userName">員工姓名 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="userName" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label for="userDept">部門</label>
-                        <input type="text" class="form-control" id="userDept" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label for="userPost">階職</label>
-                        <input type="text" class="form-control" id="userPost" readonly>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" onclick="saveUser()">儲存</button>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-            </div>
-        </div>
-    </div>
-</div>
-```
-
-### JavaScript 新增功能
-
-```javascript
-// 查詢人員權限
-function searchUserPermissions() {
-    const userId = $('#searchUserId').val().trim();
-    if (!userId) {
-        alert('請輸入員工編號');
-        return;
-    }
-
-    $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId }, function (response) {
-        if (response.success) {
-            displaySearchResult(response.data);
-            $('#searchResult').show();
-        } else {
-            alert(response.message);
-            $('#searchResult').hide();
-        }
-    });
-}
-
-// 顯示查詢結果
-function displaySearchResult(data) {
-    const userInfo = data.UserInfo;
-    const permissions = data.Permissions;
-
-    let html = `
-        <div class="row">
-            <div class="col-md-6">
-                <strong>員工編號：</strong>${userInfo.U_ID}<br>
-                <strong>員工姓名：</strong>${userInfo.U_NAME}<br>
-                <strong>所屬群組：</strong>${userInfo.APG_NAME} (${userInfo.APG_NO})
-            </div>
-            <div class="col-md-6">
-                <button type="button" class="btn btn-primary btn-sm" onclick="loadUserGroup('${userInfo.APG_NO}')">
-                    <i class="fas fa-eye"></i> 檢視該群組權限
-                </button>
-            </div>
-        </div>`;
-
-    $('#searchResultContent').html(html);
-}
-
-// 載入使用者群組
-function loadUserGroup(apgNo) {
-    $('#groupSelect').val(apgNo);
-    loadGroupData();
-    clearSearch();
-}
-
-// 清除查詢
-function clearSearch() {
-    $('#searchUserId').val('');
-    $('#searchResult').hide();
-}
-
-// 初始化員工下拉選單（支援搜尋）
-function initEmployeeSelect() {
-    $('#userIdSelect').select2({
-        ajax: {
-            url: '@Url.Action("GetEmployeeList", "AP")',
-            dataType: 'json',
-            delay: 300,
-            data: function (params) {
-                return {
-                    keyword: params.term || ''
-                };
-            },
-            processResults: function (data) {
-                if (data.success) {
-                    return {
-                        results: data.data.map(function(emp) {
-                            return {
-                                id: emp.EMP_NO,
-                                text: `${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP})`,
-                                empData: emp
-                            };
-                        })
-                    };
-                }
-                return { results: [] };
-            }
-        },
-        placeholder: '請輸入員工編號或姓名搜尋',
-        allowClear: true,
-        minimumInputLength: 0
-    });
-}
-
-// 員工選擇事件
-function onEmployeeSelect() {
-    const selectedOption = $('#userIdSelect option:selected');
-    if (selectedOption.val()) {
-        const empNo = selectedOption.val();
-        $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo }, function (response) {
-            if (response.success) {
-                const emp = response.data;
-                $('#userName').val(emp.EMP_NAME);
-                $('#userDept').val(emp.ORGAN_CAP);
-                $('#userPost').val(emp.POST_NAME);
-            }
-        });
-    } else {
-        $('#userName, #userDept, #userPost').val('');
+        nodata,
+        GROUP_NAME,
+        FUNC_NAME,
+        USER_NAME,
+        BUTTON_NAME
     }
 }
-
-// 修改 openUserModal 函數
-function openUserModal() {
-    $('#userForm')[0].reset();
-    $('#userIdSelect').val(null).trigger('change');
-    initEmployeeSelect();
-    $('#userModal').modal('show');
-}
-
-// 修改 saveUser 函數
-function saveUser() {
-    const formData = {
-        APG_NO: currentGroup,
-        U_ID: $('#userIdSelect').val(),
-        U_NAME: $('#userName').val()
-    };
-
-    if (!formData.U_ID || !formData.U_NAME.trim()) {
-        alert('請選擇員工');
-        return;
-    }
-
-    $.post('@Url.Action("AddUser", "AP")', formData, function (response) {
-        if (response.success) {
-            alert(response.message);
-            $('#userModal').modal('hide');
-            loadUsers();
-        } else {
-            alert(response.message);
-        }
-    });
-}
-```
-
-別忘了在頁面中引入 Select2 CSS 和 JS：
-
-```html
-<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-```
-
-這樣就實現了：
-
-1. 上方的查詢功能，可以搜尋人員並自動帶出其權限設定
-1. 新增人員時的智慧下拉選單，支援模糊搜尋和自動填入員工資訊​​​​​​​​​​​​​​​​
