@@ -1,157 +1,150 @@
-你的觀察很正確！問題確實出在群組權限管理的程式碼中。讓我找出問題所在：
-
-## 問題分析
-
-在你提供的群組權限管理程式碼中，`updateButtonListHierarchical()` 函數有這段邏輯：
-
-```javascript
-// 只顯示該父頁面下的所有子頁面
-children.forEach(childFunc => {
-    const funcId = getFuncId(childFunc);
-    // 只處理子頁面的按鈕
-    loadButtonsForPage(getFuncId(childFunc));
-});
-```
-
-這段程式碼只會載入和顯示**子頁面**的按鈕，完全忽略了父頁面本身可能也有按鈕。
-
-## 解決方案
-
-修改 `updateButtonListHierarchical()` 函數，讓它同時顯示父頁面和子頁面的按鈕：
-
-```javascript
-// 階層式更新按鈕列表
-function updateButtonListHierarchical() {
-    if (allFunctions.length === 0) {
-        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
-        return;
-    }
-
-    // 建立父子關係映射
-    const parentChildMap = {};
-    const parentPages = [];
-
-    // 分離父頁面和子頁面
-    allFunctions.forEach(func => {
-        const funcId = getFuncId(func);
-        const parentId = getParentId(func);
-
-        if (!parentId || parentId === '' || parentId === 'HOME') {
-            // 父頁面
-            parentPages.push(func);
-            if (!parentChildMap[funcId]) {
-                parentChildMap[funcId] = [];
-            }
-        } else {
-            // 子頁面 - 只要顯示的子頁面
-            if (func.IS_SHOW === 'Y') {
-                if (!parentChildMap[parentId]) {
-                    parentChildMap[parentId] = [];
-                }
-                parentChildMap[parentId].push(func);
-            }
-        }
-    });
-
-    // 父頁面按SORT_NO排序
-    parentPages.sort((a, b) => {
-        const aSort = parseInt(a.SORT_NO) || 999;
-        const bSort = parseInt(b.SORT_NO) || 999;
-        return aSort - bSort;
-    });
-
-    // 每個父頁面的子頁面按SORT_NO排序
-    Object.keys(parentChildMap).forEach(parentId => {
-        parentChildMap[parentId].sort((a, b) => {
-            const aSort = parseInt(a.SORT_NO) || 999;
-            const bSort = parseInt(b.SORT_NO) || 999;
-            return aSort - bSort;
-        });
-    });
-
-    let html = '';
-
-    // 按父頁面順序顯示
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const parentName = getFuncName(parentFunc);
-        const children = parentChildMap[parentId] || [];
-
-        // 父頁面標題
-        html += `
-        <div class="parent-page-header" id="parent-header-${parentId}">
-            <i class="fas fa-folder"></i> ${parentName}
-            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-        </div>`;
-
-        // 先顯示父頁面本身的按鈕（如果有的話）
-        html += renderPageButtonSection(parentFunc, false);
-
-        // 再顯示該父頁面下的所有子頁面
-        children.forEach(childFunc => {
-            html += renderPageButtonSection(childFunc, true);
-        });
-    });
-
-    $('#buttonList').html(html);
-
-    // 載入每個頁面的按鈕
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const children = parentChildMap[parentId] || [];
-        
-        // 載入父頁面的按鈕
-        loadButtonsForPage(parentId);
-        
-        // 載入子頁面的按鈕
-        children.forEach(childFunc => {
-            loadButtonsForPage(getFuncId(childFunc));
-        });
-    });
+Request_ 取到的是字串{sys_id=hi_posimg,type=1,environment=test}
+要解析取sys_id、type、environment (model)
+然後再傳回字串結果
+{
+code=0000
+message=成功
+url:"http://10.8.254.68/HI_APACCESS_TEST/Home/TokenEntry_FUNC?token=123
 }
 
-// 渲染頁面按鈕區塊（確保這個函數存在）
-function renderPageButtonSection(func, isChild) {
-    const funcId = getFuncId(func);
-    const funcName = getFuncName(func);
-    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+HI_APACCESS_DLL_FRAMEWORK
+要改成以下寫法
+// 取得功能連結
+  public string GetFunctionAndAccessUrl(string Request_)
+  {
+      var response = new GetFunctionAndAccessUrlResponse();
+      try
+      {
+              
+          GetFunctionAndAccessUrlRequest request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlRequest>(Request_);
+          // 檢查類型是否正確
+          if (!TypeActions.ContainsKey(request.type))
+          {
+              response = new GetFunctionAndAccessUrlResponse
+              {
+                  code = "1002",
+                  message = "類型錯誤，只接受 1 或 2",
+                  url = ""
+              };
+              return JsonConvert.SerializeObject(response);
+          }
 
-    // 頁面區塊樣式
-    const sectionStyle = hasPagePermission
-        ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa;' + (isChild ? ' margin-left: 20px;' : ' margin-left: 10px;')
-        : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6;' + (isChild ? ' margin-left: 20px;' : ' margin-left: 10px;');
+          // 檢查環境是否正確
+          if (!EnvironmentUrls.ContainsKey(request.environment))
+          {
+              response = new GetFunctionAndAccessUrlResponse
+              {
+                  code = "1003",
+                  message = "環境錯誤，只接受 TEST、PROD",
+                  url = ""
+              };
+              return JsonConvert.SerializeObject(response);
+          }
 
-    // 區分父頁面和子頁面的圖示
-    const pageIcon = isChild ? 'fas fa-file-alt' : 'fas fa-folder-open';
-    const pageType = isChild ? '子頁面' : '父頁面';
+          // 檢查系統權限
+          if (!AuthorizedSystems.Contains(request.sys_id))
+          {
+              response  = new GetFunctionAndAccessUrlResponse
+              {
+                 code = "0001",
+                  message = "查無權限",
+                  url = ""
+              }; 
+              return JsonConvert.SerializeObject(response);
+          }
 
-    return `
-        <div class="page-section ${isChild ? 'child-section' : 'parent-section'}" id="page-section-${funcId}" style="${sectionStyle}">
-            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                <span>
-                    <i class="${pageIcon}"></i> ${funcName} <small class="text-muted">[${pageType}]</small>
-                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
-                </span>
-                <div style="display: flex; gap: 5px;">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-check-square"></i> 全勾選
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-square"></i> 全取消
-                    </button>
-                </div>
-            </div>
-            <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
-                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-            </div>
-        </div>`;
+          // 產 JWT Token
+          string token = GenerateJwtToken(request.sys_id);
+
+          // 組合最終 URL（含 Token）
+          string baseUrl = EnvironmentUrls[request.environment];
+          string action = TypeActions[request.type];
+          string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+          // 回傳成功結果
+          response = new GetFunctionAndAccessUrlResponse
+          {
+              code = "0000",
+              message = "成功",
+              url = finalUrl
+          };
+          return JsonConvert.SerializeObject(response);
+      }
+      catch (Exception ex)
+      {
+          response = new GetFunctionAndAccessUrlResponse
+          {
+              code = "####",
+              message = "系統錯誤：" + ex.Message,
+              url = ""
+          };
+          return JsonConvert.SerializeObject(response);
+      }
+  }
+
+呼叫dll寫法
+public ActionResult AP_ACCESS_SYS()
+{
+     try
+
+     {
+         var req_para = new GetUrlRequsetModel()
+         {
+             sys_id = "HI_APLOG",
+             environment="TEST",
+             type = "2"
+         };
+         string json_input = JsonConvert.SerializeObject(req_para);
+         string response = new AccessUrlService().GetFunctionAndAccessUrl(json_input);
+         GetUrlResponseModel response_ = JsonConvert.DeserializeObject<GetUrlResponseModel>(response);
+         string script = $@"
+             <script>
+                window.open('{response_.url}', '_blank');                       
+                      
+             </script>";
+         return Content(script, "text/html");
+     }
+     catch (Exception ex)
+     {
+         return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+     }
 }
-```
+然後
+     // 授權系統清單 
+     private readonly HashSet<string> AuthorizedSystems = new HashSet<string>
+       {
+            "HI_POS" , "HI_POSIMG" , "POS_LOG"
+       };
+用資料表
+/****** Script for SelectTopNRows command from SSMS  ******/
+SELECT [SYS_ID]
+      ,[SYS_NAME]
+      ,[CREATE_TIME]
+      ,[CREATOR]
+      ,[EDIT_TIME]
+      ,[EDITOR]
+  FROM [HI_TMMAIN].[dbo].[AP_SYS]
+取系統ID做授權系統清單
+要寫到SQL語法
+要用
+       var service = GetAPService();  //去F_AB方法區取得SQL
+       var result = service.授權系統清單(model, Emp_NO);
+舉例
+  // 根據群組編號取得群組名稱
+  public GroupModel GetGroupByNo(string apg_no)
+  {
+      string sql = @"
+      SELECT [SYS_ID], [APG_NO], [APG_NAME],[PARENT_APG_NO],  [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+      FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+      WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO"; 
 
-## 主要修改點：
+      List<SqlParameter> parameters = new List<SqlParameter>
+      {
+          new SqlParameter("@SYS_ID", _sysId),
+          new SqlParameter("@APG_NO", apg_no)
+      };
 
-1. **同時載入父頁面和子頁面按鈕**：在最後的 `parentPages.forEach` 中，先載入父頁面的按鈕，再載入子頁面的按鈕
-1. **顯示區分**：在 `renderPageButtonSection` 中加入 `[父頁面]` 或 `[子頁面]` 標示
-1. **樣式調整**：父頁面和子頁面有不同的縮排和圖示
-
-這樣修改後，權限設定頁面就會同時顯示父頁面和子頁面的按鈕了。​​​​​​​​​​​​​​​​
+      DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);  //用QueryBySQL
+      var groups = SVS_DBmanager.ConvertToList<GroupModel>(dt); //引用SVS_DBmanager
+      return groups.FirstOrDefault();
+  }
