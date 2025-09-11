@@ -1,111 +1,142 @@
-按照您同事的寫法，您需要修改兩個地方：
+1.在groupmanagement上方
+加 查詢 功能 =>搜尋人員 AP_USER
+自動帶全部權限設定資料(群組帶出來的)
 
-## 1. 連線字串建立方法：
+2. groupmanagement的新增人員
+用下拉式選單 選員工編號 也可以手KEY
+手KEY [3B7] => 帶出相關[3B750、3B777....]
 
-```csharp
-private static string BuildConnectionString()
-{
-    var csb = new SqlConnectionStringBuilder
-    {
-        DataSource = "Hilife-tfs",
-        InitialCatalog = "HI_TMMAIN",  // 改成您的資料庫
-        PersistSecurityInfo = true,
-        TrustServerCertificate = true,
-        UserID = "pos",
-        Password = "pos1",
-        Encrypt = true
-    };
-    return csb.ConnectionString;
-}
-```
+下拉選項從這邊帶
+SELECT [EMP_NO] --員工編號
+      ,[EMP_NAME]  --員工姓名 就不用KEY 直接帶姓名出來
+      ,[ORGAN_CAP] --部門需要呈現
+      ,[POST_NAME] --階職需要呈現
+  FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
 
-## 2. 取資料的方法：
+相關程式碼
+controller:
+   #region 使用者相關 AJAX
 
-```csharp
-public List<string> GetAuthorizedSystemsList()
-{
-    string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
-    var systemIds = new List<string>();
+   // 取得群組人員
+   [HttpGet]
+   public JsonResult GetUsersByGroup(string apg_no)
+   {
+       try
+       {
+           var service = GetAPService();
+           var users = service.GetUsersByGroup(apg_no);
+           return Json(new { success = true, data = users }, JsonRequestBehavior.AllowGet);
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "取得人員資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+       }
+   }
 
-    try
-    {
-        using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
-        using (SqlCommand cmd = new SqlCommand(sql, conn))
+   // 新增使用者
+   [HttpPost]
+   public JsonResult AddUser(UserModel model)
+   {
+       try
+       {
+           model.SYS_ID = CurrentSystemId;
+
+           if (ModelState.IsValid)
+           {
+               var service = GetAPService();
+               var result = service.InsertUser(model, Emp_NO);
+               if (result == null || !result.Contains("fail"))
+               {
+                   return Json(new { success = true, message = "使用者新增成功" });
+               }
+               else
+               {
+                   return Json(new { success = false, message = "使用者新增失敗：" + result });
+               }
+           }
+           return Json(new { success = false, message = "資料驗證失敗" });
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "新增使用者發生錯誤：" + ex.Message });
+       }
+   }
+
+   // 刪除使用者
+   [HttpPost]
+   public JsonResult DeleteUser(string apg_no, string u_id)
+   {
+       try
+       {
+           var service = GetAPService();
+           var result = service.DeleteUser(apg_no, u_id);
+           if (result == null || !result.Contains("fail"))
+           {
+               return Json(new { success = true, message = "使用者刪除成功" });
+           }
+           else
+           {
+               return Json(new { success = false, message = "使用者刪除失敗：" + result });
+           }
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "刪除使用者發生錯誤：" + ex.Message });
+       }
+   }
+
+   #endregion
+
+f_ap:
+        #region 群組人員管理
+
+        // 取得群組人員
+        public List<UserModel> GetUsersByGroup(string apg_no = null)
         {
-            conn.Open();
-            using (var reader = cmd.ExecuteReader())
+            string sql = @"
+            SELECT u.[SYS_ID], u.[APG_NO], g.[APG_NAME], u.[U_ID], u.[U_NAME], 
+                   u.[CREATOR], u.[CREATE_TIME], u.[EDITOR], u.[EDIT_TIME]
+            FROM [HI_TMMAIN].[dbo].[AP_USER] u
+            LEFT JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
+            WHERE u.[SYS_ID] = @SYS_ID";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId)
+        };
+
+            if (!string.IsNullOrEmpty(apg_no))
             {
-                while (reader.Read())
-                {
-                    systemIds.Add(reader["SYS_ID"].ToString());
-                }
+                sql += " AND u.[APG_NO] = @APG_NO";
+                parameters.Add(new SqlParameter("@APG_NO", apg_no));
             }
+
+            sql += " ORDER BY u.[APG_NO], u.[U_ID]";
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<UserModel>(dt);
         }
-        return systemIds;
-    }
-    catch (Exception ex)
-    {
-        return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
-    }
-}
-```
 
-## 關於兩個版本 (Framework vs Core)：
+        // 新增群組人員
+        public string InsertUser(UserModel model, string creator)
+        {
+            string sql = @"
+            INSERT INTO [HI_TMMAIN].[dbo].[AP_USER] 
+            ([SYS_ID], [APG_NO], [U_ID], [U_NAME], [CREATOR], [CREATE_TIME])
+            VALUES (@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
 
-您需要建立兩個專案：
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId),
+            new SqlParameter("@APG_NO", model.APG_NO),
+            new SqlParameter("@U_ID", model.U_ID),
+            new SqlParameter("@U_NAME", model.U_NAME),
+            new SqlParameter("@CREATOR", creator)
+        };
 
-- `HI_APACCESS_DLL_FRAMEWORK` (.NET Framework)
-- `HI_APACCESS_DLL_CORE` (.NET Core/5+)
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
 
-程式碼幾乎相同，只有 NuGet 套件參考略有不同。您要現在開始建立 Core 版本嗎？​​​​​​​​​​​​​​​​
+      
 
-## 關於 _connectionString：
-
-**不需要了！** 如果您用同事的 `BuildConnectionString()` 方法，就可以移除：
-
-```csharp
-// 移除這些
-private readonly string _connectionString;
-
-public Class1()
-{
-    _connectionString = "Data Source=...";
-}
-```
-
-直接在需要的時候呼叫 `BuildConnectionString()` 即可。
-
-## .NET Core 版本需要的套件：
-
-```xml
-<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-<PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
-<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="6.32.3" />
-<PackageReference Include="Microsoft.IdentityModel.Tokens" Version="6.32.3" />
-```
-
-## 修改後的建構子：
-
-```csharp
-public Class1()
-{
-    // 不需要初始化 connectionString 了
-}
-
-private static string BuildConnectionString()
-{
-    var csb = new SqlConnectionStringBuilder
-    {
-        DataSource = "Hilife-tfs",
-        InitialCatalog = "HI_TMMAIN",
-        PersistSecurityInfo = true,
-        TrustServerCertificate = true,
-        UserID = "pos",
-        Password = "pos1",
-        Encrypt = true
-    };
-    return csb.ConnectionString;
-}
-```
-
-這樣程式碼更乾淨，連線字串集中管理。​​​​​​​​​​​​​​​​
+        #endregion
