@@ -1,145 +1,212 @@
-CONTROLLER:
-    #region 查詢和員工相關 AJAX
+好，我幫你把修改點整合進完整檔案，照你需求調整好：
+	1.	查詢結果：移到「清除」按鈕後面，一行顯示員工編號、姓名、所屬群組、部門、職稱。
+	2.	SQL：GetUserPermissions 已 LEFT JOIN VW_M1EMP_MAST，取 ORGAN_CAP、POST_NAME。
+	3.	新增使用者：員工編號用 <input list> + <datalist>，可下拉、可輸入、邊打邊出現候選。
+	4.	JS：改成 datalist 即時查詢 + 自動帶出姓名/部門/職稱。
 
-    // 查詢人員權限
-    [HttpGet]
-    public JsonResult SearchUserPermissions(string u_id)
-    {
-        try
-        {
-            var service = GetAPService();
-            var userInfo = service.GetUserPermissions(u_id);
-            if (userInfo != null)
-            {
-                return Json(new { success = true, data = userInfo }, JsonRequestBehavior.AllowGet);
-            }
-            else
-            {
-                return Json(new { success = false, message = "查無此人員資料" }, JsonRequestBehavior.AllowGet);
-            }
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "查詢人員權限發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
+⸻
+
+前端 Razor View (精簡後重點修改版)
+
+<!-- 查詢功能區 -->
+<div class="search-section" style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+  <div class="row align-items-center">
+    <div class="col-md-2">
+      <label class="form-label mb-0"><strong>查詢人員權限：</strong></label>
+    </div>
+    <div class="col-md-4">
+      <div class="input-group">
+        <input type="text" class="form-control" id="searchUserId" placeholder="請輸入員工編號">
+        <div class="input-group-append">
+          <button type="button" class="btn btn-info" onclick="searchUserPermissions()">
+            <i class="fas fa-search"></i> 查詢
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <button type="button" class="btn btn-secondary" onclick="clearSearch()">
+        <i class="fas fa-times"></i> 清除
+      </button>
+    </div>
+  </div>
+
+  <!-- 查詢結果就放在清除按鈕後面 -->
+  <div id="searchResult" style="display:none; background:#e3f2fd; padding:12px; border-radius:6px; margin-top:10px;">
+    <div id="searchResultContent"></div>
+  </div>
+</div>
+
+
+⸻
+
+使用者 Modal 的員工編號欄位
+
+<div class="form-group">
+  <label for="userIdInput">員工編號 <span class="text-danger">*</span></label>
+  <input type="text" class="form-control" id="userIdInput" list="empList" placeholder="輸入 3 碼以上以搜尋" required />
+  <datalist id="empList"></datalist>
+  <small class="form-text text-muted">可下拉選擇，或輸入 3 碼以上即時顯示相符員編/姓名</small>
+</div>
+
+
+⸻
+
+JavaScript
+
+// debounce 工具
+const debounce = (fn, wait = 300) => {
+  let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
+};
+
+// 查詢人員權限
+function searchUserPermissions() {
+  const userId = $('#searchUserId').val().trim();
+  if (!userId) { alert('請輸入員工編號'); return; }
+
+  $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId }, function (response) {
+    if (response.success) {
+      displaySearchResult(response.data);
+      $('#searchResult').show();
+
+      const apgNo = response.data?.UserInfo?.APG_NO || '';
+      if (apgNo) {
+        $('#groupSelect').val(apgNo);
+        loadGroupData();
+      }
+    } else {
+      alert(response.message || '查無資料');
+      $('#searchResult').hide();
     }
+  }).fail(function () {
+    alert('查詢失敗，請稍後再試');
+    $('#searchResult').hide();
+  });
+}
 
-    // 取得員工清單
-    [HttpGet]
-    public JsonResult GetEmployeeList(string keyword = "")
-    {
-        try
-        {
-            var service = GetAPService();
-            var employees = service.GetEmployeeList(keyword);
-            return Json(new { success = true, data = employees }, JsonRequestBehavior.AllowGet);
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "取得員工清單發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
+// 顯示查詢結果（單行）
+function displaySearchResult(data) {
+  const u = data.UserInfo || {};
+  const html = `
+    <div class="d-flex flex-wrap align-items-center small" style="gap:14px; line-height:1.6;">
+      <span><strong>員工編號</strong>：${u.U_ID || ''}</span>
+      <span><strong>員工姓名</strong>：${u.U_NAME || ''}</span>
+      <span><strong>所屬群組</strong>：${u.APG_NAME || ''}${u.APG_NO ? ` (${u.APG_NO})` : ''}</span>
+      <span><strong>員工部門</strong>：${u.ORGAN_CAP || ''}</span>
+      <span><strong>員工職稱</strong>：${u.POST_NAME || ''}</span>
+    </div>`;
+  $('#searchResultContent').html(html);
+}
 
-    // 根據員工編號取得員工資訊
-    [HttpGet]
-    public JsonResult GetEmployeeInfo(string emp_no)
-    {
-        try
-        {
-            var service = GetAPService();
-            var employee = service.GetEmployeeInfo(emp_no);
-            if (employee != null)
-            {
-                return Json(new { success = true, data = employee }, JsonRequestBehavior.AllowGet);
-            }
-            else
-            {
-                return Json(new { success = false, message = "查無此員工" }, JsonRequestBehavior.AllowGet);
-            }
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "取得員工資訊發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
+// 新增使用者 Modal：綁定 datalist
+function bindUserIdTypeahead() {
+  $('#userIdInput').off('input').on('input', debounce(function () {
+    const kw = this.value.trim();
+    if (kw.length < 3) return;
 
-    #endregion
+    $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw }, function (res) {
+      if (res.success && Array.isArray(res.data)) {
+        const rows = res.data.slice(0, 20);
+        const options = rows.map(emp =>
+          `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+        ).join('');
+        $('#empList').html(options);
+      }
+    });
+  }, 250));
 
-F_AP方法區SQL:  
-  #region 查詢和員工管理
+  $('#userIdInput').off('change blur').on('change blur', function () {
+    const empNo = this.value.trim();
+    if (!empNo) return;
+    $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo }, function (r) {
+      if (r.success && r.data) {
+        const emp = r.data;
+        $('#userName').val(emp.EMP_NAME || '');
+        $('#userDept').val(emp.ORGAN_CAP || '');
+        $('#userPost').val(emp.POST_NAME || '');
+      } else {
+        $('#userName,#userDept,#userPost').val('');
+      }
+    });
+  });
+}
 
-    // 查詢人員完整權限資訊  可帶VW_M1EMP_MAST=> [ORGAN_CAP], [POST_NAME]
-    public UserPermissionQueryModel GetUserPermissions(string u_id)
-    {
-        string sql = @"
-SELECT u.[SYS_ID], u.[APG_NO], g.[APG_NAME], u.[U_ID], u.[U_NAME], 
-       u.[CREATOR], u.[CREATE_TIME], u.[EDITOR], u.[EDIT_TIME]
+function openUserModal() {
+  $('#userForm')[0].reset();
+  $('#empList').empty();
+  bindUserIdTypeahead();
+  $('#userModal').modal('show');
+}
+
+function saveUser() {
+  const formData = {
+    APG_NO: currentGroup,
+    U_ID: ($('#userIdInput').val() || '').trim(),
+    U_NAME: ($('#userName').val() || '').trim()
+  };
+  if (!formData.U_ID || !formData.U_NAME) {
+    alert('請選擇有效員工編號，並確認姓名已帶出');
+    return;
+  }
+  $.post('@Url.Action("AddUser", "AP")', formData, function (res) {
+    if (res.success) {
+      alert(res.message || '新增成功');
+      $('#userModal').modal('hide');
+      loadUsers();
+    } else { alert(res.message || '新增失敗'); }
+  });
+}
+
+
+⸻
+
+後端 F_AP：GetUserPermissions SQL
+
+public UserPermissionQueryModel GetUserPermissions(string u_id)
+{
+    string sql = @"
+SELECT  u.[SYS_ID],
+        u.[APG_NO],
+        g.[APG_NAME],
+        u.[U_ID],
+        u.[U_NAME],
+        emp.[ORGAN_CAP],    -- 部門
+        emp.[POST_NAME],    -- 職稱
+        u.[CREATOR],
+        u.[CREATE_TIME],
+        u.[EDITOR],
+        u.[EDIT_TIME]
 FROM [HI_TMMAIN].[dbo].[AP_USER] u
-LEFT JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-WHERE u.[SYS_ID] = @SYS_ID AND u.[U_ID] = @U_ID";
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g
+       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
+LEFT JOIN [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] emp
+       ON emp.[EMP_NO] = u.[U_ID]
+WHERE u.[SYS_ID] = @SYS_ID
+  AND u.[U_ID]  = @U_ID";
 
-        List<SqlParameter> parameters = new List<SqlParameter>
-{
-    new SqlParameter("@SYS_ID", _sysId),
-    new SqlParameter("@U_ID", u_id)
-};
+    var parameters = new List<SqlParameter> {
+        new SqlParameter("@SYS_ID", _sysId),
+        new SqlParameter("@U_ID", u_id)
+    };
 
-        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-        if (dt.Rows.Count > 0)
+    var dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    if (dt.Rows.Count > 0)
+    {
+        var userInfo = SVS_DBmanager.ConvertToList<UserModel>(dt).FirstOrDefault();
+        if (userInfo != null)
         {
-            var userInfo = SVS_DBmanager.ConvertToList<UserModel>(dt).FirstOrDefault();
-            if (userInfo != null)
+            var permissions = GetPermissionSettings(userInfo.APG_NO);
+            return new UserPermissionQueryModel
             {
-                // 取得該使用者的群組權限
-                var permissions = GetPermissionSettings(userInfo.APG_NO);
-                return new UserPermissionQueryModel
-                {
-                    UserInfo = userInfo,
-                    Permissions = permissions
-                };
-            }
+                UserInfo = userInfo,
+                Permissions = permissions
+            };
         }
-        return null;
     }
+    return null;
+}
 
-    // 取得員工清單
-    public List<EmployeeModel> GetEmployeeList(string keyword = "")
-    {
-        string sql = @"
-SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
-WHERE 1=1";
 
-        List<SqlParameter> parameters = new List<SqlParameter>();
+⸻
 
-        if (!string.IsNullOrWhiteSpace(keyword))
-        {
-            sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
-            parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
-        }
-
-        sql += " ORDER BY [EMP_NO]";
-
-        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-        return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
-    }
-
-    // 根據員工編號取得員工資訊
-    public EmployeeModel GetEmployeeInfo(string emp_no)
-    {
-        string sql = @"
-SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
-WHERE [EMP_NO] = @EMP_NO";
-
-        List<SqlParameter> parameters = new List<SqlParameter>
-{
-    new SqlParameter("@EMP_NO", emp_no)
-};
-
-        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-        var employees = SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
-        return employees.FirstOrDefault();
-    }
-
-    #endregion
+要不要我幫你把 UserModel 需要加的 ORGAN_CAP / POST_NAME 屬性範例也一起寫給你？
