@@ -1,26 +1,111 @@
-這我的連線字串
-  _connectionString = "Data Source=Hilife-tfs;Initial Catalog=HI_TMMAIN;User ID=pos;Password=pos1;Encrypt=True;TrustServerCertificate=True";
-同事寫法
+按照您同事的寫法，您需要修改兩個地方：
+
+## 1. 連線字串建立方法：
+
+```csharp
 private static string BuildConnectionString()
 {
-     var csb = new SqlConnectionStringBuilder
-     {
-         DataSource = "Hilife-tfs",
-         InitialCatalog = "HI_APLOG",
-         PersistSecurityInfo = true,
-         TrustServerCertificate = true,
-         UserID = "pos",
-         Password = "pos1",
-         Encrypt = true
-     };
-     return csb.ConnectionString;
+    var csb = new SqlConnectionStringBuilder
+    {
+        DataSource = "Hilife-tfs",
+        InitialCatalog = "HI_TMMAIN",  // 改成您的資料庫
+        PersistSecurityInfo = true,
+        TrustServerCertificate = true,
+        UserID = "pos",
+        Password = "pos1",
+        Encrypt = true
+    };
+    return csb.ConnectionString;
+}
+```
+
+## 2. 取資料的方法：
+
+```csharp
+public List<string> GetAuthorizedSystemsList()
+{
+    string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+    var systemIds = new List<string>();
+
+    try
+    {
+        using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+        using (SqlCommand cmd = new SqlCommand(sql, conn))
+        {
+            conn.Open();
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    systemIds.Add(reader["SYS_ID"].ToString());
+                }
+            }
+        }
+        return systemIds;
+    }
+    catch (Exception ex)
+    {
+        return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
+    }
+}
+```
+
+## 關於兩個版本 (Framework vs Core)：
+
+您需要建立兩個專案：
+
+- `HI_APACCESS_DLL_FRAMEWORK` (.NET Framework)
+- `HI_APACCESS_DLL_CORE` (.NET Core/5+)
+
+程式碼幾乎相同，只有 NuGet 套件參考略有不同。您要現在開始建立 Core 版本嗎？​​​​​​​​​​​​​​​​
+
+## 關於 _connectionString：
+
+**不需要了！** 如果您用同事的 `BuildConnectionString()` 方法，就可以移除：
+
+```csharp
+// 移除這些
+private readonly string _connectionString;
+
+public Class1()
+{
+    _connectionString = "Data Source=...";
+}
+```
+
+直接在需要的時候呼叫 `BuildConnectionString()` 即可。
+
+## .NET Core 版本需要的套件：
+
+```xml
+<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+<PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
+<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="6.32.3" />
+<PackageReference Include="Microsoft.IdentityModel.Tokens" Version="6.32.3" />
+```
+
+## 修改後的建構子：
+
+```csharp
+public Class1()
+{
+    // 不需要初始化 connectionString 了
 }
 
+private static string BuildConnectionString()
+{
+    var csb = new SqlConnectionStringBuilder
+    {
+        DataSource = "Hilife-tfs",
+        InitialCatalog = "HI_TMMAIN",
+        PersistSecurityInfo = true,
+        TrustServerCertificate = true,
+        UserID = "pos",
+        Password = "pos1",
+        Encrypt = true
+    };
+    return csb.ConnectionString;
+}
+```
 
-     using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
-     using (SqlCommand cmd = new SqlCommand(sql, conn))
-     {
-         cmd.Parameters.AddWithValue("@SYS_ID", SYS_ID == null ? DBNull.Value : SYS_ID);
-         conn.Open();
-         cmd.ExecuteNonQuery();
-     }
+這樣程式碼更乾淨，連線字串集中管理。​​​​​​​​​​​​​​​​
