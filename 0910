@@ -1,559 +1,206 @@
+下面直接給「需要改的地方」—只貼要替換/刪除的片段並加上註解，其他程式保持不動即可。
 
-當然可以！修改 `loadButtonsForPage` 函數，讓沒有按鈕的頁面顯示更緊湊的樣式：
+⸻
 
-```javascript
-// 載入指定頁面的按鈕
-function loadButtonsForPage(funcId) {
-    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+1) 「不引入那兩句」：可以
 
-    $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
-        let buttonHtml = '';
+你可以刪掉 Select2 的兩行（CSS 與 JS），不會影響下面改寫後的功能。
 
-        if (response.success && response.data && response.data.length > 0) {
-            // 有按鈕時，使用正常的容器樣式
-            response.data.forEach(function (btn) {
-                const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
-                const checkedAttr = hasPermission ? 'checked' : '';
-                const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
-                const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
+<!-- 刪掉這兩行：不再使用 Select2 -->
+<!-- <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" /> -->
+<!-- <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script> -->
 
-                buttonHtml += `
-                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
-                    <div class="permission-content">
-                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
-                        <span class="permission-title">${btn.BTN_NAME}</span>
-                        <span class="permission-info">ID: ${btn.BTNID}</span>
-                    </div>
-                </div>`;
-            });
-            
-            // 更新該頁面的按鈕容器 - 正常高度
-            $(`#buttons-${funcId}`).html(buttonHtml).css({
-                'padding': '10px',
-                'min-height': 'auto'
-            });
-        } else {
-            // 沒有按鈕時，使用緊湊樣式
-            buttonHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #6c757d; font-size: 12px;">此頁面無按鈕</div>';
-            
-            // 更新該頁面的按鈕容器 - 緊湊高度
-            $(`#buttons-${funcId}`).html(buttonHtml).css({
-                'padding': '0',
-                'min-height': '30px'
-            });
-        }
-    }).fail(function () {
-        // 載入失敗時也使用緊湊樣式
-        const errorHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #dc3545; font-size: 12px;">載入失敗</div>';
-        $(`#buttons-${funcId}`).html(errorHtml).css({
-            'padding': '0',
-            'min-height': '30px'
-        });
-    });
+
+⸻
+
+2) 查詢人員權限：結果一行顯示 & 自動帶出該群組權限
+	•	按下「查詢」後，結果用一行顯示：員工編號、員工姓名、所屬群組、員工部門、員工職稱（盡量緊湊）。
+	•	自動切換到該群組並載入權限（不需要再點「檢視該群組權限」）。
+
+2-1 取代 displaySearchResult 函式
+
+// 【改】一行顯示 + 緊湊排版
+function displaySearchResult(data) {
+    const u = data.UserInfo || {};
+    const html = `
+      <div class="d-flex flex-wrap align-items-center small" style="gap:14px; line-height:1.6;">
+        <span><strong>員工編號</strong>：${u.U_ID || ''}</span>
+        <span><strong>員工姓名</strong>：${u.U_NAME || ''}</span>
+        <span><strong>所屬群組</strong>：${u.APG_NAME || ''}${u.APG_NO ? ` (${u.APG_NO})` : ''}</span>
+        <span><strong>員工部門</strong>：${u.ORGAN_CAP || ''}</span>
+        <span><strong>員工職稱</strong>：${u.POST_NAME || ''}</span>
+      </div>`;
+    $('#searchResultContent').html(html);
 }
-```
 
-或者，如果你想要在 HTML 生成階段就處理，可以在 `updateButtonListHierarchical` 中先檢查是否有按鈕，然後動態調整容器樣式：
+2-2 調整 searchUserPermissions 成功後自動載入群組
 
-```javascript
-// 在 updateButtonListHierarchical 函數中，修改按鈕容器的部分
-// 將原本的：
-<div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
-    <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-</div>
-
-// 改為：
-<div class="buttons-container" id="buttons-${funcId}" style="padding: 10px; min-height: 50px;">
-    <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-</div>
-```
-
-然後在 `loadButtonsForPage` 中動態調整：
-
-```javascript
-// 載入指定頁面的按鈕
-function loadButtonsForPage(funcId) {
-    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-    $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (response) {
-        const buttonContainer = $(`#buttons-${funcId}`);
-        let buttonHtml = '';
-
-        if (response.success && response.data && response.data.length > 0) {
-            // 有按鈕 - 恢復正常高度
-            buttonContainer.css('min-height', 'auto');
-            
-            response.data.forEach(function (btn) {
-                const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
-                const checkedAttr = hasPermission ? 'checked' : '';
-                const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
-                const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
-
-                buttonHtml += `
-                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
-                    <div class="permission-content">
-                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
-                        <span class="permission-title">${btn.BTN_NAME}</span>
-                        <span class="permission-info">ID: ${btn.BTNID}</span>
-                    </div>
-                </div>`;
-            });
-        } else {
-            // 沒有按鈕 - 設定緊湊高度
-            buttonContainer.css('min-height', '35px');
-            buttonHtml = '<div class="no-data-compact" style="text-align: center; color: #6c757d; font-size: 12px; line-height: 35px;">此頁面無按鈕</div>';
-        }
-
-        buttonContainer.html(buttonHtml);
-    }).fail(function () {
-        const buttonContainer = $(`#buttons-${funcId}`);
-        buttonContainer.css('min-height', '35px');
-        buttonContainer.html('<div class="no-data-compact" style="text-align: center; color: #dc3545; font-size: 12px; line-height: 35px;">載入失敗</div>');
-    });
-}
-```
-
-這樣修改後，沒有按鈕的頁面只會顯示一個緊湊的「此頁面無按鈕」提示，節省空間。有按鈕的頁面則保持原本的樣式和空間。​​​​​​​​​​​​​​​​
-我理解你要保持原本的樣式，只在父層底下用分隔線來區分父層按鈕和子層按鈕。修改 `updateButtonListHierarchical()` 函數：
-
-```javascript
-// 階層式更新按鈕列表
-function updateButtonListHierarchical() {
-    if (allFunctions.length === 0) {
-        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+// 【改】查到後自動帶入該群組並載入權限
+function searchUserPermissions() {
+    const userId = $('#searchUserId').val().trim();
+    if (!userId) {
+        alert('請輸入員工編號');
         return;
     }
 
-    // 建立父子關係映射
-    const parentChildMap = {};
-    const parentPages = [];
+    $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId }, function (response) {
+        if (response.success) {
+            displaySearchResult(response.data);
+            $('#searchResult').show();
 
-    // 分離父頁面和子頁面，並過濾隱藏的子頁面
-    allFunctions.forEach(func => {
-        const funcId = getFuncId(func);
-        const parentId = getParentId(func);
-
-        if (!parentId || parentId === '' || parentId === 'HOME') {
-            // 父頁面
-            parentPages.push(func);
-            if (!parentChildMap[funcId]) {
-                parentChildMap[funcId] = [];
+            const apgNo = response.data?.UserInfo?.APG_NO || '';
+            if (apgNo) {
+                $('#groupSelect').val(apgNo);
+                loadGroupData();        // 自動切到該群組並載入頁面/按鈕權限
             }
         } else {
-            // 子頁面 - 只要顯示的子頁面
-            if (func.IS_SHOW === 'Y') {
-                if (!parentChildMap[parentId]) {
-                    parentChildMap[parentId] = [];
-                }
-                parentChildMap[parentId].push(func);
-            }
+            alert(response.message || '查無資料');
+            $('#searchResult').hide();
         }
-    });
-
-    // 父頁面按SORT_NO排序
-    parentPages.sort((a, b) => {
-        const aSort = parseInt(a.SORT_NO) || 999;
-        const bSort = parseInt(b.SORT_NO) || 999;
-        return aSort - bSort;
-    });
-
-    // 每個父頁面的子頁面按SORT_NO排序
-    Object.keys(parentChildMap).forEach(parentId => {
-        parentChildMap[parentId].sort((a, b) => {
-            const aSort = parseInt(a.SORT_NO) || 999;
-            const bSort = parseInt(b.SORT_NO) || 999;
-            return aSort - bSort;
-        });
-    });
-
-    let html = '';
-
-    // 按父頁面順序顯示
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const parentName = getFuncName(parentFunc);
-        const children = parentChildMap[parentId] || [];
-
-        // 父頁面標題
-        html += `
-        <div class="parent-page-header" id="parent-header-${parentId}">
-            <i class="fas fa-folder"></i> ${parentName}
-            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-        </div>`;
-
-        // 先顯示父頁面本身的按鈕區塊（如果父頁面有按鈕的話）
-        const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
-        const parentSectionStyle = parentHasPagePermission
-            ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
-            : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
-
-        html += `
-        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
-            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                <span>
-                    <i class="fas fa-folder-open"></i> ${parentName} (父層)
-                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-                </span>
-                <div style="display: flex; gap: 5px;">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-check-square"></i> 全勾選
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-square"></i> 全取消
-                    </button>
-                </div>
-            </div>
-            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
-                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-            </div>
-        </div>`;
-
-        // 如果有子頁面，加入分隔線
-        if (children.length > 0) {
-            html += `
-            <div style="margin: 10px 20px; border-top: 2px solid #6c757d; position: relative;">
-                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: white; padding: 0 10px; color: #6c757d; font-size: 12px;">
-                    子頁面
-                </div>
-            </div>`;
-
-            // 顯示該父頁面下的所有子頁面
-            children.forEach(childFunc => {
-                const funcId = getFuncId(childFunc);
-                const funcName = getFuncName(childFunc);
-                const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-                // 頁面區塊樣式
-                const sectionStyle = hasPagePermission
-                    ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
-                    : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
-
-                html += `
-                <div class="page-section child-section" id="page-section-${funcId}" style="${sectionStyle}">
-                    <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                        <span>
-                            <i class="fas fa-file-alt"></i> ${funcName}
-                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
-                        </span>
-                        <div style="display: flex; gap: 5px;">
-                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-check-square"></i> 全勾選
-                            </button>
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-square"></i> 全取消
-                            </button>
-                        </div>
-                    </div>
-                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
-                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-                    </div>
-                </div>`;
-            });
-        }
-    });
-
-    $('#buttonList').html(html);
-
-    // 現在載入每個頁面的按鈕
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const children = parentChildMap[parentId] || [];
-        
-        // 載入父頁面的按鈕
-        loadButtonsForPage(parentId);
-        
-        // 載入子頁面的按鈕
-        children.forEach(childFunc => {
-            loadButtonsForPage(getFuncId(childFunc));
-        });
+    }).fail(function () {
+        alert('查詢失敗，請稍後再試');
+        $('#searchResult').hide();
     });
 }
-```
 
-同時修改 `togglePagePermission` 函數，讓勾選頁面權限時自動勾選該頁面的所有按鈕：
+備註：若你的 SearchUserPermissions 沒帶回部門/職稱，可在 displaySearchResult 裡偵測缺值時追加一次 GetEmployeeInfo(u.U_ID) 取回補齊（保留簡潔，這裡不贅述）。
 
-```javascript
-// 切換頁面權限
-function togglePagePermission(funcId, hasPermission) {
-    if (!groupPermissions[funcId]) {
-        groupPermissions[funcId] = { buttons: {} };
-    }
-    groupPermissions[funcId].hasPagePermission = hasPermission;
+⸻
 
-    showSaveReminder();
+3) 對齊「查詢人員權限」與「選擇群組」欄位
 
-    if (hasPermission) {
-        // 勾選頁面時，自動全勾該頁面的所有按鈕
-        $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: funcId }, function (btnResponse) {
-            if (btnResponse.success && btnResponse.data) {
-                if (!groupPermissions[funcId]) {
-                    groupPermissions[funcId] = { buttons: {} };
-                }
-                btnResponse.data.forEach(function (btn) {
-                    groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
-                });
-                refreshButtonsDisplay(funcId);   // 只刷新這個頁面的按鈕顯示
-                showSaveReminder();
-            }
-        });
+你的「查詢人員權限」區塊是 col-md-2 + col-md-4，而「選擇群組」是 col-md-3 + col-md-4，所以看起來會不齊。把群組區塊的 label 欄改為 col-md-2 即可（輸入框就會與上方對齊）。
 
-        // 原有的父子頁面邏輯保持不變...
-        if (isParentPage(allFunctions.find(f => getFuncId(f) === funcId))) {
-            const childPages = allFunctions.filter(f => getParentId(f) === funcId);
-            childPages.forEach(function (childFunc) {
-                const childId = getFuncId(childFunc);
-                if (!groupPermissions[childId]) {
-                    groupPermissions[childId] = { buttons: {} };
-                }
-                groupPermissions[childId].hasPagePermission = true;
-                $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', true);
-                $(`.page-item[data-func-id="${childId}"]`).addClass('has-permission');
+<!-- 【改】群組選擇區：將 label 欄由 col-md-3 改成 col-md-2，右側按鈕欄拉成 col-md-6 -->
+<div class="group-selector">
+  <div class="row align-items-center">
+    <div class="col-md-2"><label for="groupSelect" class="form-label mb-0"><strong>選擇群組：</strong></label></div>
+    <div class="col-md-4">
+      <select class="form-control" id="groupSelect" onchange="loadGroupData()">
+        <option value="">-- 請選擇群組 --</option>
+      </select>
+    </div>
+    <div class="col-md-6">
+      <button type="button" class="btn btn-primary" onclick="openGroupModal()">
+        <i class="fas fa-plus"></i> 新增群組
+      </button>
+      <button type="button" class="btn btn-secondary" id="editGroupBtn" onclick="editGroup()" disabled>修改</button>
+      <button type="button" class="btn btn-danger" id="deleteGroupBtn" onclick="deleteGroup()" disabled>刪除</button>
+    </div>
+  </div>
+</div>
 
-                // 自動勾選該子頁面的所有按鈕權限
-                $.get('@Url.Action("GetButtonsByFuncId", "AP")', { func_id: childId }, function (btnResponse) {
-                    if (btnResponse.success && btnResponse.data) {
-                        btnResponse.data.forEach(function (btn) {
-                            groupPermissions[childId].buttons[btn.BTNSEQ] = true;
-                        });
-                    }
-                });
-            });
-        }
 
-        const currentPage = allFunctions.find(f => getFuncId(f) === funcId);
-        if (currentPage && getParentId(currentPage)) {
-            const parentExists = allFunctions.some(f => getFuncId(f) === getParentId(currentPage));
-            if (parentExists) {
-                const parentId = getParentId(currentPage);
-                if (!groupPermissions[parentId]) {
-                    groupPermissions[parentId] = { buttons: {} };
-                }
-                if (!groupPermissions[parentId].hasPagePermission) {
-                    groupPermissions[parentId].hasPagePermission = true;
-                    $(`.page-item[data-func-id="${parentId}"] input[type="checkbox"]`).prop('checked', true);
-                    $(`.page-item[data-func-id="${parentId}"]`).addClass('has-permission');
-                    alert(`已自動勾選上層頁面權限：${parentId}`);
-                }
-            }
-        }
-    } else {
-        // 原有的取消邏輯保持不變...
-        const childPages = allFunctions.filter(f => getParentId(f) === funcId);
-        const hasChildWithPermission = childPages.some(child =>
-            groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission
-        );
+⸻
 
-        if (hasChildWithPermission) {
-            const childNames = childPages
-                .filter(child => groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission)
-                .map(child => getFuncName(child))
-                .join('、');
+4) 新增使用者 Modal：不用 Select2，改成原生可搜尋（datalist + AJAX）
 
-            if (!confirm(`取消此頁面權限將同時取消子頁面權限：${childNames}\n\n確定要繼續嗎？`)) {
-                $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`).prop('checked', true);
-                return;
+避免 Select2 is not a function，把員工選擇改為原生 <input list> + 後端 AJAX。
+你只需改兩個地方：(A) Modal 內 HTML、(B) JavaScript。
+
+4-A 取代「使用者 Modal」裡的「員工編號」欄位 HTML
+
+把 <select id="userIdSelect">...</select> 全段改成下面這段：
+
+<!-- 【改】不用 select/select2，改成 input + datalist -->
+<div class="form-group">
+  <label for="userIdInput">員工編號 <span class="text-danger">*</span></label>
+  <input type="text" class="form-control" id="userIdInput" list="empList" placeholder="輸入 3 碼以上以搜尋" required />
+  <datalist id="empList"></datalist>
+  <small class="form-text text-muted">輸入 3 碼以上會帶出清單，選取後自動帶姓名/部門/階職</small>
+</div>
+
+同時移除你在 openUserModal() 內的 select2 相關程式（select2('destroy') 與 initEmployeeSelect()），因為不再需要。
+
+4-B 加入（或取代）相關 JS：型錄查詢 + 自動帶資料
+
+把下面這段加入到你的 <script> 內（可放在其它函式旁邊）：
+
+// 【新增】簡易 debounce
+const debounce = (fn, wait = 300) => {
+    let t;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(null, args), wait);
+    };
+};
+
+// 【新增】綁定 input + datalist 的型錄查詢與自動帶資料
+function bindUserIdTypeahead() {
+    // 輸入時（>=3碼）去撈候選清單
+    $('#userIdInput').off('input').on('input', debounce(function () {
+        const kw = this.value.trim();
+        if (kw.length < 3) return; // 減少呼叫次數
+
+        $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw }, function (res) {
+            if (res.success && Array.isArray(res.data)) {
+                const options = res.data.map(emp =>
+                    `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+                ).join('');
+                $('#empList').html(options);
             } else {
-                childPages.forEach(child => {
-                    const childId = getFuncId(child);
-                    if (groupPermissions[childId] && groupPermissions[childId].hasPagePermission) {
-                        groupPermissions[childId].hasPagePermission = false;
-                        groupPermissions[childId].buttons = {};
-                        $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', false);
-                        $(`.page-item[data-func-id="${childId}"]`).removeClass('has-permission');
-                    }
-                });
+                $('#empList').empty();
             }
-        }
+        });
+    }, 300));
 
-        groupPermissions[funcId].buttons = {};
-    }
+    // 選到完整員編（change/blur）後，自動帶出姓名/部門/階職
+    $('#userIdInput').off('change blur').on('change blur', function () {
+        const empNo = this.value.trim();
+        if (!empNo) return;
 
-    const pageItem = $(`.page-item[data-func-id="${funcId}"]`);
-    if (hasPermission) {
-        pageItem.addClass('has-permission');
-    } else {
-        pageItem.removeClass('has-permission');
-    }
-
-    updateButtonListHierarchical();
+        $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo }, function (r) {
+            if (r.success && r.data) {
+                const emp = r.data;
+                $('#userName').val(emp.EMP_NAME || '');
+                $('#userDept').val(emp.ORGAN_CAP || '');
+                $('#userPost').val(emp.POST_NAME || '');
+            }
+        });
+    });
 }
-```
 
-這樣修改後：
+// 【改】openUserModal：不再處理 select2，改為綁定 typeahead
+function openUserModal() {
+    $('#userForm')[0].reset();
+    bindUserIdTypeahead();    // 綁定輸入行為
+    $('#userModal').modal('show');
+}
 
-1. 保持原本的樣式風格
-1. 父層和子層之間用灰色分隔線區分
-1. 父層和子層都有各自的「全勾選」和「全取消」按鈕
-1. 勾選頁面權限時會自動勾選該頁面的所有按鈕權限​​​​​​​​​​​​​​​​
-我理解了，你要的是父層頁面和父層按鈕都在同一個藍色區塊內，然後用分隔線區分父層按鈕和子層區域。修改如下：
+// 【改】saveUser：用 #userIdInput 取值
+function saveUser() {
+    const formData = {
+        APG_NO: currentGroup,
+        U_ID: ($('#userIdInput').val() || '').trim(),
+        U_NAME: ($('#userName').val() || '').trim()
+    };
 
-```javascript
-// 階層式更新按鈕列表
-function updateButtonListHierarchical() {
-    if (allFunctions.length === 0) {
-        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+    if (!formData.U_ID || !formData.U_NAME) {
+        alert('請選擇（或輸入）有效的員工編號，並確認已帶出姓名');
         return;
     }
 
-    // 建立父子關係映射
-    const parentChildMap = {};
-    const parentPages = [];
-
-    // 分離父頁面和子頁面，並過濾隱藏的子頁面
-    allFunctions.forEach(func => {
-        const funcId = getFuncId(func);
-        const parentId = getParentId(func);
-
-        if (!parentId || parentId === '' || parentId === 'HOME') {
-            // 父頁面
-            parentPages.push(func);
-            if (!parentChildMap[funcId]) {
-                parentChildMap[funcId] = [];
-            }
+    $.post('@Url.Action("AddUser", "AP")', formData, function (response) {
+        if (response.success) {
+            alert(response.message || '新增成功');
+            $('#userModal').modal('hide');
+            loadUsers();
         } else {
-            // 子頁面 - 只要顯示的子頁面
-            if (func.IS_SHOW === 'Y') {
-                if (!parentChildMap[parentId]) {
-                    parentChildMap[parentId] = [];
-                }
-                parentChildMap[parentId].push(func);
-            }
+            alert(response.message || '新增失敗');
         }
-    });
-
-    // 父頁面按SORT_NO排序
-    parentPages.sort((a, b) => {
-        const aSort = parseInt(a.SORT_NO) || 999;
-        const bSort = parseInt(b.SORT_NO) || 999;
-        return aSort - bSort;
-    });
-
-    // 每個父頁面的子頁面按SORT_NO排序
-    Object.keys(parentChildMap).forEach(parentId => {
-        parentChildMap[parentId].sort((a, b) => {
-            const aSort = parseInt(a.SORT_NO) || 999;
-            const bSort = parseInt(b.SORT_NO) || 999;
-            return aSort - bSort;
-        });
-    });
-
-    let html = '';
-
-    // 按父頁面順序顯示
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const parentName = getFuncName(parentFunc);
-        const children = parentChildMap[parentId] || [];
-
-        // 父頁面標題
-        html += `
-        <div class="parent-page-header" id="parent-header-${parentId}">
-            <i class="fas fa-folder"></i> ${parentName}
-            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-        </div>`;
-
-        // 父頁面區塊（包含父頁面本身的按鈕）
-        const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
-        const parentSectionStyle = parentHasPagePermission
-            ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
-            : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
-
-        html += `
-        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
-            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                <span>
-                    <i class="fas fa-folder-open"></i> ${parentName} (父層)
-                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-                </span>
-                <div style="display: flex; gap: 5px;">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-check-square"></i> 全勾選
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-square"></i> 全取消
-                    </button>
-                </div>
-            </div>
-            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
-                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-            </div>`;
-
-        // 如果有子頁面，在父層區塊內加入分隔線，然後繼續在同一個區塊內顯示子頁面
-        if (children.length > 0) {
-            html += `
-            <div style="margin: 10px 15px; border-top: 2px solid #6c757d; position: relative;">
-                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #f8f9fa; padding: 0 10px; color: #6c757d; font-size: 12px; font-weight: bold;">
-                    子頁面
-                </div>
-            </div>`;
-
-            // 在同一個父層區塊內顯示子頁面
-            children.forEach(childFunc => {
-                const funcId = getFuncId(childFunc);
-                const funcName = getFuncName(childFunc);
-                const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-                html += `
-                <div class="child-page-section" style="margin: 10px; border: 1px solid #ccc; border-radius: 4px; background: ${hasPagePermission ? '#fff' : '#f5f5f5'}; ${!hasPagePermission ? 'opacity: 0.6;' : ''}">
-                    <div class="page-header" style="background: #f1f3f4; padding: 8px 12px; border-bottom: 1px solid #ccc; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
-                        <span>
-                            <i class="fas fa-file-alt"></i> ${funcName}
-                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
-                        </span>
-                        <div style="display: flex; gap: 5px;">
-                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-check-square"></i> 全勾選
-                            </button>
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-square"></i> 全取消
-                            </button>
-                        </div>
-                    </div>
-                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 8px;">
-                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-                    </div>
-                </div>`;
-            });
-        }
-
-        // 結束父頁面區塊
-        html += `</div>`;
-    });
-
-    $('#buttonList').html(html);
-
-    // 現在載入每個頁面的按鈕
-    parentPages.forEach(parentFunc => {
-        const parentId = getFuncId(parentFunc);
-        const children = parentChildMap[parentId] || [];
-        
-        // 載入父頁面的按鈕
-        loadButtonsForPage(parentId);
-        
-        // 載入子頁面的按鈕
-        children.forEach(childFunc => {
-            loadButtonsForPage(getFuncId(childFunc));
-        });
+    }).fail(function () {
+        alert('新增失敗，請稍後再試');
     });
 }
-```
 
-這樣的結構是：
+同時請刪除整個 initEmployeeSelect() 函式，因為已不再使用 Select2。
 
-```
-┌─────────────────────────────────────┐
-│ 父頁面標題 (灰色背景)                │
-│ ├─ 父層頁面名稱                     │
-│ ├─ 全勾選/全取消 按鈕               │
-│ ├─ 父層按鈕列表                     │
-│ ├─────── 子頁面分隔線 ──────────    │
-│ ├─ 子頁面1                          │
-│ │  ├─ 全勾選/全取消                │
-│ │  └─ 子頁面1按鈕列表              │
-│ ├─ 子頁面2                          │
-│ │  ├─ 全勾選/全取消                │
-│ │  └─ 子頁面2按鈕列表              │
-└─────────────────────────────────────┘
-```
+⸻
 
-父層頁面和父層按鈕都在同一個藍色區塊內，用分隔線將子頁面區域區分開來，但子頁面仍在父層的大區塊內。​​​​​​​​​​​​​​​​
+小結
+	•	✅ 第1點：可以不引入那兩句（Select2 的 CSS/JS）。
+	•	✅ 第2點：查詢結果改為單行顯示並自動切換群組載入權限。
+	•	✅ 第3點：把「選擇群組」的 label 欄改 col-md-2，就會與上方「查詢人員權限」輸入欄對齊。
+	•	✅ 第4點：新增使用者改成原生 input + datalist + AJAX，完全不依賴 Select2，自然也不會有版本衝突問題。
+
+需要我幫你把這些改動打包成「完整已套改的檔案」再貼一次嗎？我可以直接依你這份檔案產出對照版。
