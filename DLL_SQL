@@ -1,0 +1,278 @@
+DLL 規格 (類似API) 
+怎麼寫SQL、之後才會開始寫程式碼、我需要先理清楚SQL怎麼取資料條件怎麼寫
+一、
+--REQUEST
+{
+  "sys_id": "HI_POS",
+  "user_id": "3A001",
+  "environment": "TEST"
+}
+--RESPONSE
+成功:
+ {
+"result_code": "0000",
+"msg": "成功",
+"result": {
+    "user_name": "王小明",   
+    "group_id": "001",
+    "group_name": "管理員(資訊)",
+    "parent_group_id": [ "003", "002" ],
+    "chile_group_id": [ "004", "005" ],
+    "sensitive_data_access": false
+  }
+}
+錯誤
+{
+  "result_code": "0001",
+  "msg": "查無權限"
+}
+***
+子群組 chile_group_id 概念是
+依據[AP_GROUP]
+舉例 我 群組APG_NO=001 SYS_ID ='HI_POSIMG'
+然後 所有在 同個SYS_ID 的PARTENT_APG_NO 若有001 那該群組就是我的子群組
+APG_NO=002,PARTENT_APG_NO有001
+那我001的子群組就是002(數量一個以上(含))
+
+-- GetUserNameAndGroup(取得使用者群組與名稱) => (三個參數:sys_id、user_id、environment) 
+
+SELECT DISTINCT
+U_NAME, A.APG_NO ,A.APG_NAME , PARENT_APG_NO,
+ -- chile_group_id (子群組) ?? ,
+ SENSITIVE_DATA_ACCESS
+FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
+left join [AP_USER] B on A.APG_NO = B.APG_NO
+where A.SYS_ID=@SYS_ID and B.U_ID=@U_ID 
+
+二、
+--
+{
+  "sys_id": "HI_POS",
+  "group_id": "001",
+  "IsIncludeChildGroups": true,
+  "environment": "TEST"
+}
+--
+成功
+{
+"result_code": "0000",
+"msg": "成功",
+"result": {
+    "user_id_list": [ "3A717","3B750"]
+   }
+}
+錯誤
+{
+  "result_code": "0001",
+  "msg": "查無權限"
+}
+
+**
+--GetGroupAllUser(取得群組人員清單) => (四個參數:sys_id、group_id、IsIncludeChildGroups、environment)
+
+SELECT DISTINCT  U_ID  
+-- , chile_group_id (是否要取IsIncludeChildGroups子群組)=> 若TRUE 就要把子群組的人員員編取出來，FALSE 則取傳進來APG_NO的人員
+FROM [HI_TMMAIN].[dbo].[AP_USER] A
+left join [AP_GROUP] B ON A.APG_NO = B.APG_NO
+where A.SYS_ID=@SYS_ID and B.APG_NO=@APG_NO
+
+三、
+--
+{
+  "sys_id": "HI_POS",
+  "group_id ": "001",
+  "environment": "TEST"
+}
+--
+{
+  "result_code": "0000",
+  "msg": "成功",
+  "result": [
+    {
+      "func_id": "POS1",
+      "func_name": "權限作業",
+      "controller": "",
+      "action": "",
+      "sort": 1,
+      "parent_id": "HOME",
+      "level": "0"
+    },
+    {
+      "func_id": "POS1002",
+      "func_name": "權限設定new",
+      "controller": "HOME",
+      "action": "AP_ACCESS_SYS",
+      "sort": 1,
+      "parent_id": "POS1",
+      "level": "1"
+    },
+    {
+      "func_id": "POS1003",
+      "func_name": "頁面功能設定new",
+      "controller": "HOME",
+      "action": "AP_ACCESS_SYS_FUNC",
+      "sort": 2,
+      "parent_id": "POS1",
+      "level": "1"
+    },
+    {
+      "func_id": "POS2",
+      "func_name": "代收設定作業",
+      "controller": "",
+      "action": "",
+      "sort": 2,
+      "parent_id": "HOME",
+      "level": "0"
+    },
+    {
+      "func_id": "POS2001",
+      "func_name": "轉檔紀錄",
+      "controller": "ARC_VER",
+      "action": "ARC_VERPartial",
+      "sort": 1,
+      "parent_id": "POS2",
+      "level": "1"
+    },
+    {
+      "func_id": "POS2002",
+      "func_name": "代收設定",
+      "controller": "Arc_Def",
+      "action": "ARC_DEF_HPartial",
+      "sort": 2,
+      "parent_id": "POS2",
+      "level": "1"
+    }
+  ]
+}
+錯誤
+{
+  "result_code": "0001",
+  "msg": "查無權限"
+}
+**
+-- GetTree(取得樹狀功能清單) => (三個參數:sys_id、group_id、environment)
+
+SELECT 
+DISTINCT
+case WHEN PARENT_ID = 'HOME' THEN  '0'
+     WHEN PARENT_ID <> 'HOME' THEN '1'
+   END AS LEVEL
+, a.FUNC_ID, FUNC_NA, VIEW_H AS CONTROLLER, VIEW_HB AS ACTION, SORT_NO, PARENT_ID 
+FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+left join [AP_USER_FUNC_CONFIG] b on a.FUNC_ID = b.FUNC_ID
+where a.SYS_ID=@SYS_ID and b.APG_NO=@APG_NO 
+
+四、
+--
+{
+  "sys_id": "HI_POS",
+  "group_id ": "001",
+  "func_id": " POS1001",
+  "environment": "TEST"
+}
+--
+{
+  "result_code": "0000",
+  "msg": "成功",
+  "result": [
+    {
+      "btn_id": "Explain",
+      "btn_name": "說明",
+      "contoller": "",
+      "action": "",
+      "btn_location": "BTN_FORM",
+      "btn_onclick": "arcExplain"
+    },
+    {
+      "btn_id": "VerfityCode",
+      "btn_name": "檢查碼公式驗證",
+      "contoller": "Arc_Def",
+      "action": "Chk_Code",
+      "btn_location": "BTN",
+      "btn_onclick": "function(s, e) {{popup4.SetContentUrl('{0}'); popup4.Show()}}"
+    }
+  ]
+}
+-- GetFuncBtn(取得功能頁有權限之按鈕)?? => (四個參數:sys_id、group_id、func_id、environment)
+不確定寫法1、2
+1.SELECT DISTINCT
+a.BTNID,a.BTN_NAME,a.CONTROLLER,a.ACTION,a.LOC,a.ONCLICK
+FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
+left join [AP_USER_RFUNC_CONFIG] b on a.FUNC_ID = b.FUNC_ID
+where a.SYS_ID=@SYS_ID and b.APG_NO=@APG_NO and a.FUNC_ID=@FUNC_ID
+
+2.SELECT 
+a.BTNID,a.BTN_NAME,a.CONTROLLER,a.ACTION,a.LOC,a.ONCLICK
+FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
+left join [AP_USER_FUNC_CONFIG] b on a.FUNC_ID = b.FUNC_ID
+where a.SYS_ID=@SYS_ID and b.APG_NO=@APG_NO and a.FUNC_ID=@FUNC_ID
+
+五、
+--
+{
+  "sys_id": "HI_POS",
+  "group_id ": "001",
+  "func_id": " POS1001",
+  "btn_id": "EDIT",
+  "environment": "TEST"
+}
+--
+{
+  "result": true
+}
+**
+-- 5.CheckBtnEnabled(確認是否擁有按鈕權限) => (五個參數:sys_id、group_id、func_id、btn_id、environment)
+SELECT * --TRUE、FALSE ??
+FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] A
+left join [AP_RFUNC] b on a.FUNC_ID = b.FUNC_ID
+where a.SYS_ID=@SYS_ID and A.APG_NO=@APG_NO and a.FUNC_ID=@FUNC_ID AND B.BTNID=@BTNID
+
+相關權限TABLE:
+*
+  SELECT  [SYS_ID]
+      ,[FUNC_ID]
+      ,[FUNC_NA]
+      ,[PARENT_ID]
+      ,[VIEW_H]
+      ,[VIEW_HB]
+      ,[SORT_NO]
+      ,[IS_SHOW]
+      ,[MEMO]
+  FROM [HI_TMMAIN].[dbo].[AP_FUNC] where SYS_ID='hi_posimg'  --頁面定義
+*
+ SELECT [SYS_ID]
+      ,[FUNC_ID]
+      ,[BTNSEQ]
+      ,[BTNID]
+      ,[BTN_NAME]
+      ,[CONTROLLER]
+      ,[ACTION]
+      ,[LOC]
+      ,[ONCLICK]
+  FROM [HI_TMMAIN].[dbo].[AP_RFUNC] where SYS_ID='hi_posimg' --頁面按鈕定義
+*
+SELECT  [SYS_ID]
+      ,[FUNC_ID]
+      ,[APG_NO]
+  FROM [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] where SYS_ID='hi_posimg'  -- 頁面權限
+*
+SELECT  [SYS_ID]
+      ,[FUNC_ID]
+      ,[BTNSEQ]
+      ,[APG_NO]
+  FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] where SYS_ID='hi_posimg'  -- 頁面按鈕權限
+*
+ SELECT  [SYS_ID]
+      ,[APG_NO]
+      ,[APG_NAME]
+      ,[PARENT_APG_NO]
+      ,[SENSITIVE_DATA_ACCESS]
+  FROM [HI_TMMAIN].[dbo].[AP_GROUP] --群組設定
+
+*
+SELECT  [SYS_ID]
+      ,[APG_NO]
+      ,[U_ID]
+      ,[U_NAME]
+  FROM [HI_TMMAIN].[dbo].[AP_USER] --員工設定
+
