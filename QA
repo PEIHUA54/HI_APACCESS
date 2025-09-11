@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Data.SqlClient;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
@@ -65,20 +63,24 @@ public class Class1
     /// </summary>
     public List<string> GetAuthorizedSystemsList()
     {
-        string sql = @"
-            SELECT [SYS_ID]
-            FROM [HI_TMMAIN].[dbo].[AP_SYS]";
-
-        List<SqlParameter> parameters = new List<SqlParameter>();
+        string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+        var systemIds = new List<string>();
 
         try
         {
-            DataTable dt = QueryBySQL(sql, parameters);
-            var systemIds = new List<string>();
-            
-            foreach (DataRow row in dt.Rows)
+            using (var connection = new SqlConnection(_connectionString))
             {
-                systemIds.Add(row["SYS_ID"].ToString());
+                connection.Open();
+                using (var command = new SqlCommand(sql, connection))
+                {
+                    using (var reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            systemIds.Add(reader["SYS_ID"].ToString());
+                        }
+                    }
+                }
             }
             
             return systemIds;
