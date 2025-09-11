@@ -1,212 +1,113 @@
-好，我幫你把修改點整合進完整檔案，照你需求調整好：
-	1.	查詢結果：移到「清除」按鈕後面，一行顯示員工編號、姓名、所屬群組、部門、職稱。
-	2.	SQL：GetUserPermissions 已 LEFT JOIN VW_M1EMP_MAST，取 ORGAN_CAP、POST_NAME。
-	3.	新增使用者：員工編號用 <input list> + <datalist>，可下拉、可輸入、邊打邊出現候選。
-	4.	JS：改成 datalist 即時查詢 + 自動帶出姓名/部門/職稱。
+了解 ✅
+如果你要 一進去 Modal 就有完整員工清單，那就不用等輸入 3 碼再查，而是直接把 VW_M1EMP_MAST 全部員工丟進 <datalist>。
 
 ⸻
 
-前端 Razor View (精簡後重點修改版)
+🔧 修改步驟
 
-<!-- 查詢功能區 -->
-<div class="search-section" style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-  <div class="row align-items-center">
-    <div class="col-md-2">
-      <label class="form-label mb-0"><strong>查詢人員權限：</strong></label>
-    </div>
-    <div class="col-md-4">
-      <div class="input-group">
-        <input type="text" class="form-control" id="searchUserId" placeholder="請輸入員工編號">
-        <div class="input-group-append">
-          <button type="button" class="btn btn-info" onclick="searchUserPermissions()">
-            <i class="fas fa-search"></i> 查詢
-          </button>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-2">
-      <button type="button" class="btn btn-secondary" onclick="clearSearch()">
-        <i class="fas fa-times"></i> 清除
-      </button>
-    </div>
-  </div>
+1. 後端：GetEmployeeList
 
-  <!-- 查詢結果就放在清除按鈕後面 -->
-  <div id="searchResult" style="display:none; background:#e3f2fd; padding:12px; border-radius:6px; margin-top:10px;">
-    <div id="searchResultContent"></div>
-  </div>
-</div>
+你現在有這個方法：
 
-
-⸻
-
-使用者 Modal 的員工編號欄位
-
-<div class="form-group">
-  <label for="userIdInput">員工編號 <span class="text-danger">*</span></label>
-  <input type="text" class="form-control" id="userIdInput" list="empList" placeholder="輸入 3 碼以上以搜尋" required />
-  <datalist id="empList"></datalist>
-  <small class="form-text text-muted">可下拉選擇，或輸入 3 碼以上即時顯示相符員編/姓名</small>
-</div>
-
-
-⸻
-
-JavaScript
-
-// debounce 工具
-const debounce = (fn, wait = 300) => {
-  let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
-};
-
-// 查詢人員權限
-function searchUserPermissions() {
-  const userId = $('#searchUserId').val().trim();
-  if (!userId) { alert('請輸入員工編號'); return; }
-
-  $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId }, function (response) {
-    if (response.success) {
-      displaySearchResult(response.data);
-      $('#searchResult').show();
-
-      const apgNo = response.data?.UserInfo?.APG_NO || '';
-      if (apgNo) {
-        $('#groupSelect').val(apgNo);
-        loadGroupData();
-      }
-    } else {
-      alert(response.message || '查無資料');
-      $('#searchResult').hide();
-    }
-  }).fail(function () {
-    alert('查詢失敗，請稍後再試');
-    $('#searchResult').hide();
-  });
-}
-
-// 顯示查詢結果（單行）
-function displaySearchResult(data) {
-  const u = data.UserInfo || {};
-  const html = `
-    <div class="d-flex flex-wrap align-items-center small" style="gap:14px; line-height:1.6;">
-      <span><strong>員工編號</strong>：${u.U_ID || ''}</span>
-      <span><strong>員工姓名</strong>：${u.U_NAME || ''}</span>
-      <span><strong>所屬群組</strong>：${u.APG_NAME || ''}${u.APG_NO ? ` (${u.APG_NO})` : ''}</span>
-      <span><strong>員工部門</strong>：${u.ORGAN_CAP || ''}</span>
-      <span><strong>員工職稱</strong>：${u.POST_NAME || ''}</span>
-    </div>`;
-  $('#searchResultContent').html(html);
-}
-
-// 新增使用者 Modal：綁定 datalist
-function bindUserIdTypeahead() {
-  $('#userIdInput').off('input').on('input', debounce(function () {
-    const kw = this.value.trim();
-    if (kw.length < 3) return;
-
-    $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw }, function (res) {
-      if (res.success && Array.isArray(res.data)) {
-        const rows = res.data.slice(0, 20);
-        const options = rows.map(emp =>
-          `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
-        ).join('');
-        $('#empList').html(options);
-      }
-    });
-  }, 250));
-
-  $('#userIdInput').off('change blur').on('change blur', function () {
-    const empNo = this.value.trim();
-    if (!empNo) return;
-    $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo }, function (r) {
-      if (r.success && r.data) {
-        const emp = r.data;
-        $('#userName').val(emp.EMP_NAME || '');
-        $('#userDept').val(emp.ORGAN_CAP || '');
-        $('#userPost').val(emp.POST_NAME || '');
-      } else {
-        $('#userName,#userDept,#userPost').val('');
-      }
-    });
-  });
-}
-
-function openUserModal() {
-  $('#userForm')[0].reset();
-  $('#empList').empty();
-  bindUserIdTypeahead();
-  $('#userModal').modal('show');
-}
-
-function saveUser() {
-  const formData = {
-    APG_NO: currentGroup,
-    U_ID: ($('#userIdInput').val() || '').trim(),
-    U_NAME: ($('#userName').val() || '').trim()
-  };
-  if (!formData.U_ID || !formData.U_NAME) {
-    alert('請選擇有效員工編號，並確認姓名已帶出');
-    return;
-  }
-  $.post('@Url.Action("AddUser", "AP")', formData, function (res) {
-    if (res.success) {
-      alert(res.message || '新增成功');
-      $('#userModal').modal('hide');
-      loadUsers();
-    } else { alert(res.message || '新增失敗'); }
-  });
-}
-
-
-⸻
-
-後端 F_AP：GetUserPermissions SQL
-
-public UserPermissionQueryModel GetUserPermissions(string u_id)
+public List<EmployeeModel> GetEmployeeList(string keyword = "")
 {
     string sql = @"
-SELECT  u.[SYS_ID],
-        u.[APG_NO],
-        g.[APG_NAME],
-        u.[U_ID],
-        u.[U_NAME],
-        emp.[ORGAN_CAP],    -- 部門
-        emp.[POST_NAME],    -- 職稱
-        u.[CREATOR],
-        u.[CREATE_TIME],
-        u.[EDITOR],
-        u.[EDIT_TIME]
-FROM [HI_TMMAIN].[dbo].[AP_USER] u
-LEFT JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g
-       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-LEFT JOIN [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] emp
-       ON emp.[EMP_NO] = u.[U_ID]
-WHERE u.[SYS_ID] = @SYS_ID
-  AND u.[U_ID]  = @U_ID";
+SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
+WHERE 1=1";
 
-    var parameters = new List<SqlParameter> {
-        new SqlParameter("@SYS_ID", _sysId),
-        new SqlParameter("@U_ID", u_id)
-    };
+    List<SqlParameter> parameters = new List<SqlParameter>();
 
-    var dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    if (dt.Rows.Count > 0)
+    if (!string.IsNullOrWhiteSpace(keyword))
     {
-        var userInfo = SVS_DBmanager.ConvertToList<UserModel>(dt).FirstOrDefault();
-        if (userInfo != null)
-        {
-            var permissions = GetPermissionSettings(userInfo.APG_NO);
-            return new UserPermissionQueryModel
-            {
-                UserInfo = userInfo,
-                Permissions = permissions
-            };
-        }
+        sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
+        parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
     }
-    return null;
+
+    sql += " ORDER BY [EMP_NO]";
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
+}
+
+👉 改法：如果 keyword 空，就回傳所有員工（例如 TOP 1000，避免一次塞太多）。
+
+public List<EmployeeModel> GetEmployeeList(string keyword = "")
+{
+    string sql = @"
+SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST]
+WHERE 1=1";
+    
+    List<SqlParameter> parameters = new List<SqlParameter>();
+
+    if (!string.IsNullOrWhiteSpace(keyword))
+    {
+        sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
+        parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
+    }
+
+    // 建議加上 TOP 限制，避免資料過多造成前端爆炸
+    sql = "SELECT TOP 1000 * FROM (" + sql + ") as T ORDER BY [EMP_NO]";
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
 }
 
 
 ⸻
 
-要不要我幫你把 UserModel 需要加的 ORGAN_CAP / POST_NAME 屬性範例也一起寫給你？
+2. 前端：openUserModal() → 一進 Modal 就載入清單
+
+function openUserModal() {
+    $('#userForm')[0].reset();
+    $('#empList').empty();
+
+    // 🚀 一進去就撈全部清單
+    $.get('@Url.Action("GetEmployeeList", "AP")', {}, function (res) {
+        if (res.success && Array.isArray(res.data)) {
+            const options = res.data.map(emp =>
+                `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+            ).join('');
+            $('#empList').html(options);
+        }
+    });
+
+    // 綁定選擇事件（自動帶姓名/部門/職稱）
+    $('#userIdInput').off('change blur').on('change blur', function () {
+        const empNo = this.value.trim();
+        if (!empNo) return;
+        $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo }, function (r) {
+            if (r.success && r.data) {
+                const emp = r.data;
+                $('#userName').val(emp.EMP_NAME || '');
+                $('#userDept').val(emp.ORGAN_CAP || '');
+                $('#userPost').val(emp.POST_NAME || '');
+            } else {
+                $('#userName,#userDept,#userPost').val('');
+            }
+        });
+    });
+
+    $('#userModal').modal('show');
+}
+
+
+⸻
+
+3. Modal HTML 保持不變
+
+<input type="text" class="form-control" id="userIdInput" list="empList" placeholder="請輸入員工編號" required />
+<datalist id="empList"></datalist>
+
+
+⸻
+
+✅ 完成效果
+	•	打開「新增使用者」Modal → 下拉清單直接出現全部員工編號（例如 TOP 1000 筆）。
+	•	也能輸入關鍵字快速定位。
+	•	選中後會自動帶出姓名、部門、職稱。
+
+⸻
+
+要不要我幫你再做個 「如果員工超過 5000 筆，就只先載 1000 筆，輸入時再補查」 的版本？這樣可以避免 datalist 太大卡住。
