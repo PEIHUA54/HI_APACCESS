@@ -1,145 +1,241 @@
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @UserAD NVARCHAR(50) = '3A001';
+using System.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
 
--- 先找到該使用者在哪些群組
-WITH UserGroups AS (
-    SELECT U.APG_NO, U.U_ID, U.U_NAME
-    FROM [HI_TMMAIN].[dbo].[AP_USER] U
-    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
-)
-SELECT DISTINCT
-    UG.U_ID AS UserID,
-    UG.U_NAME AS UserName,
-    G.APG_NO AS GroupID,
-    G.APG_NAME AS GroupName,
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetFunctionAndAccessUrl
+    {  
+        // 環境設定
+        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+        {
+            //{ "TEST", "http:// 10.8.254.68/ HI_APACCESS_TEST" },
+            { "TEST", "http://localhost:53088" },
+            { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        };
 
-    -- 母群組 (直接從群組表取)
-    G.PARENT_APG_NO AS ParentGroupID,
+        // 類型設定
+        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+        {
+            { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
+            { "2", "TokenEntry" }        // 權限設定
+        };
 
-    -- 子群組 (同一個SYS_ID、PARENT_APG_NO=目前群組ID)
-    (SELECT STRING_AGG(APG_NO, ',')
-     FROM [HI_TMMAIN].[dbo].[AP_GROUP]
-     WHERE PARENT_APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID) AS ChildGroupID,
+        // sql連線字串
+        internal static string BuildConnectionString()
+        {
+            var csb = new SqlConnectionStringBuilder
+            {
+                DataSource = "Hilife-tfs",
+                InitialCatalog = "HI_APLOG",
+                PersistSecurityInfo = true,
+                TrustServerCertificate = true,
+                UserID = "pos",
+                Password = "pos1",
+                Encrypt = true
+            };
+            return csb.ConnectionString;
+        }
 
-    -- 機敏資料
-    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+        // 取得授權系統清單sql
+        internal List<string> GetAuthorizedSystemsList_old()
+        {
+            string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+            var systemIds = new List<string>();
 
-    -- 部門 / 職稱
-    M.ORGAN_CAP AS OrganName,
-    M.POST_NAME AS PostName
-FROM UserGroups UG
-INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
-    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
-LEFT JOIN [VW_M1EMP_MAST] M 
-    ON UG.U_ID = M.EMP_NO;
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    conn.Open();
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            systemIds.Add(reader["SYS_ID"].ToString());
+                        }
+                    }
+                }
+                return systemIds;
+            }
+            catch (Exception ex)
+            {
+                return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
+            }
+        }
 
+        /// 產生 JWT Token
+        internal string GenerateJwtToken(string systemId)
+        {
+            var claims = new[]
+            {
+            new Claim("systemId", systemId),
+        };
 
+            string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
 
-⸻
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-① GetUserNameAndGroup
+            var token = new JwtSecurityToken(
+                issuer: "hi_ap_access_dll",
+                audience: "hi_ap_access_web",
+                claims: claims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
 
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @UserAD NVARCHAR(50) = '3A001';
-
-SELECT DISTINCT
-    B.U_ID AS UserID,
-    B.U_NAME AS UserName,
-    A.APG_NO AS GroupID,
-    A.APG_NAME AS GroupName,
-    A.PARENT_APG_NO,
-    (SELECT STRING_AGG(APG_NO, ',') 
-     FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-     WHERE PARENT_APG_NO = A.APG_NO AND SYS_ID = A.SYS_ID) AS ChildGroupID,
-    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
-    M.ORGAN_CAP AS OrganName,
-    M.POST_NAME AS PostName
-FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
-LEFT JOIN [AP_USER] B ON A.APG_NO = B.APG_NO
-LEFT JOIN [VW_M1EMP_MAST] M ON B.U_ID = M.EMP_NO
-WHERE A.SYS_ID=@SysID AND B.U_ID=@UserAD;
-
-
-⸻
-
-② GetGroupAllUser
-
-
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @GroupID NVARCHAR(50) = '001';
-DECLARE @IsIncludeChildGroups BIT = 1;
-
-SELECT DISTINCT A.U_ID
-FROM [HI_TMMAIN].[dbo].[AP_USER] A
-LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
-WHERE A.SYS_ID=@SysID
-AND (
-    B.APG_NO=@GroupID
-    OR (@IsIncludeChildGroups=1 AND B.PARENT_APG_NO=@GroupID)
-);
-
-
-⸻
-
-③ GetTree
-
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @GroupID NVARCHAR(50) = '001';
-
-SELECT DISTINCT
-    a.FUNC_ID AS FuncID,
-    a.FUNC_NA AS FuncName,
-    a.VIEW_H AS Controller,
-    a.VIEW_HB AS Action,
-    a.SORT_NO AS Sort,
-    a.PARENT_ID AS ParentID,
-    CASE WHEN a.PARENT_ID='HOME' THEN '0' ELSE '1' END AS Level
-FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
-LEFT JOIN [AP_USER_FUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID
-WHERE a.SYS_ID=@SysID AND b.APG_NO=@GroupID;
-
-
-⸻
-
-④ GetFuncBtn
-
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @GroupID NVARCHAR(50) = '001';
-DECLARE @FuncID NVARCHAR(50) = 'POS1001';
-
-SELECT DISTINCT
-    a.BTNID AS BtnID,
-    a.BTN_NAME AS BtnName,
-    a.CONTROLLER AS Controller,
-    a.ACTION AS Action,
-    a.LOC AS BtnLocation,
-    a.ONCLICK AS BtnOnclick
-FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
-LEFT JOIN [AP_USER_RFUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID
-WHERE a.SYS_ID=@SysID AND b.APG_NO=@GroupID AND a.FUNC_ID=@FuncID;
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+    }
+}
 
 
-⸻
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
+using System.Data.SqlClient;
+using System.Data;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
 
-⑤ CheckBtnEnabled
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public class APACCESS
+    {
+        //1 取得使用者群組與名稱
+        public string GetUserNameAndGroup(string requestJson)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
 
-DECLARE @SysID NVARCHAR(50) = 'HI_POS';
-DECLARE @GroupID NVARCHAR(50) = '001';
-DECLARE @FuncID NVARCHAR(50) = 'POS1001';
-DECLARE @BtnID NVARCHAR(50) = 'EDIT';
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
 
-SELECT CASE WHEN COUNT(1) > 0 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS Result
-FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] A
-LEFT JOIN [AP_RFUNC] B ON A.FUNC_ID = B.FUNC_ID
-WHERE A.SYS_ID=@SysID 
-  AND A.APG_NO=@GroupID 
-  AND A.FUNC_ID=@FuncID 
-  AND B.BTNID=@BtnID;
+                FGetUserNameAndGroup func = new FGetUserNameAndGroup();
+                response = func.Execute(request.SysID, request.UserAD, request.Environment);
 
+            }
+            catch (Exception ex)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = "9999",
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
 
-⸻
+            return JsonConvert.SerializeObject(response);
+        }
 
-建議你先在 HI_TMMAIN DB 逐一測試，確認結果是否跟需求定義的 Response 相符。
-等你說 邏輯沒問題，我再幫你把 Factory 與 APACCESS 主類別呼叫 完整寫出來。
+        //2 取得群組人員清單
+        //public string GETGROUPALLUSER(string Request_)
+        //{
+        //}
 
-要不要我順便幫你加 測試數據範例 (INSERT INTO)，讓你在測試時不用等實際資料？
+        //3 取得樹狀功能清單
+        //public string GETTREE(string Request_)
+        //{
+        //}
+
+        //4 取得功能頁有權限之按鈕
+        //public string GETFUNCBTN(string Request_)
+        //{
+        //}
+
+        //5 確認是否擁有按鈕權限
+        //public string CHECKBTNENABLED(string Request_)
+        //{
+        //}
+
+        //6 取得頁面跟權限設定功能連結
+        public string GetFunctionAndAccessUrl(string Request_)
+        {
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+            try
+            {
+                GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(Request_);
+
+                // 檢查類型是否正確
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "1002",
+                        Msg = "類型錯誤，只接受 1 或 2",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查環境是否正確
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "1003",
+                        Msg = "環境錯誤，只接受 TEST、PROD",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查系統權限 (不在清單內無權限)
+                var authorizedSystems = func.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "0001",
+                        Msg = "查無權限",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 產生 JWT Token
+                string token = func.GenerateJwtToken(request.SysID);
+
+                // 組合最終 URL（含 Token）
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+                // 回傳成功結果
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "0000",
+                    Msg = "成功",
+                    Url = finalUrl
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+            catch (Exception ex)
+            {
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "9999",
+                    Msg = "系統錯誤：" + ex.Message,
+                    Url = ""
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+        }
+    }
+}
