@@ -1,48 +1,373 @@
-👌 好，這個可以直接在 Modal 的「員工編號」欄位旁邊放一個 清除按鈕，讓你快速清掉輸入框和帶出的員工資訊。
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
+using System.Data.SqlClient;
+using System.Data;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
 
-⸻
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+public static class APACCESS
+{
+/// <summary>
+/// 1. 取得使用者群組與名稱
+/// </summary>
+/// <param name="Request_">JSON格式請求參數</param>
+/// <returns>JSON格式回應結果</returns>
+public static string GetUserNameAndGroup(string Request_)
+{
+FGetUserNameAndGroup func = new FGetUserNameAndGroup();
+var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+try
+{
+GetUserNameAndGroupModel.GetUserNameAndGroupRequest request =
+JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(Request_);
 
-🔧 修改方式
+```
+            // 驗證必填參數
+            if (string.IsNullOrEmpty(request.SysID) || string.IsNullOrEmpty(request.UserAD))
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = "1001",
+                    Msg = "參數錯誤"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
-1. 調整 Modal HTML
+            // 執行查詢
+            var result = func.GetUserInfo(request.SysID, request.UserAD);
+            if (result == null)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = "0001",
+                    Msg = "查無權限"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
-把原本的
+            response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+            {
+                Result_code = "0000",
+                Msg = "成功",
+                Result = result
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+            {
+                Result_code = "9999",
+                Msg = "系統錯誤：" + ex.Message
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
 
-<input type="text" class="form-control" id="userIdInput" list="empList" placeholder="請輸入員工編號" required />
-<datalist id="empList"></datalist>
+    /// <summary>
+    /// 2. 取得群組人員清單
+    /// </summary>
+    /// <param name="Request_">JSON格式請求參數</param>
+    /// <returns>JSON格式回應結果</returns>
+    public static string GetGroupAllUser(string Request_)
+    {
+        FGetGroupAllUser func = new FGetGroupAllUser();
+        var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+        try
+        {
+            GetGroupAllUserModel.GetGroupAllUserRequest request = 
+                JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(Request_);
 
-改成一個 input-group，旁邊放一顆清除按鈕：
+            // 驗證必填參數
+            if (string.IsNullOrEmpty(request.SysID) || string.IsNullOrEmpty(request.GroupID))
+            {
+                response = new GetGroupAllUserModel.GetGroupAllUserResponse
+                {
+                    Result_code = "1001",
+                    Msg = "參數錯誤"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
-<div class="input-group">
-  <input type="text" class="form-control" id="userIdInput" list="empList" placeholder="請輸入員工編號" required />
-  <datalist id="empList"></datalist>
-  <div class="input-group-append">
-    <button type="button" class="btn btn-outline-secondary" onclick="clearUserIdInput()">
-      <i class="fas fa-times"></i>
-    </button>
-  </div>
-</div>
-<small class="form-text text-muted">可下拉選擇，或輸入員工編號快速帶出姓名/部門/職稱</small>
+            // 執行查詢
+            var userList = func.GetGroupUsers(request.SysID, request.GroupID, request.IsIncludeChildGroups);
+            if (userList == null || !userList.Any())
+            {
+                response = new GetGroupAllUserModel.GetGroupAllUserResponse
+                {
+                    Result_code = "0001",
+                    Msg = "查無權限"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
+            response = new GetGroupAllUserModel.GetGroupAllUserResponse
+            {
+                Result_code = "0000",
+                Msg = "成功",
+                Result = new GetGroupAllUserModel.UserListResult
+                {
+                    UserADList = userList
+                }
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new GetGroupAllUserModel.GetGroupAllUserResponse
+            {
+                Result_code = "9999",
+                Msg = "系統錯誤：" + ex.Message
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
 
-⸻
+    /// <summary>
+    /// 3. 取得樹狀功能清單
+    /// </summary>
+    /// <param name="Request_">JSON格式請求參數</param>
+    /// <returns>JSON格式回應結果</returns>
+    public static string GetTree(string Request_)
+    {
+        FGetTree func = new FGetTree();
+        var response = new GetTreeModel.GetTreeResponse();
+        try
+        {
+            GetTreeModel.GetTreeRequest request = 
+                JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(Request_);
 
-2. 新增 JS 函式
+            // 驗證必填參數
+            if (string.IsNullOrEmpty(request.SysID) || string.IsNullOrEmpty(request.GroupID))
+            {
+                response = new GetTreeModel.GetTreeResponse
+                {
+                    Result_code = "1001",
+                    Msg = "參數錯誤"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
-在你的 <script> 裡加上：
+            // 執行查詢
+            var functionList = func.GetFunctionTree(request.SysID, request.GroupID);
+            if (functionList == null || !functionList.Any())
+            {
+                response = new GetTreeModel.GetTreeResponse
+                {
+                    Result_code = "0001",
+                    Msg = "查無權限"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
 
-function clearUserIdInput() {
-    $('#userIdInput').val('');
-    $('#userName, #userDept, #userPost').val('');
+            response = new GetTreeModel.GetTreeResponse
+            {
+                Result_code = "0000",
+                Msg = "成功",
+                Result = functionList
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new GetTreeModel.GetTreeResponse
+            {
+                Result_code = "9999",
+                Msg = "系統錯誤：" + ex.Message
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+
+    /// <summary>
+    /// 4. 取得功能頁有權限之按鈕
+    /// </summary>
+    /// <param name="Request_">JSON格式請求參數</param>
+    /// <returns>JSON格式回應結果</returns>
+    public static string GetFuncBtn(string Request_)
+    {
+        FGetFuncBtn func = new FGetFuncBtn();
+        var response = new GetFuncBtnModel.GetFuncBtnResponse();
+        try
+        {
+            GetFuncBtnModel.GetFuncBtnRequest request = 
+                JsonConvert.DeserializeObject<GetFuncBtnModel.GetFuncBtnRequest>(Request_);
+
+            // 驗證必填參數
+            if (string.IsNullOrEmpty(request.SysID) || string.IsNullOrEmpty(request.GroupID) || string.IsNullOrEmpty(request.FuncID))
+            {
+                response = new GetFuncBtnModel.GetFuncBtnResponse
+                {
+                    Result_code = "1001",
+                    Msg = "參數錯誤"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            // 執行查詢
+            var buttonList = func.GetFunctionButtons(request.SysID, request.GroupID, request.FuncID);
+            if (buttonList == null || !buttonList.Any())
+            {
+                response = new GetFuncBtnModel.GetFuncBtnResponse
+                {
+                    Result_code = "0001",
+                    Msg = "查無權限"
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            response = new GetFuncBtnModel.GetFuncBtnResponse
+            {
+                Result_code = "0000",
+                Msg = "成功",
+                Result = buttonList
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new GetFuncBtnModel.GetFuncBtnResponse
+            {
+                Result_code = "9999",
+                Msg = "系統錯誤：" + ex.Message
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+
+    /// <summary>
+    /// 5. 確認是否擁有按鈕權限
+    /// </summary>
+    /// <param name="Request_">JSON格式請求參數</param>
+    /// <returns>JSON格式回應結果</returns>
+    public static string CheckBtnEnabled(string Request_)
+    {
+        FCheckBtnEnabled func = new FCheckBtnEnabled();
+        var response = new CheckBtnEnabledModel.CheckBtnEnabledResponse();
+        try
+        {
+            CheckBtnEnabledModel.CheckBtnEnabledRequest request = 
+                JsonConvert.DeserializeObject<CheckBtnEnabledModel.CheckBtnEnabledRequest>(Request_);
+
+            // 驗證必填參數
+            if (string.IsNullOrEmpty(request.SysID) || string.IsNullOrEmpty(request.GroupID) || 
+                string.IsNullOrEmpty(request.FuncID) || string.IsNullOrEmpty(request.BtnID))
+            {
+                response = new CheckBtnEnabledModel.CheckBtnEnabledResponse
+                {
+                    Result = false
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            // 執行查詢
+            bool hasPermission = func.CheckButtonPermission(request.SysID, request.GroupID, request.FuncID, request.BtnID);
+
+            response = new CheckBtnEnabledModel.CheckBtnEnabledResponse
+            {
+                Result = hasPermission
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new CheckBtnEnabledModel.CheckBtnEnabledResponse
+            {
+                Result = false
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+
+    /// <summary>
+    /// 原有功能：取得功能連結
+    /// </summary>
+    /// <param name="Request_">JSON格式請求參數</param>
+    /// <returns>JSON格式回應結果</returns>
+    public static string GetFunctionAndAccessUrl(string Request_)
+    {
+        FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+        var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+        try
+        {
+            GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest request = 
+                JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(Request_);
+
+            // 檢查類型是否正確
+            if (!func.TypeActions.ContainsKey(request.Type))
+            {
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "1002",
+                    Msg = "類型錯誤，只接受 1 或 2",
+                    Url = ""
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            // 檢查環境是否正確
+            if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+            {
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "1003",
+                    Msg = "環境錯誤，只接受 TEST、PROD",
+                    Url = ""
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            // 檢查系統權限
+            var authorizedSystems = func.GetAuthorizedSystemsList();
+            if (!authorizedSystems.Contains(request.SysID))
+            {
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "0001",
+                    Msg = "查無權限",
+                    Url = ""
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+
+            // 產生 JWT Token
+            string token = func.GenerateJwtToken(request.SysID);
+
+            // 組合最終 URL
+            string baseUrl = func.EnvironmentUrls[request.Environment];
+            string action = func.TypeActions[request.Type];
+            string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+            response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+            {
+                Result_code = "0000",
+                Msg = "成功",
+                Url = finalUrl
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+        catch (Exception ex)
+        {
+            response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+            {
+                Result_code = "9999",
+                Msg = "系統錯誤：" + ex.Message,
+                Url = ""
+            };
+            return JsonConvert.SerializeObject(response);
+        }
+    }
 }
+```
 
-
-⸻
-
-✅ 效果
-	•	打開 Modal → 員工編號輸入框旁邊會有一顆 ❌ 按鈕。
-	•	點下去 → 直接清掉員工編號輸入框，並且把「姓名 / 部門 / 職稱」三個欄位也清掉。
-
-⸻
-
-要不要我幫你把「清除按鈕」也加到 查詢人員權限的輸入框旁邊？（這樣查詢也能一鍵清空）
+}
