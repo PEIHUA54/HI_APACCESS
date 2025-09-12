@@ -1,30 +1,35 @@
 DLL 規格 (類似API) 
-怎麼寫SQL、之後才會開始寫程式碼、我需要先理清楚SQL怎麼取資料條件怎麼寫
-一、
+需要開發framework、core 兩種版本
+1.	HI_APACCESS_DLL_CORE(class:APACCESS)
+2.	HI_APACCESS_DLL_FRAMEWORK(class:APACCESS)
+一、GetUserNameAndGroup(取得使用者群組與名稱)
 --REQUEST
 {
-  "sys_id": "HI_POS",
-  "user_id": "3A001",
-  "environment": "TEST"
+  " SysID": "HI_POS",
+  " UserAD ": "3A001",
+  " Environment ": "TEST"
 }
 --RESPONSE
 成功:
  {
-"result_code": "0000",
-"msg": "成功",
-"result": {
-    "user_name": "王小明",   
-    "group_id": "001",
-    "group_name": "管理員(資訊)",
-    "parent_group_id": [ "003", "002" ],
-    "chile_group_id": [ "004", "005" ],
-    "sensitive_data_access": false
-  }
+" Result_code": "0000",
+" Msg": "成功",
+" Result": {
+    "UserID": "3A001",
+    "UserName": "王小明",   
+    "GroupID": "001",
+    "GroupName": "管理員(資訊)",
+    "ParentGroupID": [ "003", "002" ],
+    "ChildGroupID": [ "004", "005" ],
+    "SensitiveDataAccess": false,
+    "OrganName": "程式課" ,
+    "GroupName": "高級專員" 
+ }
 }
 錯誤
 {
-  "result_code": "0001",
-  "msg": "查無權限"
+  " Result_code": "0001",
+  " Msg": "查無權限"
 }
 ***
 子群組 chile_group_id 概念是
@@ -34,123 +39,105 @@ DLL 規格 (類似API)
 APG_NO=002,PARTENT_APG_NO有001
 那我001的子群組就是002(數量一個以上(含))
 
--- GetUserNameAndGroup(取得使用者群組與名稱) => (三個參數:sys_id、user_id、environment) 
+-- GetUserNameAndGroup(取得使用者群組與名稱) => (三個參數: SysID、UserAD、Environment) 
 
 SELECT DISTINCT
-U_NAME, A.APG_NO ,A.APG_NAME , PARENT_APG_NO,
- -- chile_group_id (子群組) ?? ,
+A.U_ID ,U_NAME, A.APG_NO ,A.APG_NAME , PARENT_APG_NO,
+ -- chile_group_id (子群組) ?? 
  SENSITIVE_DATA_ACCESS
+--  ,[ORGAN_CAP],[POST_NAME] 從[VW_M1EMP_MAST]取
 FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
 left join [AP_USER] B on A.APG_NO = B.APG_NO
 where A.SYS_ID=@SYS_ID and B.U_ID=@U_ID 
 
-二、
+二、GetGroupAllUser(取得群組人員清單)
 --
 {
-  "sys_id": "HI_POS",
-  "group_id": "001",
+  "SysID": "HI_POS",
+  "GroupID": "001",
   "IsIncludeChildGroups": true,
-  "environment": "TEST"
+  "Environment": "TEST"
 }
 --
 成功
 {
-"result_code": "0000",
-"msg": "成功",
-"result": {
-    "user_id_list": [ "3A717","3B750"]
-   }
-}
+"Result_code": "0000",
+"Msg": "成功",
+"Result": {
+    "UserADList": [ "3A717","3B750"]
+   }}
 錯誤
 {
-  "result_code": "0001",
-  "msg": "查無權限"
-}
+  "Result_code": "0001",
+  "Msg": "查無權限"}
+
+
 
 **
---GetGroupAllUser(取得群組人員清單) => (四個參數:sys_id、group_id、IsIncludeChildGroups、environment)
+--GetGroupAllUser(取得群組人員清單) => (四個參數: SysID、GroupID、IsIncludeChildGroups是否要取子群組人員名單、Environment)
 
-SELECT DISTINCT  U_ID  
--- , chile_group_id (是否要取IsIncludeChildGroups子群組)=> 若TRUE 就要把子群組的人員員編取出來，FALSE 則取傳進來APG_NO的人員
+SELECT DISTINCT 
+U_ID 
 FROM [HI_TMMAIN].[dbo].[AP_USER] A
 left join [AP_GROUP] B ON A.APG_NO = B.APG_NO
 where A.SYS_ID=@SYS_ID and B.APG_NO=@APG_NO
+--條件chile_group_id (是否要取IsIncludeChildGroups子群組)=> 若TRUE 就要把子群組的人員員編也取出來跟自己群組，FALSE 則取傳進來自己群組APG_NO的人員
 
-三、
+三、GetTree(取得樹狀功能清單)
+{
+  "SysID": "HI_POS",
+  "GroupID ": "001",
+  "Environment": "TEST"}
 --
 {
-  "sys_id": "HI_POS",
-  "group_id ": "001",
-  "environment": "TEST"
-}
---
-{
-  "result_code": "0000",
-  "msg": "成功",
-  "result": [
+"Result_code": "0000",
+  "Msg": "成功",
+  "Result": [
     {
-      "func_id": "POS1",
-      "func_name": "權限作業",
-      "controller": "",
-      "action": "",
-      "sort": 1,
-      "parent_id": "HOME",
-      "level": "0"
+      "FuncID": "POS1",
+      "FuncName": "權限作業",
+      "Controller": "",
+      "Action": "",
+      "Sort": 1,
+      "ParentID": "HOME",
+      "Level": "0"
     },
     {
-      "func_id": "POS1002",
-      "func_name": "權限設定new",
-      "controller": "HOME",
-      "action": "AP_ACCESS_SYS",
-      "sort": 1,
-      "parent_id": "POS1",
-      "level": "1"
+       "FuncID": "POS1002",
+      "FuncName": "權限設定new",
+      "Controller": "HOME",
+      "Action": "AP_ACCESS_SYS",
+      "Sort": 1,
+      "ParentID": "POS1",
+      "Level": "1"
     },
     {
-      "func_id": "POS1003",
-      "func_name": "頁面功能設定new",
-      "controller": "HOME",
-      "action": "AP_ACCESS_SYS_FUNC",
-      "sort": 2,
-      "parent_id": "POS1",
-      "level": "1"
+      "FuncID": "POS2",
+      "FuncName": "代收設定作業",
+      "Controller": "",
+      "Action": "",
+      "Sort": 2,
+      "ParentID": "HOME",
+      "Level": "0"
     },
     {
-      "func_id": "POS2",
-      "func_name": "代收設定作業",
-      "controller": "",
-      "action": "",
-      "sort": 2,
-      "parent_id": "HOME",
-      "level": "0"
+     "FuncID": "POS2001",
+      "FuncName": "轉檔紀錄",
+      "Controller": "ARC_VER",
+      "Action": "ARC_VERPartial",
+      "Sort": 1,
+      "ParentID": "POS2",
+      "Level": "1"
     },
-    {
-      "func_id": "POS2001",
-      "func_name": "轉檔紀錄",
-      "controller": "ARC_VER",
-      "action": "ARC_VERPartial",
-      "sort": 1,
-      "parent_id": "POS2",
-      "level": "1"
-    },
-    {
-      "func_id": "POS2002",
-      "func_name": "代收設定",
-      "controller": "Arc_Def",
-      "action": "ARC_DEF_HPartial",
-      "sort": 2,
-      "parent_id": "POS2",
-      "level": "1"
-    }
   ]
 }
 錯誤
 {
-  "result_code": "0001",
-  "msg": "查無權限"
+  "Result_code": "0001",
+  "Msg": "查無權限"
 }
 **
--- GetTree(取得樹狀功能清單) => (三個參數:sys_id、group_id、environment)
+-- GetTree(取得樹狀功能清單) => (三個參數: SysID、GroupID、Environment)
 
 SELECT 
 DISTINCT
@@ -162,38 +149,38 @@ FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
 left join [AP_USER_FUNC_CONFIG] b on a.FUNC_ID = b.FUNC_ID
 where a.SYS_ID=@SYS_ID and b.APG_NO=@APG_NO 
 
-四、
+四、GetFuncBtn(取得功能頁有權限之按鈕)
 --
 {
-  "sys_id": "HI_POS",
-  "group_id ": "001",
-  "func_id": " POS1001",
-  "environment": "TEST"
+  "SysID": "HI_POS",
+  "GroupID ": "001",
+  "FuncID": " POS1001",
+  "Environment": "TEST"
 }
 --
 {
-  "result_code": "0000",
-  "msg": "成功",
-  "result": [
+   "Result_code": "0000",
+  "Msg": "成功",
+  "Result": [
     {
-      "btn_id": "Explain",
-      "btn_name": "說明",
-      "contoller": "",
-      "action": "",
-      "btn_location": "BTN_FORM",
-      "btn_onclick": "arcExplain"
+      "BtnID": "Explain",
+      "BtnName": "說明",
+      "Controller": "",
+      "Action": "",
+      "BtnLocation": "BTN_FORM",
+      "BtnOnclick": "arcExplain"
     },
     {
-      "btn_id": "VerfityCode",
-      "btn_name": "檢查碼公式驗證",
-      "contoller": "Arc_Def",
-      "action": "Chk_Code",
-      "btn_location": "BTN",
-      "btn_onclick": "function(s, e) {{popup4.SetContentUrl('{0}'); popup4.Show()}}"
-    }
+      "BtnID": "VerfityCode",
+      "BtnName": "檢查碼公式驗證",
+      "Controller": "Arc_Def",
+      "Action": "Chk_Code",
+      "BtnLocation": "BTN",
+      "BtnOnclick": "function(s, e) {{popup4.SetContentUrl('{0}'); popup4.Show()}}"
+    },
   ]
 }
--- GetFuncBtn(取得功能頁有權限之按鈕)?? => (四個參數:sys_id、group_id、func_id、environment)
+-- GetFuncBtn(取得功能頁有權限之按鈕)?? => (四個參數: SysID、GroupID、FuncID、Environment)
 不確定寫法1、2
 1.SELECT DISTINCT
 a.BTNID,a.BTN_NAME,a.CONTROLLER,a.ACTION,a.LOC,a.ONCLICK
@@ -207,25 +194,33 @@ FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
 left join [AP_USER_FUNC_CONFIG] b on a.FUNC_ID = b.FUNC_ID
 where a.SYS_ID=@SYS_ID and b.APG_NO=@APG_NO and a.FUNC_ID=@FUNC_ID
 
-五、
+五、CheckBtnEnabled(確認是否擁有按鈕權限)
 --
 {
-  "sys_id": "HI_POS",
-  "group_id ": "001",
-  "func_id": " POS1001",
-  "btn_id": "EDIT",
-  "environment": "TEST"
+"SysID": "HI_POS",
+  "GroupID ": "001",
+  "FuncID": " POS1001",
+  "BtnID": "EDIT",
+  "Environment": "TEST"
 }
 --
 {
-  "result": true
+  "Result": true
 }
 **
--- 5.CheckBtnEnabled(確認是否擁有按鈕權限) => (五個參數:sys_id、group_id、func_id、btn_id、environment)
+-- 5.CheckBtnEnabled(確認是否擁有按鈕權限) => (五個參數: SysID、GroupID、FuncID、BtnID、Environment)
 SELECT * --TRUE、FALSE ??
 FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] A
 left join [AP_RFUNC] b on a.FUNC_ID = b.FUNC_ID
 where a.SYS_ID=@SYS_ID and A.APG_NO=@APG_NO and a.FUNC_ID=@FUNC_ID AND B.BTNID=@BTNID
+
+重點:
+Model: 
+HI_APACCESS_DLL_CORE.Models.GetFunctionAndAccessUrlRequest(-----Request)
+HI_APACCESS_DLL_CORE.Models.GetFunctionAndAccessUrlResponse(-----Response)
+Factory 處理方法、sql
+HI_APACCESS_DLL_CORE.Factory.FGetFunctionAndAccessUrl
+
 
 相關權限TABLE:
 *
@@ -275,4 +270,250 @@ SELECT  [SYS_ID]
       ,[U_ID]
       ,[U_NAME]
   FROM [HI_TMMAIN].[dbo].[AP_USER] --員工設定
+
+SELECT [EMP_NO]
+      ,[EMP_NAME]
+      ,[ORGAN_NO]
+      ,[ORGAN_CAP] --部門
+      ,[POST_NO]
+      ,[POST_NAME] --職稱
+  FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] --員工清單
+
+目前有寫好一個function 可以參考
+主要
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
+using System.Data.SqlClient;
+using System.Data;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public static class APACCESS
+    {
+        public static string GetFunctionAndAccessUrl(string Request_)
+        {
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+            try
+            {
+                GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(Request_);
+
+                // 檢查類型是否正確
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "1002",
+                        Msg = "類型錯誤，只接受 1 或 2",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查環境是否正確
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "1003",
+                        Msg = "環境錯誤，只接受 TEST、PROD",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查系統權限 (不在清單內無權限)
+                var authorizedSystems = func.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                    {
+                        Result_code = "0001",
+                        Msg = "查無權限",
+                        Url = ""
+                    };
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 產生 JWT Token
+                string token = func.GenerateJwtToken(request.SysID);
+
+                // 組合最終 URL（含 Token）
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+                // 回傳成功結果
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "0000",
+                    Msg = "成功",
+                    Url = finalUrl
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+            catch (Exception ex)
+            {
+                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
+                {
+                    Result_code = "9999",
+                    Msg = "系統錯誤：" + ex.Message,
+                    Url = ""
+                };
+                return JsonConvert.SerializeObject(response);
+            }
+        }
+    }
+}
+FACTORY:
+using System.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetFunctionAndAccessUrl
+    {  // 環境設定
+        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+        {
+            //{ "TEST", "http:// 10.8.254.68/ HI_APACCESS_TEST" },
+            { "TEST", "http://localhost:53088" },
+            { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        };
+
+        // 類型設定
+        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+        {
+            { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
+            { "2", "TokenEntry" }        // 權限設定
+        };
+
+        // sql連線字串
+        internal static string BuildConnectionString()
+        {
+            var csb = new SqlConnectionStringBuilder
+            {
+                DataSource = "Hilife-tfs",
+                InitialCatalog = "HI_APLOG",
+                PersistSecurityInfo = true,
+                TrustServerCertificate = true,
+                UserID = "pos",
+                Password = "pos1",
+                Encrypt = true
+            };
+            return csb.ConnectionString;
+        }
+
+        // 取得授權系統清單sql
+        internal List<string> GetAuthorizedSystemsList()
+        {
+            string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+            var systemIds = new List<string>();
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    conn.Open();
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            systemIds.Add(reader["SYS_ID"].ToString());
+                        }
+                    }
+                }
+                return systemIds;
+            }
+            catch (Exception ex)
+            {
+                return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
+            }
+        }
+
+        /// 產生 JWT Token
+        internal string GenerateJwtToken(string systemId)
+        {
+            var claims = new[]
+            {
+            new Claim("systemId", systemId),
+        };
+
+            string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: "hi_ap_access_dll",
+                audience: "hi_ap_access_web",
+                claims: claims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+    }
+}
+MODEL:
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Models
+{
+    internal class GetFunctionAndAccessUrlModel
+    {
+        // 請求參數
+        internal class GetFunctionAndAccessUrlRequest
+        {
+            [JsonProperty]
+            [DisplayName("系統ID")]
+            internal string SysID { get; set; }        // 系統ID
+            [JsonProperty]
+            [DisplayName("類型")]
+            internal string Type { get; set; }          // 1=頁面設定, 2=權限設定
+            [JsonProperty]
+            [DisplayName("環境")]
+            internal string Environment { get; set; }   // TEST=測試, PROD=正式
+        }
+
+        // 回應結果
+        internal class GetFunctionAndAccessUrlResponse
+        {
+            [JsonProperty]
+            [DisplayName("回覆代碼")]
+            internal string Result_code { get; set; }     // 結果代碼
+            [JsonProperty]
+            [DisplayName("訊息")]
+            internal string Msg { get; set; }  // 訊息
+            [JsonProperty]
+            [DisplayName("功能連結")]
+            internal string Url { get; set; }      // 功能連結
+        }
+    }
+}
 
