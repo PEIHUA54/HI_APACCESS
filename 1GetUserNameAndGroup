@@ -1,1 +1,246 @@
- 
+ 好 👌 我幫你把 ParentGroupID / ChildGroupID 改成回傳 JSON 陣列，這樣 Response 就跟你 API 規格一樣 ([ "003","002" ])。
+
+⸻
+
+① SQL 改法：用 FOR JSON PATH
+
+DECLARE @SysID NVARCHAR(50) = 'HI_POS';
+DECLARE @UserAD NVARCHAR(50) = '3A001';
+
+WITH UserGroups AS (
+    SELECT U.APG_NO, U.U_ID, U.U_NAME
+    FROM [HI_TMMAIN].[dbo].[AP_USER] U
+    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
+)
+SELECT DISTINCT
+    UG.U_ID AS UserID,
+    UG.U_NAME AS UserName,
+    G.APG_NO AS GroupID,
+    G.APG_NAME AS GroupName,
+
+    -- 母群組：直接輸出 JSON 陣列
+    (
+        SELECT PARENT_APG_NO 
+        FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+        WHERE APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID AND PARENT_APG_NO IS NOT NULL
+        FOR JSON PATH
+    ) AS ParentGroupID,
+
+    -- 子群組：直接輸出 JSON 陣列
+    (
+        SELECT APG_NO 
+        FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+        WHERE PARENT_APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID
+        FOR JSON PATH
+    ) AS ChildGroupID,
+
+    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    M.ORGAN_CAP AS OrganName,
+    M.POST_NAME AS PostName
+FROM UserGroups UG
+INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
+    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
+LEFT JOIN [VW_M1EMP_MAST] M 
+    ON UG.U_ID = M.EMP_NO;
+
+👉 執行結果範例：
+	•	ParentGroupID = [{"PARENT_APG_NO":"003"},{"PARENT_APG_NO":"002"}]
+	•	ChildGroupID = [{"APG_NO":"004"},{"APG_NO":"005"}]
+
+程式端再用 Model (List<string>) 去轉換即可。
+
+⸻
+
+② Model (更新版)
+
+internal class ResultData
+{
+    [JsonProperty]
+    [DisplayName("使用者ID")]
+    internal string UserID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("使用者名稱")]
+    internal string UserName { get; set; }
+
+    [JsonProperty]
+    [DisplayName("群組ID")]
+    internal string GroupID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("群組名稱")]
+    internal string GroupName { get; set; }
+
+    [JsonProperty]
+    [DisplayName("母群組ID清單")]
+    internal List<string> ParentGroupID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("子群組ID清單")]
+    internal List<string> ChildGroupID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("是否可存取機敏資料")]
+    internal bool SensitiveDataAccess { get; set; }
+
+    [JsonProperty]
+    [DisplayName("部門名稱")]
+    internal string OrganName { get; set; }
+
+    [JsonProperty]
+    [DisplayName("職稱名稱")]
+    internal string PostName { get; set; }
+}
+
+
+⸻
+
+③ Factory：FGetUserNameAndGroup.cs
+
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_CORE.Models;
+
+namespace HI_APACCESS_DLL_CORE.Factory
+{
+    internal class FGetUserNameAndGroup
+    {
+        internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+                {
+                    conn.Open();
+                    string sql = @"
+WITH UserGroups AS (
+    SELECT U.APG_NO, U.U_ID, U.U_NAME
+    FROM [HI_TMMAIN].[dbo].[AP_USER] U
+    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
+)
+SELECT DISTINCT
+    UG.U_ID AS UserID,
+    UG.U_NAME AS UserName,
+    G.APG_NO AS GroupID,
+    G.APG_NAME AS GroupName,
+    (
+        SELECT PARENT_APG_NO 
+        FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+        WHERE APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID AND PARENT_APG_NO IS NOT NULL
+        FOR JSON PATH
+    ) AS ParentGroupID,
+    (
+        SELECT APG_NO 
+        FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+        WHERE PARENT_APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID
+        FOR JSON PATH
+    ) AS ChildGroupID,
+    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    M.ORGAN_CAP AS OrganName,
+    M.POST_NAME AS PostName
+FROM UserGroups UG
+INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
+    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
+LEFT JOIN [VW_M1EMP_MAST] M 
+    ON UG.U_ID = M.EMP_NO;
+";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@UserAD", userAd);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            if (reader.Read())
+                            {
+                                var result = new GetUserNameAndGroupModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString(),
+                                    GroupID = reader["GroupID"].ToString(),
+                                    GroupName = reader["GroupName"].ToString(),
+                                    ParentGroupID = JsonConvert.DeserializeObject<List<string>>(reader["ParentGroupID"].ToString() ?? "[]"),
+                                    ChildGroupID = JsonConvert.DeserializeObject<List<string>>(reader["ChildGroupID"].ToString() ?? "[]"),
+                                    SensitiveDataAccess = Convert.ToBoolean(reader["SensitiveDataAccess"]),
+                                    OrganName = reader["OrganName"].ToString(),
+                                    PostName = reader["PostName"].ToString()
+                                };
+
+                                response.Result_code = "0000";
+                                response.Msg = "成功";
+                                response.Result = result;
+                            }
+                            else
+                            {
+                                response.Result_code = "0001";
+                                response.Msg = "查無權限";
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = "9999";
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+④ 主類別呼叫 (APACCESS.cs)
+
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_CORE.Factory;
+using HI_APACCESS_DLL_CORE.Models;
+
+namespace HI_APACCESS_DLL_CORE
+{
+    public static class APACCESS
+    {
+        public static string GetUserNameAndGroup(string requestJson)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
+
+                FGetUserNameAndGroup func = new FGetUserNameAndGroup();
+                response = func.Execute(request.SysID, request.UserAD, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = "9999",
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+}
+
+
+⸻
+
+📌 這樣第一個功能就完整了：
+	•	SQL 已經輸出 JSON 陣列
+	•	Model 是 List<string>
+	•	Factory 會轉成物件
+	•	主類別 APACCESS 可直接呼叫
+
+要不要我接下來幫你 把第二個功能 (GetGroupAllUser) 也做完整 Factory + Model + 呼叫範例？
+
