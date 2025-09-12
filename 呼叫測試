@@ -1,0 +1,123 @@
+using POSFILE_APPLY.Factory;
+using POSFILE_APPLY.Service;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Claims;
+using System.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Text;
+using System.Web;
+using System.Web.Mvc;
+using X.PagedList;
+using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
+using HI_APACCESS_DLL_FRAMEWORK;
+using Newtonsoft.Json; //  DLL 參考
+
+namespace POSFILE_APPLY.Controllers
+{
+    public class APController : POSFILE_APPLYBaseController
+    {
+        // HI_POS、HI_POSIMG、POS_LOG
+        // 權限管理導向 
+        public ActionResult AP_ACCESS_SYS()
+        {
+            try
+            {
+                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+                {
+                    sys_id = "HI_POSIMG",  
+                    environment = "TEST",
+                    type = "2" 
+                };
+
+                string json_input = JsonConvert.SerializeObject(req_para);
+                string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetFunctionAndAccessUrl(json_input);
+                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+
+                if (response_.code == "0000")
+                {
+                    string script = $@"
+                    <script>
+                       window.open('{response_.url}', '_blank');                       
+                       window.location.href='{Url.Action("Main", "Home")}';
+                    </script>";
+                    return Content(script, "text/html");
+                }
+                else
+                {
+                    return Content($"<script>alert('取得權限管理連結失敗：{response_.message}');</script>", "text/html");
+                }
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
+        }
+
+        // 系統頁面管理導向
+        public ActionResult AP_ACCESS_SYS_FUNC()
+        {
+            try
+            {
+                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+                {
+                    sys_id = "HI_POSIMG",
+                    environment = "TEST",
+                    type = "1"         
+                };
+
+                string json_input = JsonConvert.SerializeObject(req_para);
+                string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetFunctionAndAccessUrl(json_input);
+                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+
+                if (response_.code == "0000")
+                {
+                    string script = $@"
+                    <script>
+                       window.open('{response_.url}', '_blank');                       
+                       window.location.href='{Url.Action("Main", "Home")}';
+                    </script>";
+                    return Content(script, "text/html");
+                }
+                else
+                {
+                    return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.message}');</script>", "text/html");
+                }
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
+        }
+
+    }
+}
+
+--
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+
+namespace POSFILE_APPLY.Models
+{
+    public class M_AP
+    {
+        //REQUEST
+        public class GetUrlRequsetModel
+        {
+            public string sys_id { get; set; }
+            public string type { get; set; }
+            public string environment { get; set; }
+        }
+
+        //RESPONSE
+        public class GetUrlResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public string url { get; set; }
+        }
+    }
+}
