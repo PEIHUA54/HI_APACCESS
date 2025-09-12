@@ -1,34 +1,38 @@
-using System.Data.SqlClient;
-using Microsoft.IdentityModel.Tokens;
+很好 👍 我幫你整理好，給你完整、可放進專案的程式碼結構：
+
+⸻
+
+📂 Common/ErrorCodes.cs
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Common
+{
+    internal static class ErrorCodes
+    {
+        internal const string SUCCESS = "0000";          // 成功
+        internal const string NO_PERMISSION = "0001";    // 查無權限
+        internal const string TYPE_ERROR = "1002";       // 類型錯誤
+        internal const string ENV_ERROR = "1003";        // 環境錯誤
+        internal const string SYS_UNAUTHORIZED = "1004"; // 系統未授權
+        internal const string SYSTEM_ERROR = "9999";     // 系統錯誤
+    }
+}
+
+
+⸻
+
+📂 Factory/FCommon.cs
+
 using System;
 using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
-using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
-using HI_APACCESS_DLL_FRAMEWORK.Models;
+using System.Data.SqlClient;
 
 namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 {
-    internal class FGetFunctionAndAccessUrl
-    {  
-        // 環境設定
-        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
-        {
-            //{ "TEST", "http:// 10.8.254.68/ HI_APACCESS_TEST" },
-            { "TEST", "http://localhost:53088" },
-            { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
-        };
-
-        // 類型設定
-        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
-        {
-            { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
-            { "2", "TokenEntry" }        // 權限設定
-        };
-
-        // sql連線字串
+    internal static class FCommon
+    {
+        /// <summary>
+        /// 建立 SQL 連線字串
+        /// </summary>
         internal static string BuildConnectionString()
         {
             var csb = new SqlConnectionStringBuilder
@@ -44,8 +48,10 @@ namespace HI_APACCESS_DLL_FRAMEWORK.Factory
             return csb.ConnectionString;
         }
 
-        // 取得授權系統清單sql
-        internal List<string> GetAuthorizedSystemsList_old()
+        /// <summary>
+        /// 取得授權系統清單
+        /// </summary>
+        internal static List<string> GetAuthorizedSystemsList()
         {
             string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
             var systemIds = new List<string>();
@@ -64,21 +70,207 @@ namespace HI_APACCESS_DLL_FRAMEWORK.Factory
                         }
                     }
                 }
-                return systemIds;
             }
-            catch (Exception ex)
+            catch
             {
                 return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
             }
+
+            return systemIds;
+        }
+    }
+}
+
+
+⸻
+
+📂 Factory/FGetUserNameAndGroup.cs （功能 1）
+
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetUserNameAndGroup
+    {
+        internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = ErrorCodes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+                {
+                    conn.Open();
+
+                    // 3. 查詢使用者與群組
+                    string sqlMain = @"
+WITH UserGroups AS (
+    SELECT U.APG_NO, U.U_ID, U.U_NAME
+    FROM [HI_TMMAIN].[dbo].[AP_USER] U
+    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
+)
+SELECT TOP 1
+    UG.U_ID AS UserID,
+    UG.U_NAME AS UserName,
+    G.APG_NO AS GroupID,
+    G.APG_NAME AS GroupName,
+    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    M.ORGAN_CAP AS OrganName,
+    M.POST_NAME AS PostName
+FROM UserGroups UG
+INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
+    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
+LEFT JOIN [VW_M1EMP_MAST] M 
+    ON UG.U_ID = M.EMP_NO;
+";
+
+                    var result = new GetUserNameAndGroupModel.ResultData();
+
+                    using (SqlCommand cmd = new SqlCommand(sqlMain, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@UserAD", userAd);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            if (reader.Read())
+                            {
+                                result.UserID = reader["UserID"].ToString();
+                                result.UserName = reader["UserName"].ToString();
+                                result.GroupID = reader["GroupID"].ToString();
+                                result.GroupName = reader["GroupName"].ToString();
+                                result.SensitiveDataAccess = Convert.ToBoolean(reader["SensitiveDataAccess"]);
+                                result.OrganName = reader["OrganName"].ToString();
+                                result.PostName = reader["PostName"].ToString();
+                            }
+                            else
+                            {
+                                response.Result_code = ErrorCodes.NO_PERMISSION;
+                                response.Msg = "查無權限";
+                                return response;
+                            }
+                        }
+                    }
+
+                    // 4. 撈母群組
+                    string sqlParent = @"SELECT PARENT_APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                                         WHERE SYS_ID=@SysID AND APG_NO=@GroupID AND PARENT_APG_NO IS NOT NULL";
+                    using (SqlCommand cmd = new SqlCommand(sqlParent, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            result.ParentGroupID = new List<string>();
+                            while (reader.Read())
+                            {
+                                result.ParentGroupID.Add(reader["PARENT_APG_NO"].ToString());
+                            }
+                        }
+                    }
+
+                    // 5. 撈子群組
+                    string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                                        WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+                    using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            result.ChildGroupID = new List<string>();
+                            while (reader.Read())
+                            {
+                                result.ChildGroupID.Add(reader["APG_NO"].ToString());
+                            }
+                        }
+                    }
+
+                    // 6. 成功回傳
+                    response.Result_code = ErrorCodes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = result;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+📂 Factory/FGetFunctionAndAccessUrl.cs （功能 6）
+
+using System;
+using System.Collections.Generic;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetFunctionAndAccessUrl
+    {
+        // 環境設定
+        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+        {
+            { "TEST", "http://localhost:53088" },
+            { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+        };
+
+        // 類型設定
+        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+        {
+            { "1", "TokenEntry_FUNC" },
+            { "2", "TokenEntry" }
+        };
+
+        /// <summary>
+        /// 取得授權系統清單（呼叫 FCommon）
+        /// </summary>
+        internal List<string> GetAuthorizedSystemsList()
+        {
+            return FCommon.GetAuthorizedSystemsList();
         }
 
+        /// <summary>
         /// 產生 JWT Token
+        /// </summary>
         internal string GenerateJwtToken(string systemId)
         {
             var claims = new[]
             {
-            new Claim("systemId", systemId),
-        };
+                new Claim("systemId", systemId),
+            };
 
             string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
 
@@ -99,26 +291,20 @@ namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 }
 
 
-using Microsoft.IdentityModel.Tokens;
+⸻
+
+📂 APACCESS.cs （主類別，功能 1 + 功能 6）
+
 using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
-using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml;
-using System.Data.SqlClient;
-using System.Data;
 using HI_APACCESS_DLL_FRAMEWORK.Factory;
 using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
 
 namespace HI_APACCESS_DLL_FRAMEWORK
 {
     public class APACCESS
     {
-        //1 取得使用者群組與名稱
+        // 功能1：取得使用者群組與名稱
         public string GetUserNameAndGroup(string requestJson)
         {
             var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
@@ -129,13 +315,12 @@ namespace HI_APACCESS_DLL_FRAMEWORK
 
                 FGetUserNameAndGroup func = new FGetUserNameAndGroup();
                 response = func.Execute(request.SysID, request.UserAD, request.Environment);
-
             }
             catch (Exception ex)
             {
                 response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
                 {
-                    Result_code = "9999",
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
                     Msg = "系統錯誤：" + ex.Message
                 };
             }
@@ -143,99 +328,77 @@ namespace HI_APACCESS_DLL_FRAMEWORK
             return JsonConvert.SerializeObject(response);
         }
 
-        //2 取得群組人員清單
-        //public string GETGROUPALLUSER(string Request_)
-        //{
-        //}
-
-        //3 取得樹狀功能清單
-        //public string GETTREE(string Request_)
-        //{
-        //}
-
-        //4 取得功能頁有權限之按鈕
-        //public string GETFUNCBTN(string Request_)
-        //{
-        //}
-
-        //5 確認是否擁有按鈕權限
-        //public string CHECKBTNENABLED(string Request_)
-        //{
-        //}
-
-        //6 取得頁面跟權限設定功能連結
-        public string GetFunctionAndAccessUrl(string Request_)
+        // 功能6：取得頁面跟權限設定功能連結
+        public string GetFunctionAndAccessUrl(string requestJson)
         {
             FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
             var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+
             try
             {
-                GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(Request_);
+                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
 
-                // 檢查類型是否正確
+                // 檢查類型
                 if (!func.TypeActions.ContainsKey(request.Type))
                 {
-                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
-                    {
-                        Result_code = "1002",
-                        Msg = "類型錯誤，只接受 1 或 2",
-                        Url = ""
-                    };
+                    response.Result_code = ErrorCodes.TYPE_ERROR;
+                    response.Msg = "類型錯誤，只接受 1 或 2";
+                    response.Url = "";
                     return JsonConvert.SerializeObject(response);
                 }
 
-                // 檢查環境是否正確
+                // 檢查環境
                 if (!func.EnvironmentUrls.ContainsKey(request.Environment))
                 {
-                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
-                    {
-                        Result_code = "1003",
-                        Msg = "環境錯誤，只接受 TEST、PROD",
-                        Url = ""
-                    };
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    response.Url = "";
                     return JsonConvert.SerializeObject(response);
                 }
 
-                // 檢查系統權限 (不在清單內無權限)
+                // 檢查系統授權
                 var authorizedSystems = func.GetAuthorizedSystemsList();
                 if (!authorizedSystems.Contains(request.SysID))
                 {
-                    response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
-                    {
-                        Result_code = "0001",
-                        Msg = "查無權限",
-                        Url = ""
-                    };
+                    response.Result_code = ErrorCodes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                    response.Url = "";
                     return JsonConvert.SerializeObject(response);
                 }
 
-                // 產生 JWT Token
+                // 產生 Token
                 string token = func.GenerateJwtToken(request.SysID);
-
-                // 組合最終 URL（含 Token）
                 string baseUrl = func.EnvironmentUrls[request.Environment];
                 string action = func.TypeActions[request.Type];
                 string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
 
-                // 回傳成功結果
-                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
-                {
-                    Result_code = "0000",
-                    Msg = "成功",
-                    Url = finalUrl
-                };
-                return JsonConvert.SerializeObject(response);
+                // 成功
+                response.Result_code = ErrorCodes.SUCCESS;
+                response.Msg = "成功";
+                response.Url = finalUrl;
             }
             catch (Exception ex)
             {
-                response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse
-                {
-                    Result_code = "9999",
-                    Msg = "系統錯誤：" + ex.Message,
-                    Url = ""
-                };
-                return JsonConvert.SerializeObject(response);
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+                response.Url = "";
             }
+
+            return JsonConvert.SerializeObject(response);
         }
     }
 }
+
+
+⸻
+
+✅ 現在完整結構：
+	•	共用工具 → FCommon.cs
+	•	錯誤碼 → ErrorCodes.cs
+	•	功能 1 Factory → FGetUserNameAndGroup.cs
+	•	功能 6 Factory → FGetFunctionAndAccessUrl.cs
+	•	主類別 APACCESS → 對外統一入口
+
+⸻
+
+要不要我接著幫你把 功能 2：GetGroupAllUser 也寫好（Model + Factory + 主類別呼叫）？
