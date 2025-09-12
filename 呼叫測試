@@ -1,110 +1,84 @@
+太好了 👌 你給的 功能 6 測試程式 很清楚，我幫你用一樣的寫法做一個 功能 1 (GetUserNameAndGroup) 的測試方法。
+
+⸻
+
+📌 Controller 測試方法（功能 1）
+
 using POSFILE_APPLY.Factory;
 using POSFILE_APPLY.Service;
 using System;
-using System.Collections.Generic;
-using System.IdentityModel.Claims;
-using System.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
-using System.Text;
-using System.Web;
 using System.Web.Mvc;
-using X.PagedList;
-using static DevExpress.Xpo.Helpers.AssociatedCollectionCriteriaHelper;
 using HI_APACCESS_DLL_FRAMEWORK;
-using Newtonsoft.Json; //  DLL 參考
+using Newtonsoft.Json; // DLL 參考
 
 namespace POSFILE_APPLY.Controllers
 {
     public class APController : POSFILE_APPLYBaseController
     {
-        // HI_POS、HI_POSIMG、POS_LOG
-        // 權限管理導向 
-        public ActionResult AP_ACCESS_SYS()
+        // 功能1 測試：取得使用者群組與名稱
+        public ActionResult AP_ACCESS_USERINFO()
         {
             try
             {
-                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+                // 測試參數
+                var req_para = new POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupRequestModel()
                 {
-                    sys_id = "HI_POSIMG",  
-                    environment = "TEST",
-                    type = "2" 
+                    sys_id = "HI_POSIMG",    // 系統ID
+                    user_ad = "3A001",       // 使用者AD帳號
+                    environment = "TEST"     // 環境
                 };
 
+                // 轉成 JSON，呼叫 DLL
                 string json_input = JsonConvert.SerializeObject(req_para);
-                string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetFunctionAndAccessUrl(json_input);
-                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+                string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetUserNameAndGroup(json_input);
+
+                // 轉成 Response Model
+                var response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupResponseModel>(response);
 
                 if (response_.code == "0000")
                 {
+                    // 測試時直接顯示在網頁上
                     string script = $@"
                     <script>
-                       window.open('{response_.url}', '_blank');                       
-                       window.location.href='{Url.Action("Main", "Home")}';
+                        alert('使用者資訊取得成功\n\n' +
+                              'UserID: {response_.result.UserID}\n' +
+                              'UserName: {response_.result.UserName}\n' +
+                              'GroupID: {response_.result.GroupID}\n' +
+                              'GroupName: {response_.result.GroupName}\n' +
+                              'ParentGroupID: {string.Join(",", response_.result.ParentGroupID)}\n' +
+                              'ChildGroupID: {string.Join(",", response_.result.ChildGroupID)}\n' +
+                              'SensitiveDataAccess: {response_.result.SensitiveDataAccess}\n' +
+                              'OrganName: {response_.result.OrganName}\n' +
+                              'PostName: {response_.result.PostName}');
+                        window.location.href='{Url.Action("Main", "Home")}';
                     </script>";
                     return Content(script, "text/html");
                 }
                 else
                 {
-                    return Content($"<script>alert('取得權限管理連結失敗：{response_.message}');</script>", "text/html");
+                    return Content($"<script>alert('取得使用者資訊失敗：{response_.message}');</script>", "text/html");
                 }
             }
             catch (Exception ex)
             {
-                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+                return Content($"<script>alert('呼叫使用者資訊API錯誤：{ex.Message}');</script>", "text/html");
             }
         }
-
-        // 系統頁面管理導向
-        public ActionResult AP_ACCESS_SYS_FUNC()
-        {
-            try
-            {
-                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
-                {
-                    sys_id = "HI_POSIMG",
-                    environment = "TEST",
-                    type = "1"         
-                };
-
-                string json_input = JsonConvert.SerializeObject(req_para);
-                string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetFunctionAndAccessUrl(json_input);
-                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
-
-                if (response_.code == "0000")
-                {
-                    string script = $@"
-                    <script>
-                       window.open('{response_.url}', '_blank');                       
-                       window.location.href='{Url.Action("Main", "Home")}';
-                    </script>";
-                    return Content(script, "text/html");
-                }
-                else
-                {
-                    return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.message}');</script>", "text/html");
-                }
-            }
-            catch (Exception ex)
-            {
-                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
-            }
-        }
-
     }
 }
 
---
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Web;
+
+⸻
+
+📌 測試用 Model（POSFILE_APPLY.Models.M_AP）
+
+在 M_AP 裡加上功能 1 專用的 Request/Response 模型：
 
 namespace POSFILE_APPLY.Models
 {
     public class M_AP
     {
-        //REQUEST
+        // ===== 功能6 已有 =====
         public class GetUrlRequsetModel
         {
             public string sys_id { get; set; }
@@ -112,12 +86,62 @@ namespace POSFILE_APPLY.Models
             public string environment { get; set; }
         }
 
-        //RESPONSE
         public class GetUrlResponseModel
         {
             public string code { get; set; }
             public string message { get; set; }
             public string url { get; set; }
         }
+
+        // ===== 功能1 新增 =====
+        public class GetUserNameAndGroupRequestModel
+        {
+            public string sys_id { get; set; }
+            public string user_ad { get; set; }
+            public string environment { get; set; }
+        }
+
+        public class GetUserNameAndGroupResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public ResultData result { get; set; }
+
+            public class ResultData
+            {
+                public string UserID { get; set; }
+                public string UserName { get; set; }
+                public string GroupID { get; set; }
+                public string GroupName { get; set; }
+                public List<string> ParentGroupID { get; set; }
+                public List<string> ChildGroupID { get; set; }
+                public bool SensitiveDataAccess { get; set; }
+                public string OrganName { get; set; }
+                public string PostName { get; set; }
+            }
+        }
     }
 }
+
+
+⸻
+
+✅ 測試結果（預期）
+
+假設 3A001 在 HI_POSIMG 系統的群組是「001 管理員」：
+呼叫 AP_ACCESS_USERINFO Action 後，應該跳出 alert 顯示：
+
+UserID: 3A001
+UserName: 王小明
+GroupID: 001
+GroupName: 管理員(資訊)
+ParentGroupID: 003,002
+ChildGroupID: 004,005
+SensitiveDataAccess: False
+OrganName: 程式課
+PostName: 高級專員
+
+
+⸻
+
+要不要我幫你接著把 功能 2 (GetGroupAllUser) 的測試用方法 也寫好（Controller + Model）？
