@@ -1,1 +1,306 @@
+好👌 那我幫你設計 功能 2：GetGroupAllUser (取得群組人員清單)，包含 Model、Factory、主類別呼叫，並套用你前面第一個功能、錯誤代碼的架構。
 
+⸻
+
+📌 Model：GetGroupAllUserModel.cs
+
+using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.ComponentModel;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Models
+{
+    internal class GetGroupAllUserModel
+    {
+        // ===== 請求參數 =====
+        internal class GetGroupAllUserRequest
+        {
+            [JsonProperty]
+            [DisplayName("系統ID")]
+            internal string SysID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("群組ID")]
+            internal string GroupID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("是否包含子群組")]
+            internal bool IsIncludeChildGroups { get; set; }
+
+            [JsonProperty]
+            [DisplayName("環境")]
+            internal string Environment { get; set; }
+        }
+
+        // ===== 回應結果 =====
+        internal class GetGroupAllUserResponse
+        {
+            [JsonProperty]
+            [DisplayName("回覆代碼")]
+            internal string Result_code { get; set; }
+
+            [JsonProperty]
+            [DisplayName("訊息")]
+            internal string Msg { get; set; }
+
+            [JsonProperty]
+            [DisplayName("回應內容")]
+            internal ResultData Result { get; set; }
+        }
+
+        internal class ResultData
+        {
+            [JsonProperty]
+            [DisplayName("使用者AD清單")]
+            internal List<string> UserADList { get; set; }
+        }
+    }
+}
+
+
+⸻
+
+📌 Factory：FGetGroupAllUser.cs
+
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetGroupAllUser
+    {
+        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = ErrorCodes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var userList = new List<string>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+                {
+                    conn.Open();
+
+                    // 3. 如果包含子群組，先把所有群組ID取出
+                    var groupIds = new List<string> { groupId };
+
+                    if (isIncludeChildGroups)
+                    {
+                        string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@SysID", sysId);
+                            cmd.Parameters.AddWithValue("@GroupID", groupId);
+                            using (var reader = cmd.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    groupIds.Add(reader["APG_NO"].ToString());
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. 查詢所有這些群組的使用者
+                    string sqlUser = @"SELECT DISTINCT U_ID 
+                                       FROM [HI_TMMAIN].[dbo].[AP_USER] 
+                                       WHERE SYS_ID=@SysID AND APG_NO IN ({0})";
+
+                    // 動態組 IN 子句
+                    var parameters = new List<string>();
+                    for (int i = 0; i < groupIds.Count; i++)
+                    {
+                        parameters.Add($"@Group{i}");
+                    }
+                    sqlUser = string.Format(sqlUser, string.Join(",", parameters));
+
+                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        for (int i = 0; i < groupIds.Count; i++)
+                        {
+                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
+                        }
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                userList.Add(reader["U_ID"].ToString());
+                            }
+                        }
+                    }
+                }
+
+                // 5. 結果判斷
+                if (userList.Count == 0)
+                {
+                    response.Result_code = ErrorCodes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = ErrorCodes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = new GetGroupAllUserModel.ResultData
+                    {
+                        UserADList = userList
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+📌 主類別：APACCESS.cs（新增功能 2）
+
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public class APACCESS
+    {
+        // 功能1：取得使用者群組與名稱
+        public string GetUserNameAndGroup(string requestJson)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
+                FGetUserNameAndGroup func = new FGetUserNameAndGroup();
+                response = func.Execute(request.SysID, request.UserAD, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 功能2：取得群組人員清單
+        public string GetGroupAllUser(string requestJson)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
+                FGetGroupAllUser func = new FGetGroupAllUser();
+                response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetGroupAllUserModel.GetGroupAllUserResponse
+                {
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 功能6：取得頁面跟權限設定功能連結
+        public string GetFunctionAndAccessUrl(string requestJson)
+        {
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
+
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response.Result_code = ErrorCodes.TYPE_ERROR;
+                    response.Msg = "類型錯誤，只接受 1 或 2";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                var authorizedSystems = func.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response.Result_code = ErrorCodes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                string token = func.GenerateJwtToken(request.SysID);
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+                response.Result_code = ErrorCodes.SUCCESS;
+                response.Msg = "成功";
+                response.Url = finalUrl;
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+                response.Url = "";
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+}
+
+
+⸻
+
+✅ 這樣功能 2 會支援兩種情境：
+	1.	IsIncludeChildGroups = false → 只回傳指定群組的人員。
+	2.	IsIncludeChildGroups = true → 指定群組 + 子群組的人員清單。
+
+要不要我幫你做一個 測試用的 JSON Request 範例（功能 1、功能 2 各一個），讓你可以直接丟進去測試？
