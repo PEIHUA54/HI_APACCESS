@@ -29,6 +29,7 @@ WHERE A.SYS_ID=@SysID AND B.U_ID=@UserAD;
 
 ② GetGroupAllUser
 
+
 DECLARE @SysID NVARCHAR(50) = 'HI_POS';
 DECLARE @GroupID NVARCHAR(50) = '001';
 DECLARE @IsIncludeChildGroups BIT = 1;
