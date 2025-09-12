@@ -1,4 +1,4 @@
- 好 👌 我幫你把 ParentGroupID / ChildGroupID 改成回傳 JSON 陣列，這樣 Response 就跟你 API 規格一樣 ([ "003","002" ])。
+好 👌 我幫你把 ParentGroupID / ChildGroupID 改成回傳 JSON 陣列，這樣 Response 就跟你 API 規格一樣 ([ "003","002" ])。
 
 ⸻
 
@@ -243,4 +243,3 @@ namespace HI_APACCESS_DLL_CORE
 	•	主類別 APACCESS 可直接呼叫
 
 要不要我接下來幫你 把第二個功能 (GetGroupAllUser) 也做完整 Factory + Model + 呼叫範例？
-
