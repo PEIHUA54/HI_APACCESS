@@ -7,11 +7,8 @@ SELECT DISTINCT
     A.APG_NO AS GroupID,
     A.APG_NAME AS GroupName,
 
-    -- 母群組 (可以有多個，用逗號串起來)
-    (SELECT STRING_AGG(PARENT_APG_NO, ',')
-     FROM [HI_TMMAIN].[dbo].[AP_GROUP]
-     WHERE APG_NO = A.APG_NO AND SYS_ID = A.SYS_ID
-     AND PARENT_APG_NO IS NOT NULL) AS ParentGroupID,
+    -- 母群組 (直接取欄位即可)
+    A.PARENT_APG_NO AS ParentGroupID,
 
     -- 子群組 (同一個SYS_ID、PARENT_APG_NO等於目前群組ID)
     (SELECT STRING_AGG(APG_NO, ',')
@@ -28,8 +25,6 @@ FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
 LEFT JOIN [AP_USER] B ON A.APG_NO = B.APG_NO
 LEFT JOIN [VW_M1EMP_MAST] M ON B.U_ID = M.EMP_NO
 WHERE A.SYS_ID=@SysID AND B.U_ID=@UserAD;
-好 👍 那我幫你先把五個 SQL 都整理成 可直接貼去 SSMS 測試的版本，參數都用 @ 代號保留，你可以先用實際值替換掉測看看結果正不正確。
-
 ⸻
 
 ① GetUserNameAndGroup
