@@ -1,30 +1,40 @@
 DECLARE @SysID NVARCHAR(50) = 'HI_POS';
 DECLARE @UserAD NVARCHAR(50) = '3A001';
 
+-- 先找到該使用者在哪些群組
+WITH UserGroups AS (
+    SELECT U.APG_NO, U.U_ID, U.U_NAME
+    FROM [HI_TMMAIN].[dbo].[AP_USER] U
+    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
+)
 SELECT DISTINCT
-    B.U_ID AS UserID,
-    B.U_NAME AS UserName,
-    A.APG_NO AS GroupID,
-    A.APG_NAME AS GroupName,
+    UG.U_ID AS UserID,
+    UG.U_NAME AS UserName,
+    G.APG_NO AS GroupID,
+    G.APG_NAME AS GroupName,
 
-    -- 母群組 (直接取欄位即可)
-    A.PARENT_APG_NO AS ParentGroupID,
+    -- 母群組 (直接從群組表取)
+    G.PARENT_APG_NO AS ParentGroupID,
 
-    -- 子群組 (同一個SYS_ID、PARENT_APG_NO等於目前群組ID)
+    -- 子群組 (同一個SYS_ID、PARENT_APG_NO=目前群組ID)
     (SELECT STRING_AGG(APG_NO, ',')
      FROM [HI_TMMAIN].[dbo].[AP_GROUP]
-     WHERE PARENT_APG_NO = A.APG_NO AND SYS_ID = A.SYS_ID) AS ChildGroupID,
+     WHERE PARENT_APG_NO = G.APG_NO AND SYS_ID = G.SYS_ID) AS ChildGroupID,
 
-    -- 機敏資料存取
-    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    -- 機敏資料
+    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
 
-    -- 部門與職稱
+    -- 部門 / 職稱
     M.ORGAN_CAP AS OrganName,
     M.POST_NAME AS PostName
-FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
-LEFT JOIN [AP_USER] B ON A.APG_NO = B.APG_NO
-LEFT JOIN [VW_M1EMP_MAST] M ON B.U_ID = M.EMP_NO
-WHERE A.SYS_ID=@SysID AND B.U_ID=@UserAD;
+FROM UserGroups UG
+INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
+    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
+LEFT JOIN [VW_M1EMP_MAST] M 
+    ON UG.U_ID = M.EMP_NO;
+
+
+
 ⸻
 
 ① GetUserNameAndGroup
