@@ -371,3 +371,951 @@ JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupReques
 ```
 
 }
+
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Models
+{
+#region 1. GetUserNameAndGroup Models
+internal class GetUserNameAndGroupModel
+{
+internal class GetUserNameAndGroupRequest
+{
+[JsonProperty]
+[DisplayName(“系統ID”)]
+internal string SysID { get; set; }
+
+```
+        [JsonProperty]
+        [DisplayName("使用者AD")]
+        internal string UserAD { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class GetUserNameAndGroupResponse
+    {
+        [JsonProperty]
+        [DisplayName("回覆代碼")]
+        internal string Result_code { get; set; }
+
+        [JsonProperty]
+        [DisplayName("訊息")]
+        internal string Msg { get; set; }
+
+        [JsonProperty]
+        [DisplayName("結果")]
+        internal UserInfo Result { get; set; }
+    }
+
+    internal class UserInfo
+    {
+        [JsonProperty]
+        [DisplayName("使用者ID")]
+        internal string UserID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("使用者名稱")]
+        internal string UserName { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組ID")]
+        internal string GroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組名稱")]
+        internal string GroupName { get; set; }
+
+        [JsonProperty]
+        [DisplayName("父群組ID")]
+        internal List<string> ParentGroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("子群組ID")]
+        internal List<string> ChildGroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("敏感資料存取權")]
+        internal bool SensitiveDataAccess { get; set; }
+
+        [JsonProperty]
+        [DisplayName("組織名稱")]
+        internal string OrganName { get; set; }
+
+        [JsonProperty]
+        [DisplayName("職稱名稱")]
+        internal string PostName { get; set; }
+    }
+}
+#endregion
+
+#region 2. GetGroupAllUser Models
+internal class GetGroupAllUserModel
+{
+    internal class GetGroupAllUserRequest
+    {
+        [JsonProperty]
+        [DisplayName("系統ID")]
+        internal string SysID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組ID")]
+        internal string GroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("是否包含子群組")]
+        internal bool IsIncludeChildGroups { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class GetGroupAllUserResponse
+    {
+        [JsonProperty]
+        [DisplayName("回覆代碼")]
+        internal string Result_code { get; set; }
+
+        [JsonProperty]
+        [DisplayName("訊息")]
+        internal string Msg { get; set; }
+
+        [JsonProperty]
+        [DisplayName("結果")]
+        internal UserListResult Result { get; set; }
+    }
+
+    internal class UserListResult
+    {
+        [JsonProperty]
+        [DisplayName("使用者AD清單")]
+        internal List<string> UserADList { get; set; }
+    }
+}
+#endregion
+
+#region 3. GetTree Models
+internal class GetTreeModel
+{
+    internal class GetTreeRequest
+    {
+        [JsonProperty]
+        [DisplayName("系統ID")]
+        internal string SysID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組ID")]
+        internal string GroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class GetTreeResponse
+    {
+        [JsonProperty]
+        [DisplayName("回覆代碼")]
+        internal string Result_code { get; set; }
+
+        [JsonProperty]
+        [DisplayName("訊息")]
+        internal string Msg { get; set; }
+
+        [JsonProperty]
+        [DisplayName("結果")]
+        internal List<FunctionNode> Result { get; set; }
+    }
+
+    internal class FunctionNode
+    {
+        [JsonProperty]
+        [DisplayName("功能ID")]
+        internal string FuncID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("功能名稱")]
+        internal string FuncName { get; set; }
+
+        [JsonProperty]
+        [DisplayName("控制器")]
+        internal string Controller { get; set; }
+
+        [JsonProperty]
+        [DisplayName("動作")]
+        internal string Action { get; set; }
+
+        [JsonProperty]
+        [DisplayName("排序")]
+        internal int Sort { get; set; }
+
+        [JsonProperty]
+        [DisplayName("父節點ID")]
+        internal string ParentID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("層級")]
+        internal string Level { get; set; }
+    }
+}
+#endregion
+
+#region 4. GetFuncBtn Models
+internal class GetFuncBtnModel
+{
+    internal class GetFuncBtnRequest
+    {
+        [JsonProperty]
+        [DisplayName("系統ID")]
+        internal string SysID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組ID")]
+        internal string GroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("功能ID")]
+        internal string FuncID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class GetFuncBtnResponse
+    {
+        [JsonProperty]
+        [DisplayName("回覆代碼")]
+        internal string Result_code { get; set; }
+
+        [JsonProperty]
+        [DisplayName("訊息")]
+        internal string Msg { get; set; }
+
+        [JsonProperty]
+        [DisplayName("結果")]
+        internal List<ButtonInfo> Result { get; set; }
+    }
+
+    internal class ButtonInfo
+    {
+        [JsonProperty]
+        [DisplayName("按鈕ID")]
+        internal string BtnID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("按鈕名稱")]
+        internal string BtnName { get; set; }
+
+        [JsonProperty]
+        [DisplayName("控制器")]
+        internal string Controller { get; set; }
+
+        [JsonProperty]
+        [DisplayName("動作")]
+        internal string Action { get; set; }
+
+        [JsonProperty]
+        [DisplayName("按鈕位置")]
+        internal string BtnLocation { get; set; }
+
+        [JsonProperty]
+        [DisplayName("按鈕點擊事件")]
+        internal string BtnOnclick { get; set; }
+    }
+}
+#endregion
+
+#region 5. CheckBtnEnabled Models
+internal class CheckBtnEnabledModel
+{
+    internal class CheckBtnEnabledRequest
+    {
+        [JsonProperty]
+        [DisplayName("系統ID")]
+        internal string SysID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("群組ID")]
+        internal string GroupID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("功能ID")]
+        internal string FuncID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("按鈕ID")]
+        internal string BtnID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class CheckBtnEnabledResponse
+    {
+        [JsonProperty]
+        [DisplayName("結果")]
+        internal bool Result { get; set; }
+    }
+}
+#endregion
+
+#region 原有 GetFunctionAndAccessUrl Models
+internal class GetFunctionAndAccessUrlModel
+{
+    internal class GetFunctionAndAccessUrlRequest
+    {
+        [JsonProperty]
+        [DisplayName("系統ID")]
+        internal string SysID { get; set; }
+
+        [JsonProperty]
+        [DisplayName("類型")]
+        internal string Type { get; set; }
+
+        [JsonProperty]
+        [DisplayName("環境")]
+        internal string Environment { get; set; }
+    }
+
+    internal class GetFunctionAndAccessUrlResponse
+    {
+        [JsonProperty]
+        [DisplayName("回覆代碼")]
+        internal string Result_code { get; set; }
+
+        [JsonProperty]
+        [DisplayName("訊息")]
+        internal string Msg { get; set; }
+
+        [JsonProperty]
+        [DisplayName("功能連結")]
+        internal string Url { get; set; }
+    }
+}
+#endregion
+```
+
+}
+
+using System.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using System.Data;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+#region 基底類別
+internal abstract class FactoryBase
+{
+// SQL連線字串
+internal static string BuildConnectionString()
+{
+var csb = new SqlConnectionStringBuilder
+{
+DataSource = “Hilife-tfs”,
+InitialCatalog = “HI_APLOG”,
+PersistSecurityInfo = true,
+TrustServerCertificate = true,
+UserID = “pos”,
+Password = “pos1”,
+Encrypt = true
+};
+return csb.ConnectionString;
+}
+
+```
+    // 取得子群組清單
+    internal List<string> GetChildGroups(string sysId, string groupId)
+    {
+        string sql = @"
+            SELECT APG_NO 
+            FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+            WHERE SYS_ID = @SYS_ID AND PARENT_APG_NO = @APG_NO";
+
+        var childGroups = new List<string>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", groupId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        childGroups.Add(reader["APG_NO"].ToString());
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return childGroups;
+    }
+}
+#endregion
+
+#region 1. GetUserNameAndGroup Factory
+internal class FGetUserNameAndGroup : FactoryBase
+{
+    internal GetUserNameAndGroupModel.UserInfo GetUserInfo(string sysId, string userAD)
+    {
+        string sql = @"
+            SELECT DISTINCT
+                A.U_ID, 
+                A.U_NAME, 
+                A.APG_NO, 
+                B.APG_NAME, 
+                B.PARENT_APG_NO,
+                B.SENSITIVE_DATA_ACCESS,
+                E.ORGAN_CAP as OrganName,
+                E.POST_NAME as PostName
+            FROM [HI_TMMAIN].[dbo].[AP_USER] A
+            LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
+            LEFT JOIN [VW_M1EMP_MAST] E ON A.U_ID = E.EMP_NO
+            WHERE A.SYS_ID = @SYS_ID AND A.U_ID = @U_ID";
+
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@U_ID", userAD);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        var userInfo = new GetUserNameAndGroupModel.UserInfo
+                        {
+                            UserID = reader["U_ID"]?.ToString(),
+                            UserName = reader["U_NAME"]?.ToString(),
+                            GroupID = reader["APG_NO"]?.ToString(),
+                            GroupName = reader["APG_NAME"]?.ToString(),
+                            SensitiveDataAccess = Convert.ToBoolean(reader["SENSITIVE_DATA_ACCESS"] ?? false),
+                            OrganName = reader["OrganName"]?.ToString(),
+                            PostName = reader["PostName"]?.ToString()
+                        };
+
+                        // 取得父群組ID列表
+                        if (!string.IsNullOrEmpty(reader["PARENT_APG_NO"]?.ToString()))
+                        {
+                            userInfo.ParentGroupID = new List<string> { reader["PARENT_APG_NO"].ToString() };
+                        }
+
+                        // 取得子群組ID列表
+                        userInfo.ChildGroupID = GetChildGroups(sysId, userInfo.GroupID);
+
+                        return userInfo;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return null;
+    }
+}
+#endregion
+
+#region 2. GetGroupAllUser Factory
+internal class FGetGroupAllUser : FactoryBase
+{
+    internal List<string> GetGroupUsers(string sysId, string groupId, bool includeChildGroups)
+    {
+        var groupIds = new List<string> { groupId };
+        
+        if (includeChildGroups)
+        {
+            // 遞迴取得所有子群組
+            var childGroups = GetAllChildGroups(sysId, groupId);
+            groupIds.AddRange(childGroups);
+        }
+
+        string inClause = string.Join(",", groupIds.Select(g => $"'{g}'"));
+        string sql = $@"
+            SELECT DISTINCT U_ID 
+            FROM [HI_TMMAIN].[dbo].[AP_USER] A
+            LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
+            WHERE A.SYS_ID = @SYS_ID AND B.APG_NO IN ({inClause})";
+
+        var userList = new List<string>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        userList.Add(reader["U_ID"].ToString());
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return userList;
+    }
+
+    private List<string> GetAllChildGroups(string sysId, string groupId)
+    {
+        var allChildren = new List<string>();
+        var directChildren = GetChildGroups(sysId, groupId);
+```
+
+using System.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using System.Data;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+#region 基底類別
+internal abstract class FactoryBase
+{
+// SQL連線字串
+internal static string BuildConnectionString()
+{
+var csb = new SqlConnectionStringBuilder
+{
+DataSource = “Hilife-tfs”,
+InitialCatalog = “HI_APLOG”,
+PersistSecurityInfo = true,
+TrustServerCertificate = true,
+UserID = “pos”,
+Password = “pos1”,
+Encrypt = true
+};
+return csb.ConnectionString;
+}
+
+```
+    // 取得子群組清單
+    internal List<string> GetChildGroups(string sysId, string groupId)
+    {
+        string sql = @"
+            SELECT APG_NO 
+            FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+            WHERE SYS_ID = @SYS_ID AND PARENT_APG_NO = @APG_NO";
+
+        var childGroups = new List<string>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", groupId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        childGroups.Add(reader["APG_NO"].ToString());
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return childGroups;
+    }
+}
+#endregion
+
+#region 1. GetUserNameAndGroup Factory
+internal class FGetUserNameAndGroup : FactoryBase
+{
+    internal GetUserNameAndGroupModel.UserInfo GetUserInfo(string sysId, string userAD)
+    {
+        string sql = @"
+            SELECT DISTINCT
+                A.U_ID, 
+                A.U_NAME, 
+                A.APG_NO, 
+                B.APG_NAME, 
+                B.PARENT_APG_NO,
+                B.SENSITIVE_DATA_ACCESS,
+                E.ORGAN_CAP as OrganName,
+                E.POST_NAME as PostName
+            FROM [HI_TMMAIN].[dbo].[AP_USER] A
+            LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
+            LEFT JOIN [VW_M1EMP_MAST] E ON A.U_ID = E.EMP_NO
+            WHERE A.SYS_ID = @SYS_ID AND A.U_ID = @U_ID";
+
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@U_ID", userAD);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        var userInfo = new GetUserNameAndGroupModel.UserInfo
+                        {
+                            UserID = reader["U_ID"]?.ToString(),
+                            UserName = reader["U_NAME"]?.ToString(),
+                            GroupID = reader["APG_NO"]?.ToString(),
+                            GroupName = reader["APG_NAME"]?.ToString(),
+                            SensitiveDataAccess = Convert.ToBoolean(reader["SENSITIVE_DATA_ACCESS"] ?? false),
+                            OrganName = reader["OrganName"]?.ToString(),
+                            PostName = reader["PostName"]?.ToString()
+                        };
+
+                        // 取得父群組ID列表
+                        if (!string.IsNullOrEmpty(reader["PARENT_APG_NO"]?.ToString()))
+                        {
+                            userInfo.ParentGroupID = new List<string> { reader["PARENT_APG_NO"].ToString() };
+                        }
+
+                        // 取得子群組ID列表
+                        userInfo.ChildGroupID = GetChildGroups(sysId, userInfo.GroupID);
+
+                        return userInfo;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return null;
+    }
+}
+#endregion
+
+#region 2. GetGroupAllUser Factory
+internal class FGetGroupAllUser : FactoryBase
+{
+    internal List<string> GetGroupUsers(string sysId, string groupId, bool includeChildGroups)
+    {
+        var groupIds = new List<string> { groupId };
+        
+        if (includeChildGroups)
+        {
+            // 遞迴取得所有子群組
+            var childGroups = GetAllChildGroups(sysId, groupId);
+            groupIds.AddRange(childGroups);
+        }
+
+        string inClause = string.Join(",", groupIds.Select(g => $"'{g}'"));
+        string sql = $@"
+            SELECT DISTINCT U_ID 
+            FROM [HI_TMMAIN].[dbo].[AP_USER] A
+            LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
+            WHERE A.SYS_ID = @SYS_ID AND B.APG_NO IN ({inClause})";
+
+        var userList = new List<string>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        userList.Add(reader["U_ID"].ToString());
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return userList;
+    }
+
+    private List<string> GetAllChildGroups(string sysId, string groupId)
+    {
+        var allChildren = new List<string>();
+        var directChildren = GetChildGroups(sysId, groupId);
+        
+        foreach (var child in directChildren)
+        {
+            allChildren.Add(child);
+            // 遞迴取得子群組的子群組
+            var grandChildren = GetAllChildGroups(sysId, child);
+            allChildren.AddRange(grandChildren);
+        }
+        
+        return allChildren;
+    }
+}
+#endregion
+
+#region 3. GetTree Factory
+internal class FGetTree : FactoryBase
+{
+    internal List<GetTreeModel.FunctionNode> GetFunctionTree(string sysId, string groupId)
+    {
+        string sql = @"
+            SELECT DISTINCT
+                CASE WHEN PARENT_ID = 'HOME' THEN '0'
+                     WHEN PARENT_ID <> 'HOME' THEN '1'
+                END AS LEVEL,
+                a.FUNC_ID, 
+                FUNC_NA, 
+                VIEW_H AS CONTROLLER, 
+                VIEW_HB AS ACTION, 
+                SORT_NO, 
+                PARENT_ID 
+            FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+            LEFT JOIN [AP_USER_FUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID
+            WHERE a.SYS_ID = @SYS_ID AND b.APG_NO = @APG_NO
+            ORDER BY SORT_NO";
+
+        var functionList = new List<GetTreeModel.FunctionNode>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", groupId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        functionList.Add(new GetTreeModel.FunctionNode
+                        {
+                            FuncID = reader["FUNC_ID"]?.ToString(),
+                            FuncName = reader["FUNC_NA"]?.ToString(),
+                            Controller = reader["CONTROLLER"]?.ToString(),
+                            Action = reader["ACTION"]?.ToString(),
+                            Sort = Convert.ToInt32(reader["SORT_NO"] ?? 0),
+                            ParentID = reader["PARENT_ID"]?.ToString(),
+                            Level = reader["LEVEL"]?.ToString()
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return functionList;
+    }
+}
+#endregion
+
+#region 4. GetFuncBtn Factory
+internal class FGetFuncBtn : FactoryBase
+{
+    internal List<GetFuncBtnModel.ButtonInfo> GetFunctionButtons(string sysId, string groupId, string funcId)
+    {
+        // 使用第一種SQL寫法（透過AP_USER_RFUNC_CONFIG）
+        string sql = @"
+            SELECT DISTINCT
+                a.BTNID,
+                a.BTN_NAME,
+                a.CONTROLLER,
+                a.ACTION,
+                a.LOC,
+                a.ONCLICK
+            FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
+            LEFT JOIN [AP_USER_RFUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID AND a.BTNSEQ = b.BTNSEQ
+            WHERE a.SYS_ID = @SYS_ID AND b.APG_NO = @APG_NO AND a.FUNC_ID = @FUNC_ID";
+
+        var buttonList = new List<GetFuncBtnModel.ButtonInfo>();
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", groupId);
+                cmd.Parameters.AddWithValue("@FUNC_ID", funcId);
+
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        buttonList.Add(new GetFuncBtnModel.ButtonInfo
+                        {
+                            BtnID = reader["BTNID"]?.ToString(),
+                            BtnName = reader["BTN_NAME"]?.ToString(),
+                            Controller = reader["CONTROLLER"]?.ToString(),
+                            Action = reader["ACTION"]?.ToString(),
+                            BtnLocation = reader["LOC"]?.ToString(),
+                            BtnOnclick = reader["ONCLICK"]?.ToString()
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+        }
+        return buttonList;
+    }
+}
+#endregion
+
+#region 5. CheckBtnEnabled Factory
+internal class FCheckBtnEnabled : FactoryBase
+{
+    internal bool CheckButtonPermission(string sysId, string groupId, string funcId, string btnId)
+    {
+        string sql = @"
+            SELECT COUNT(*) as PermissionCount
+            FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] A
+            LEFT JOIN [AP_RFUNC] B ON A.FUNC_ID = B.FUNC_ID AND A.BTNSEQ = B.BTNSEQ
+            WHERE A.SYS_ID = @SYS_ID AND A.APG_NO = @APG_NO AND A.FUNC_ID = @FUNC_ID AND B.BTNID = @BTNID";
+
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", groupId);
+                cmd.Parameters.AddWithValue("@FUNC_ID", funcId);
+                cmd.Parameters.AddWithValue("@BTNID", btnId);
+
+                conn.Open();
+                var result = cmd.ExecuteScalar();
+                return Convert.ToInt32(result) > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log exception
+            return false;
+        }
+    }
+}
+#endregion
+
+#region 原有 GetFunctionAndAccessUrl Factory
+internal class FGetFunctionAndAccessUrl : FactoryBase
+{
+    // 環境設定
+    internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+    {
+        { "TEST", "http://localhost:53088" },
+        { "PROD", "http://10.8.254.68/HI_APACCESS_PROD" },
+    };
+
+    // 類型設定
+    internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+    {
+        { "1", "TokenEntry_FUNC" },  // 頁面&按鈕設定
+        { "2", "TokenEntry" }        // 權限設定
+    };
+
+    // 取得授權系統清單
+    internal List<string> GetAuthorizedSystemsList()
+    {
+        string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+        var systemIds = new List<string>();
+
+        try
+        {
+            using (SqlConnection conn = new SqlConnection(BuildConnectionString()))
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                conn.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        systemIds.Add(reader["SYS_ID"].ToString());
+                    }
+                }
+            }
+            return systemIds;
+        }
+        catch (Exception ex)
+        {
+            return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
+        }
+    }
+
+    // 產生 JWT Token
+    internal string GenerateJwtToken(string systemId)
+    {
+        var claims = new[]
+        {
+            new Claim("systemId", systemId),
+        };
+
+        string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: "hi_ap_access_dll",
+            audience: "hi_ap_access_web",
+            claims: claims,
+            expires: DateTime.Now.AddHours(1),
+            signingCredentials: creds
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+#endregion
+```
+
+}
