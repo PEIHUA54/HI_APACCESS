@@ -1,126 +1,138 @@
-👌 看了你給的 response 範例，我懂了。
-你的 API response 是長這樣的：
-
-{
-  "Result_code": "0000",
-  "Msg": "成功",
-  "Result": {
-    "UserID": "3A001",
-    "UserName": "王小明",
-    "GroupID": "001",
-    "GroupName": "管理員(資訊)",
-    "ParentGroupID": [ "003", "002" ],
-    "ChildGroupID": [ "004", "005" ],
-    "SensitiveDataAccess": false,
-    "OrganName": "程式課",
-    "PostName": "高級專員"
-  }
-}
-
-👉 所以結論是：
-	•	ParentGroupID / ChildGroupID 必須是 真正的陣列 (List<string>)，而不是 JSON 文字或 STRING_AGG。
-	•	也就是說 SQL 不要用 FOR JSON PATH，而是回傳多筆記錄，程式端再轉成 List<string>。
+好👌 我幫你分兩個部分：
 
 ⸻
 
-✅ 正確 SQL 寫法（改回多筆）
+① 登入流程圖 (AD → DLL → 系統權限)
 
--- 先找使用者群組
-WITH UserGroups AS (
-    SELECT U.APG_NO, U.U_ID, U.U_NAME
-    FROM [HI_TMMAIN].[dbo].[AP_USER] U
-    WHERE U.SYS_ID=@SysID AND U.U_ID=@UserAD
-)
-SELECT DISTINCT
-    UG.U_ID AS UserID,
-    UG.U_NAME AS UserName,
-    G.APG_NO AS GroupID,
-    G.APG_NAME AS GroupName,
-    G.PARENT_APG_NO AS ParentGroupID,
-    G.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
-    M.ORGAN_CAP AS OrganName,
-    M.POST_NAME AS PostName
-FROM UserGroups UG
-INNER JOIN [HI_TMMAIN].[dbo].[AP_GROUP] G 
-    ON UG.APG_NO = G.APG_NO AND G.SYS_ID=@SysID
-LEFT JOIN [VW_M1EMP_MAST] M 
-    ON UG.U_ID = M.EMP_NO;
-
-子群組另外查：
-
-SELECT APG_NO
-FROM [HI_TMMAIN].[dbo].[AP_GROUP]
-WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID;
-
-母群組另外查：
-
-SELECT PARENT_APG_NO
-FROM [HI_TMMAIN].[dbo].[AP_GROUP]
-WHERE SYS_ID=@SysID AND APG_NO=@GroupID AND PARENT_APG_NO IS NOT NULL;
+[使用者] 
+   │  (輸入 AD/密碼)
+   ▼
+[AD/SSO 驗證系統]  
+   │  驗證通過 (代表帳號密碼正確)
+   ▼
+[應用系統 (HI_POS、HI_POSIMG...)]
+   │  呼叫 DLL → GetUserNameAndGroup(SysID, UserAD, Env)
+   ▼
+[HI_APACCESS_DLL_CORE / FRAMEWORK]
+   │  1. 檢查 Environment (TEST/PROD)
+   │  2. 檢查 SysID 是否在授權清單
+   │  3. 查 AP_USER + AP_GROUP
+   │  4. 查群組的母群組、子群組
+   │  5. 查敏感資料權限、部門、職稱
+   ▼
+[回傳 Response 給應用系統]
+   │
+   ├─ 成功 → { UserID, UserName, GroupID, GroupName, ParentGroupID[], ChildGroupID[], SensitiveDataAccess, OrganName, PostName }
+   │
+   └─ 失敗 → { Result_code, Msg }
 
 
 ⸻
 
-✅ Model（List）
+② 統一錯誤代碼 (ErrorCodes.cs)
 
-internal class ResultData
+namespace HI_APACCESS_DLL_CORE.Common
 {
-    [JsonProperty]
-    [DisplayName("使用者ID")]
-    internal string UserID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("使用者名稱")]
-    internal string UserName { get; set; }
-
-    [JsonProperty]
-    [DisplayName("群組ID")]
-    internal string GroupID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("群組名稱")]
-    internal string GroupName { get; set; }
-
-    [JsonProperty]
-    [DisplayName("母群組ID清單")]
-    internal List<string> ParentGroupID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("子群組ID清單")]
-    internal List<string> ChildGroupID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("是否可存取機敏資料")]
-    internal bool SensitiveDataAccess { get; set; }
-
-    [JsonProperty]
-    [DisplayName("部門名稱")]
-    internal string OrganName { get; set; }
-
-    [JsonProperty]
-    [DisplayName("職稱名稱")]
-    internal string PostName { get; set; }
-}
-
-
-⸻
-
-✅ Factory（FGetUserNameAndGroup.cs）
-
-internal class FGetUserNameAndGroup
-{
-    internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
+    internal static class ErrorCodes
     {
-        var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+        // ===== 成功 =====
+        internal const string SUCCESS = "0000";     // 成功
 
-        try
+        // ===== 一般錯誤 =====
+        internal const string NO_PERMISSION = "0001"; // 查無權限/找不到員工或群組
+
+        // ===== 驗證錯誤 =====
+        internal const string ENV_ERROR = "1003";    // 環境錯誤 (只接受 TEST、PROD)
+        internal const string SYS_UNAUTHORIZED = "1004"; // 系統未授權 (SysID 不在清單內)
+
+        // ===== 系統錯誤 =====
+        internal const string SYSTEM_ERROR = "9999"; // 系統內部錯誤
+    }
+}
+
+
+⸻
+
+③ 使用範例 (Factory 中)
+
+if (environment != "TEST" && environment != "PROD")
+{
+    response.Result_code = ErrorCodes.ENV_ERROR;
+    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+    return response;
+}
+
+var authorizedSystems = FCommon.GetAuthorizedSystemsList();
+if (!authorizedSystems.Contains(sysId))
+{
+    response.Result_code = ErrorCodes.SYS_UNAUTHORIZED;
+    response.Msg = "系統未授權";
+    return response;
+}
+
+if (!foundUser)
+{
+    response.Result_code = ErrorCodes.NO_PERMISSION;
+    response.Msg = "查無權限";
+    return response;
+}
+
+response.Result_code = ErrorCodes.SUCCESS;
+response.Msg = "成功";
+
+
+⸻
+
+✅ 這樣以後每個功能 (1~6) 都可以統一使用 ErrorCodes，不用每個 Factory 自己硬寫 "0001" 或 "9999"。
+
+要不要我幫你把 功能 1 (GetUserNameAndGroup) 的 Factory 程式碼，直接改成套用這個 ErrorCodes 的版本？
+
+好，那我幫你把 功能 1：GetUserNameAndGroup 的 Factory 改成套用 ErrorCodes，這樣整個錯誤碼管理就一致了。
+
+⸻
+
+📌 Factory：FGetUserNameAndGroup.cs
+
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_CORE.Models;
+using HI_APACCESS_DLL_CORE.Common;
+
+namespace HI_APACCESS_DLL_CORE.Factory
+{
+    internal class FGetUserNameAndGroup
+    {
+        internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
         {
-            using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
-            {
-                conn.Open();
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
 
-                // 先抓主要資訊
-                string sqlMain = @"
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList();
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = ErrorCodes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+                {
+                    conn.Open();
+
+                    // 3. 查詢使用者與群組
+                    string sqlMain = @"
 WITH UserGroups AS (
     SELECT U.APG_NO, U.U_ID, U.U_NAME
     FROM [HI_TMMAIN].[dbo].[AP_USER] U
@@ -141,115 +153,95 @@ LEFT JOIN [VW_M1EMP_MAST] M
     ON UG.U_ID = M.EMP_NO;
 ";
 
-                var result = new GetUserNameAndGroupModel.ResultData();
+                    var result = new GetUserNameAndGroupModel.ResultData();
 
-                using (SqlCommand cmd = new SqlCommand(sqlMain, conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@UserAD", userAd);
-
-                    using (var reader = cmd.ExecuteReader())
+                    using (SqlCommand cmd = new SqlCommand(sqlMain, conn))
                     {
-                        if (reader.Read())
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@UserAD", userAd);
+
+                        using (var reader = cmd.ExecuteReader())
                         {
-                            result.UserID = reader["UserID"].ToString();
-                            result.UserName = reader["UserName"].ToString();
-                            result.GroupID = reader["GroupID"].ToString();
-                            result.GroupName = reader["GroupName"].ToString();
-                            result.SensitiveDataAccess = Convert.ToBoolean(reader["SensitiveDataAccess"]);
-                            result.OrganName = reader["OrganName"].ToString();
-                            result.PostName = reader["PostName"].ToString();
-                        }
-                        else
-                        {
-                            response.Result_code = "0001";
-                            response.Msg = "查無權限";
-                            return response;
+                            if (reader.Read())
+                            {
+                                result.UserID = reader["UserID"].ToString();
+                                result.UserName = reader["UserName"].ToString();
+                                result.GroupID = reader["GroupID"].ToString();
+                                result.GroupName = reader["GroupName"].ToString();
+                                result.SensitiveDataAccess = Convert.ToBoolean(reader["SensitiveDataAccess"]);
+                                result.OrganName = reader["OrganName"].ToString();
+                                result.PostName = reader["PostName"].ToString();
+                            }
+                            else
+                            {
+                                response.Result_code = ErrorCodes.NO_PERMISSION;
+                                response.Msg = "查無權限";
+                                return response;
+                            }
                         }
                     }
-                }
 
-                // 撈母群組
-                string sqlParent = @"SELECT PARENT_APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-                                     WHERE SYS_ID=@SysID AND APG_NO=@GroupID AND PARENT_APG_NO IS NOT NULL";
-                using (SqlCommand cmd = new SqlCommand(sqlParent, conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
-                    using (var reader = cmd.ExecuteReader())
+                    // 4. 撈母群組
+                    string sqlParent = @"SELECT PARENT_APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                                         WHERE SYS_ID=@SysID AND APG_NO=@GroupID AND PARENT_APG_NO IS NOT NULL";
+                    using (SqlCommand cmd = new SqlCommand(sqlParent, conn))
                     {
-                        result.ParentGroupID = new List<string>();
-                        while (reader.Read())
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
+                        using (var reader = cmd.ExecuteReader())
                         {
-                            result.ParentGroupID.Add(reader["PARENT_APG_NO"].ToString());
+                            result.ParentGroupID = new List<string>();
+                            while (reader.Read())
+                            {
+                                result.ParentGroupID.Add(reader["PARENT_APG_NO"].ToString());
+                            }
                         }
                     }
-                }
 
-                // 撈子群組
-                string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-                                    WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
-                using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
-                    using (var reader = cmd.ExecuteReader())
+                    // 5. 撈子群組
+                    string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                                        WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+                    using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
                     {
-                        result.ChildGroupID = new List<string>();
-                        while (reader.Read())
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", result.GroupID);
+                        using (var reader = cmd.ExecuteReader())
                         {
-                            result.ChildGroupID.Add(reader["APG_NO"].ToString());
+                            result.ChildGroupID = new List<string>();
+                            while (reader.Read())
+                            {
+                                result.ChildGroupID.Add(reader["APG_NO"].ToString());
+                            }
                         }
                     }
-                }
 
-                response.Result_code = "0000";
-                response.Msg = "成功";
-                response.Result = result;
+                    // 6. 成功回傳
+                    response.Result_code = ErrorCodes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = result;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            response.Result_code = "9999";
-            response.Msg = "系統錯誤：" + ex.Message;
-        }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
 
-        return response;
+            return response;
+        }
     }
 }
 
 
 ⸻
 
-✅ 主類別呼叫 (APACCESS.cs)
-
-public static string GetUserNameAndGroup(string requestJson)
-{
-    var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
-
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
-
-        FGetUserNameAndGroup func = new FGetUserNameAndGroup();
-        response = func.Execute(request.SysID, request.UserAD, request.Environment);
-    }
-    catch (Exception ex)
-    {
-        response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
-        {
-            Result_code = "9999",
-            Msg = "系統錯誤：" + ex.Message
-        };
-    }
-
-    return JsonConvert.SerializeObject(response);
-}
-
+📌 現在的流程就是：
+	1.	先檢查 環境 (Env) → 不對就回 1003。
+	2.	再檢查 系統授權 (SysID) → 不在清單回 1004。
+	3.	再查使用者/群組 → 找不到回 0001。
+	4.	全部正確 → 回 0000，帶完整資訊。
+	5.	任何 Exception → 9999。
 
 ⸻
 
-✅ 這樣產出的 JSON 就會跟你圖片範例一樣，
-ParentGroupID / ChildGroupID 都是 真正的陣列。
-
-要不要我下一步幫你把 第二個功能 GetGroupAllUser 也做完整 (Model + Factory + 呼叫)？
+要不要我幫你把 APACCESS.cs (主類別呼叫) 也改成統一用 ErrorCodes，這樣呼叫端就不用在多個地方自己硬寫代碼？
