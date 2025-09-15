@@ -1,291 +1,90 @@
-非常好 👍
-現在我們已經完成 功能 1~5 的 DLL (Model + Factory + 主類別)，接下來我幫你整理：
-	1.	每個功能的用途
-	2.	測試用 Controller 方法 (放在 POSFILE_APPLY 專案)
-	3.	測試流程 (怎麼跑、會得到什麼結果)
+ //6 取得頁面跟權限設定功能連結
+ public string GetFunctionAndAccessUrl(string requestJson)
+ {
+     FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+     var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse(); //這邊sysid有值
 
-⸻
+     try
+     {
+         var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson); //這邊沒值
 
-📌 功能說明 (1~5)
+         // 檢查類型
+         if (!func.TypeActions.ContainsKey(request.Type))
+         {
+             response.Result_code = Codes.TYPE_ERROR;
+             response.Msg = "類型錯誤，只接受 1 或 2";
+             response.Url = "";
+             return JsonConvert.SerializeObject(response);
+         }
 
-🔹 功能 1：GetUserNameAndGroup
-	•	用途：查詢使用者的基本資訊與群組權限。
-	•	輸入：SysID、UserAD、Environment
-	•	輸出：UserID、UserName、GroupID、GroupName、ParentGroupID[]、ChildGroupID[]、SensitiveDataAccess、部門、職稱
-	•	情境：登入時，系統要知道「這個人是誰、在哪個群組、有什麼層級關係」。
+         // 檢查環境
+         if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+         {
+             response.Result_code = Codes.ENV_ERROR;
+             response.Msg = "環境錯誤，只接受 TEST、PROD";
+             response.Url = "";
+             return JsonConvert.SerializeObject(response);
+         }
 
-⸻
+         // 檢查系統授權
+         var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
+         if (!authorizedSystems.Contains(request.SysID))
+         {
+             response.Result_code = Codes.NO_PERMISSION;
+             response.Msg = "查無權限";
+             response.Url = "";
+             return JsonConvert.SerializeObject(response);
+         }
 
-🔹 功能 2：GetGroupAllUser
-	•	用途：取得群組內的所有使用者清單。
-	•	輸入：SysID、GroupID、IsIncludeChildGroups、Environment
-	•	輸出：UserADList (一串使用者帳號陣列)
-	•	情境：例如寄通知、顯示群組成員列表，可以用這個 API 先把所有人抓出來。
+         // 產生 Token
+         string token = func.GenerateJwtToken(request.SysID);
+         string baseUrl = func.EnvironmentUrls[request.Environment];
+         string action = func.TypeActions[request.Type];
+         string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
 
-⸻
+         // 成功
+         response.Result_code = Codes.SUCCESS;
+         response.Msg = "成功";
+         response.Url = finalUrl;
+     }
+     catch (Exception ex)
+     {
+         response.Result_code = Codes.SYSTEM_ERROR;
+         response.Msg = "系統錯誤：" + ex.Message;
+         response.Url = "";
+     }
 
-🔹 功能 3：GetTree
-	•	用途：取得群組有權限的功能清單 (樹狀)。
-	•	輸入：SysID、GroupID、Environment
-	•	輸出：功能列表 (FuncID, FuncName, Controller, Action, Sort, ParentID, Level)
-	•	情境：登入系統後，根據群組權限，產生左邊的「功能選單」。
+     return JsonConvert.SerializeObject(response);
+ }
 
-⸻
+model:
+ internal class GetFunctionAndAccessUrlModel
+ {
+     // 請求參數
+     internal class GetFunctionAndAccessUrlRequest
+     {
+         [JsonProperty]
+         [DisplayName("系統ID")]
+         internal string SysID { get; set; }        // 系統ID
+         [JsonProperty]
+         [DisplayName("類型")]
+         internal string Type { get; set; }          // 1=頁面設定, 2=權限設定
+         [JsonProperty]
+         [DisplayName("環境")]
+         internal string Environment { get; set; }   // TEST=測試, PROD=正式
+     }
 
-🔹 功能 4：GetFuncBtn
-	•	用途：取得某功能頁群組有權限的按鈕清單。
-	•	輸入：SysID、GroupID、FuncID、Environment
-	•	輸出：按鈕清單 (BtnID, BtnName, Controller, Action, BtnLocation, BtnOnclick)
-	•	情境：例如進入「員工清單」頁面，API 會回「新增」「刪除」「匯出」這些群組能看到的按鈕。
-
-⸻
-
-🔹 功能 5：CheckBtnEnabled
-	•	用途：確認群組是否有某功能頁特定按鈕的權限。
-	•	輸入：SysID、GroupID、FuncID、BtnID、Environment
-	•	輸出：Result (true / false)
-	•	情境：進到頁面時，前端要決定「這個按鈕是 enable 還是 disable」。
-
-⸻
-
-📌 測試用程式碼 (POSFILE_APPLY 專案)
-
-Controller：APController.cs
-
-using System;
-using System.Web.Mvc;
-using HI_APACCESS_DLL_FRAMEWORK;
-using Newtonsoft.Json;
-using POSFILE_APPLY.Models;
-
-namespace POSFILE_APPLY.Controllers
-{
-    public class APController : POSFILE_APPLYBaseController
-    {
-        // ===== 功能1 測試 =====
-        public ActionResult Test_UserInfo()
-        {
-            var req = new M_AP.GetUserNameAndGroupRequestModel
-            {
-                sys_id = "HI_POSIMG",
-                user_ad = "3A001",
-                environment = "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetUserNameAndGroup(json_input);
-            var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
-
-            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-        }
-
-        // ===== 功能2 測試 =====
-        public ActionResult Test_GroupAllUser()
-        {
-            var req = new M_AP.GetGroupAllUserRequestModel
-            {
-                sys_id = "HI_POSIMG",
-                group_id = "001",
-                is_include_child = true,
-                environment = "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetGroupAllUser(json_input);
-            var res = JsonConvert.DeserializeObject<M_AP.GetGroupAllUserResponseModel>(response);
-
-            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-        }
-
-        // ===== 功能3 測試 =====
-        public ActionResult Test_Tree()
-        {
-            var req = new M_AP.GetTreeRequestModel
-            {
-                sys_id = "HI_POSIMG",
-                group_id = "001",
-                environment = "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetTree(json_input);
-            var res = JsonConvert.DeserializeObject<M_AP.GetTreeResponseModel>(response);
-
-            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-        }
-
-        // ===== 功能4 測試 =====
-        public ActionResult Test_FuncBtn()
-        {
-            var req = new M_AP.GetFuncBtnRequestModel
-            {
-                sys_id = "HI_POSIMG",
-                group_id = "001",
-                func_id = "POS1001",
-                environment = "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetFuncBtn(json_input);
-            var res = JsonConvert.DeserializeObject<M_AP.GetFuncBtnResponseModel>(response);
-
-            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-        }
-
-        // ===== 功能5 測試 =====
-        public ActionResult Test_CheckBtn()
-        {
-            var req = new M_AP.CheckBtnEnabledRequestModel
-            {
-                sys_id = "HI_POSIMG",
-                group_id = "001",
-                func_id = "POS1001",
-                btn_id = "EDIT",
-                environment = "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().CheckBtnEnabled(json_input);
-            var res = JsonConvert.DeserializeObject<M_AP.CheckBtnEnabledResponseModel>(response);
-
-            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-        }
-    }
+     // 回應結果
+     internal class GetFunctionAndAccessUrlResponse
+     {
+         [JsonProperty]
+         [DisplayName("回覆代碼")]
+         internal string Result_code { get; set; }     // 結果代碼
+         [JsonProperty]
+         [DisplayName("訊息")]
+         internal string Msg { get; set; }  // 訊息
+         [JsonProperty]
+         [DisplayName("功能連結")]
+         internal string Url { get; set; }      // 功能連結
+     }
 }
-
-
-⸻
-
-Models：M_AP.cs (POSFILE_APPLY 專案)
-
-using System.Collections.Generic;
-
-namespace POSFILE_APPLY.Models
-{
-    public class M_AP
-    {
-        // ===== 功能1 =====
-        public class GetUserNameAndGroupRequestModel
-        {
-            public string sys_id { get; set; }
-            public string user_ad { get; set; }
-            public string environment { get; set; }
-        }
-        public class GetUserNameAndGroupResponseModel
-        {
-            public string code { get; set; }
-            public string message { get; set; }
-            public ResultData result { get; set; }
-            public class ResultData
-            {
-                public string UserID { get; set; }
-                public string UserName { get; set; }
-                public string GroupID { get; set; }
-                public string GroupName { get; set; }
-                public List<string> ParentGroupID { get; set; }
-                public List<string> ChildGroupID { get; set; }
-                public bool SensitiveDataAccess { get; set; }
-                public string OrganName { get; set; }
-                public string PostName { get; set; }
-            }
-        }
-
-        // ===== 功能2 =====
-        public class GetGroupAllUserRequestModel
-        {
-            public string sys_id { get; set; }
-            public string group_id { get; set; }
-            public bool is_include_child { get; set; }
-            public string environment { get; set; }
-        }
-        public class GetGroupAllUserResponseModel
-        {
-            public string code { get; set; }
-            public string message { get; set; }
-            public ResultData result { get; set; }
-            public class ResultData
-            {
-                public List<string> UserADList { get; set; }
-            }
-        }
-
-        // ===== 功能3 =====
-        public class GetTreeRequestModel
-        {
-            public string sys_id { get; set; }
-            public string group_id { get; set; }
-            public string environment { get; set; }
-        }
-        public class GetTreeResponseModel
-        {
-            public string code { get; set; }
-            public string message { get; set; }
-            public List<ResultData> result { get; set; }
-            public class ResultData
-            {
-                public string FuncID { get; set; }
-                public string FuncName { get; set; }
-                public string Controller { get; set; }
-                public string Action { get; set; }
-                public int Sort { get; set; }
-                public string ParentID { get; set; }
-                public string Level { get; set; }
-            }
-        }
-
-        // ===== 功能4 =====
-        public class GetFuncBtnRequestModel
-        {
-            public string sys_id { get; set; }
-            public string group_id { get; set; }
-            public string func_id { get; set; }
-            public string environment { get; set; }
-        }
-        public class GetFuncBtnResponseModel
-        {
-            public string code { get; set; }
-            public string message { get; set; }
-            public List<ResultData> result { get; set; }
-            public class ResultData
-            {
-                public string BtnID { get; set; }
-                public string BtnName { get; set; }
-                public string Controller { get; set; }
-                public string Action { get; set; }
-                public string BtnLocation { get; set; }
-                public string BtnOnclick { get; set; }
-            }
-        }
-
-        // ===== 功能5 =====
-        public class CheckBtnEnabledRequestModel
-        {
-            public string sys_id { get; set; }
-            public string group_id { get; set; }
-            public string func_id { get; set; }
-            public string btn_id { get; set; }
-            public string environment { get; set; }
-        }
-        public class CheckBtnEnabledResponseModel
-        {
-            public bool Result { get; set; }
-        }
-    }
-}
-
-
-⸻
-
-📌 測試流程
-	1.	啟動專案 (Visual Studio → F5 → IIS Express)
-	2.	在瀏覽器呼叫不同 URL：
-	•	功能 1 → /AP/Test_UserInfo
-	•	功能 2 → /AP/Test_GroupAllUser
-	•	功能 3 → /AP/Test_Tree
-	•	功能 4 → /AP/Test_FuncBtn
-	•	功能 5 → /AP/Test_CheckBtn
-	3.	觀察回傳 JSON，會直接輸出在頁面 <pre> 區塊裡。
-
-⸻
-
-要不要我幫你把 功能 6 的測試程式也整合進來，這樣你整份測試 Controller 就能一次驗證 1~6？
