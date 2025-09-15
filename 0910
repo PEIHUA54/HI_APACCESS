@@ -1,95 +1,78 @@
-好問題 👍
-你現在的需求是：
-	•	TEST → 用測試的 DB 連線字串 (例如 Hilife-tfs, HI_APLOG)
-	•	PROD → 用正式的 DB 連線字串 (例如 localhost, Possc, sa)
-
-所以我們要在 FCommon.BuildConnectionString() 裡面判斷 傳進來的 environment，然後給不同的 SqlConnectionStringBuilder。
+好👌 我幫你把 功能 3：GetTree (取得樹狀功能清單) 完整設計出來，包含 Model、Factory、主類別呼叫，跟功能 1、2 的架構保持一致。
 
 ⸻
 
-📌 修改後的 FCommon
+📌 Model：GetTreeModel.cs
 
-using System;
+using Newtonsoft.Json;
 using System.Collections.Generic;
-using System.Data.SqlClient;
+using System.ComponentModel;
 
-namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+namespace HI_APACCESS_DLL_FRAMEWORK.Models
 {
-    internal static class FCommon
+    internal class GetTreeModel
     {
-        /// <summary>
-        /// 建立 SQL 連線字串 (依照環境不同切換)
-        /// </summary>
-        internal static string BuildConnectionString(string environment)
+        // ===== 請求參數 =====
+        internal class GetTreeRequest
         {
-            SqlConnectionStringBuilder csb;
+            [JsonProperty]
+            [DisplayName("系統ID")]
+            internal string SysID { get; set; }
 
-            if (environment == "TEST")
-            {
-                // 測試環境連線字串
-                csb = new SqlConnectionStringBuilder
-                {
-                    DataSource = "Hilife-tfs",
-                    InitialCatalog = "HI_APLOG",
-                    PersistSecurityInfo = true,
-                    TrustServerCertificate = true,
-                    UserID = "pos",
-                    Password = "pos1",
-                    Encrypt = true
-                };
-            }
-            else if (environment == "PROD")
-            {
-                // 正式環境連線字串
-                csb = new SqlConnectionStringBuilder
-                {
-                    DataSource = "localhost",
-                    InitialCatalog = "Possc",
-                    PersistSecurityInfo = true,
-                    TrustServerCertificate = true,
-                    UserID = "sa",
-                    Password = "你的正式密碼", // ⚠ 請換成正式的密碼
-                    Encrypt = true
-                };
-            }
-            else
-            {
-                throw new ArgumentException("環境參數錯誤，只接受 TEST 或 PROD");
-            }
+            [JsonProperty]
+            [DisplayName("群組ID")]
+            internal string GroupID { get; set; }
 
-            return csb.ConnectionString;
+            [JsonProperty]
+            [DisplayName("環境")]
+            internal string Environment { get; set; }
         }
 
-        /// <summary>
-        /// 取得授權系統清單（需傳入環境參數）
-        /// </summary>
-        internal static List<string> GetAuthorizedSystemsList(string environment)
+        // ===== 回應結果 =====
+        internal class GetTreeResponse
         {
-            string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
-            var systemIds = new List<string>();
+            [JsonProperty]
+            [DisplayName("回覆代碼")]
+            internal string Result_code { get; set; }
 
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(BuildConnectionString(environment)))
-                using (SqlCommand cmd = new SqlCommand(sql, conn))
-                {
-                    conn.Open();
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            systemIds.Add(reader["SYS_ID"].ToString());
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // DB 掛掉時回傳預設清單
-                return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
-            }
+            [JsonProperty]
+            [DisplayName("訊息")]
+            internal string Msg { get; set; }
 
-            return systemIds;
+            [JsonProperty]
+            [DisplayName("回應內容")]
+            internal List<ResultData> Result { get; set; }
+        }
+
+        internal class ResultData
+        {
+            [JsonProperty]
+            [DisplayName("功能ID")]
+            internal string FuncID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("功能名稱")]
+            internal string FuncName { get; set; }
+
+            [JsonProperty]
+            [DisplayName("控制器")]
+            internal string Controller { get; set; }
+
+            [JsonProperty]
+            [DisplayName("動作")]
+            internal string Action { get; set; }
+
+            [JsonProperty]
+            [DisplayName("排序")]
+            internal int Sort { get; set; }
+
+            [JsonProperty]
+            [DisplayName("父層ID")]
+            internal string ParentID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("層級")]
+            internal string Level { get; set; }
         }
     }
 }
@@ -97,30 +80,263 @@ namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 
 ⸻
 
-📌 Factory 呼叫方式要改
+📌 Factory：FGetTree.cs
 
-原本：
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
 
-using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetTree
+    {
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
 
-要改成傳環境進去：
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
 
-using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = ErrorCodes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
 
-同理，呼叫授權系統清單的地方也要改：
+                var resultList = new List<GetTreeModel.ResultData>();
 
-var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    // 3. 查詢功能清單
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID
+FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID
+WHERE a.SYS_ID=@SysID 
+  AND b.APG_NO=@GroupID
+ORDER BY a.SORT_NO";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 4. 結果判斷
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = ErrorCodes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = ErrorCodes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
 
 
 ⸻
 
-✅ 好處
+📌 主類別：APACCESS.cs（新增功能 3）
 
-這樣你的程式可以：
-	•	TEST → 連到測試 DB
-	•	PROD → 連到正式 DB
-	•	其他字串 → 直接丟 Exception (環境參數錯誤，只接受 TEST 或 PROD)
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public class APACCESS
+    {
+        // 功能1：取得使用者群組與名稱
+        public string GetUserNameAndGroup(string requestJson)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
+                FGetUserNameAndGroup func = new FGetUserNameAndGroup();
+                response = func.Execute(request.SysID, request.UserAD, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 功能2：取得群組人員清單
+        public string GetGroupAllUser(string requestJson)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
+                FGetGroupAllUser func = new FGetGroupAllUser();
+                response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetGroupAllUserModel.GetGroupAllUserResponse
+                {
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 功能3：取得樹狀功能清單
+        public string GetTree(string requestJson)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(requestJson);
+                FGetTree func = new FGetTree();
+                response = func.Execute(request.SysID, request.GroupID, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetTreeModel.GetTreeResponse
+                {
+                    Result_code = ErrorCodes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 功能6：取得頁面跟權限設定功能連結
+        public string GetFunctionAndAccessUrl(string requestJson)
+        {
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
+
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response.Result_code = ErrorCodes.TYPE_ERROR;
+                    response.Msg = "類型錯誤，只接受 1 或 2";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response.Result_code = ErrorCodes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response.Result_code = ErrorCodes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                string token = func.GenerateJwtToken(request.SysID);
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+                response.Result_code = ErrorCodes.SUCCESS;
+                response.Msg = "成功";
+                response.Url = finalUrl;
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = ErrorCodes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+                response.Url = "";
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+    }
+}
+
 
 ⸻
 
-要不要我幫你把 功能 1 的 Factory 改成新版，直接用 FCommon.BuildConnectionString(environment)，讓你可以測試兩個環境切換？
+✅ 功能 3 已完成：
+	•	支援環境檢查 (TEST / PROD)
+	•	支援系統授權檢查
+	•	SQL 查詢樹狀功能清單
+	•	查不到資料 → 0001 查無權限
+	•	成功 → 0000 成功 + Result = List
+
+⸻
+
+要不要我直接幫你接著做 功能 4：GetFuncBtn (取得功能頁有權限之按鈕)？
