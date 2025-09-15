@@ -1,255 +1,126 @@
-了解 👍
-你目前已經完成了 第六個功能 (GetFunctionAndAccessUrl)，並且規劃好 DLL 的架構：
-	•	每個 API 功能都要有 Factory 與 Model
-	•	主類別 APACCESS 提供靜態方法呼叫
-	•	SQL 查詢回傳欄位名稱要用 AS 對應到 Response 格式
-	•	Core / Framework 兩個 DLL 都要支援
+好問題 👍
+你現在的需求是：
+	•	TEST → 用測試的 DB 連線字串 (例如 Hilife-tfs, HI_APLOG)
+	•	PROD → 用正式的 DB 連線字串 (例如 localhost, Possc, sa)
 
-我幫你把 剩下五個功能 參照你第六個的寫法，整理出清楚的 架構設計稿，讓你可以直接照這個模式開發。
+所以我們要在 FCommon.BuildConnectionString() 裡面判斷 傳進來的 environment，然後給不同的 SqlConnectionStringBuilder。
 
 ⸻
 
-① GetUserNameAndGroup
+📌 修改後的 FCommon
 
-Request
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
 
-public class GetUserNameAndGroupRequest
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 {
-    public string SysID { get; set; }
-    public string UserAD { get; set; }
-    public string Environment { get; set; }
-}
-
-Response
-
-public class GetUserNameAndGroupResponse
-{
-    public string Result_code { get; set; }
-    public string Msg { get; set; }
-    public ResultData Result { get; set; }
-
-    public class ResultData
+    internal static class FCommon
     {
-        public string UserID { get; set; }
-        public string UserName { get; set; }
-        public string GroupID { get; set; }
-        public string GroupName { get; set; }
-        public List<string> ParentGroupID { get; set; }
-        public List<string> ChildGroupID { get; set; }
-        public bool SensitiveDataAccess { get; set; }
-        public string OrganName { get; set; }
-        public string PostName { get; set; }
+        /// <summary>
+        /// 建立 SQL 連線字串 (依照環境不同切換)
+        /// </summary>
+        internal static string BuildConnectionString(string environment)
+        {
+            SqlConnectionStringBuilder csb;
+
+            if (environment == "TEST")
+            {
+                // 測試環境連線字串
+                csb = new SqlConnectionStringBuilder
+                {
+                    DataSource = "Hilife-tfs",
+                    InitialCatalog = "HI_APLOG",
+                    PersistSecurityInfo = true,
+                    TrustServerCertificate = true,
+                    UserID = "pos",
+                    Password = "pos1",
+                    Encrypt = true
+                };
+            }
+            else if (environment == "PROD")
+            {
+                // 正式環境連線字串
+                csb = new SqlConnectionStringBuilder
+                {
+                    DataSource = "localhost",
+                    InitialCatalog = "Possc",
+                    PersistSecurityInfo = true,
+                    TrustServerCertificate = true,
+                    UserID = "sa",
+                    Password = "你的正式密碼", // ⚠ 請換成正式的密碼
+                    Encrypt = true
+                };
+            }
+            else
+            {
+                throw new ArgumentException("環境參數錯誤，只接受 TEST 或 PROD");
+            }
+
+            return csb.ConnectionString;
+        }
+
+        /// <summary>
+        /// 取得授權系統清單（需傳入環境參數）
+        /// </summary>
+        internal static List<string> GetAuthorizedSystemsList(string environment)
+        {
+            string sql = "SELECT [SYS_ID] FROM [HI_TMMAIN].[dbo].[AP_SYS]";
+            var systemIds = new List<string>();
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(BuildConnectionString(environment)))
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    conn.Open();
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            systemIds.Add(reader["SYS_ID"].ToString());
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // DB 掛掉時回傳預設清單
+                return new List<string> { "HI_POS", "HI_POSIMG", "POS_LOG" };
+            }
+
+            return systemIds;
+        }
     }
 }
 
-SQL
 
-SELECT DISTINCT
-    B.U_ID AS UserID,
-    B.U_NAME AS UserName,
-    A.APG_NO AS GroupID,
-    A.APG_NAME AS GroupName,
-    A.PARENT_APG_NO,
-    (SELECT STRING_AGG(APG_NO, ',') FROM AP_GROUP WHERE PARENT_APG_NO = A.APG_NO AND SYS_ID = A.SYS_ID) AS ChildGroupID,
-    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
-    M.ORGAN_CAP AS OrganName,
-    M.POST_NAME AS PostName
-FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
-LEFT JOIN [AP_USER] B ON A.APG_NO = B.APG_NO
-LEFT JOIN [VW_M1EMP_MAST] M ON B.U_ID = M.EMP_NO
-WHERE A.SYS_ID=@SysID AND B.U_ID=@UserAD
+⸻
+
+📌 Factory 呼叫方式要改
+
+原本：
+
+using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString()))
+
+要改成傳環境進去：
+
+using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+
+同理，呼叫授權系統清單的地方也要改：
+
+var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
 
 
 ⸻
 
-② GetGroupAllUser
+✅ 好處
 
-Request
-
-public class GetGroupAllUserRequest
-{
-    public string SysID { get; set; }
-    public string GroupID { get; set; }
-    public bool IsIncludeChildGroups { get; set; }
-    public string Environment { get; set; }
-}
-
-Response
-
-public class GetGroupAllUserResponse
-{
-    public string Result_code { get; set; }
-    public string Msg { get; set; }
-    public ResultData Result { get; set; }
-
-    public class ResultData
-    {
-        public List<string> UserADList { get; set; }
-    }
-}
-
-SQL
-
-SELECT DISTINCT U_ID
-FROM [HI_TMMAIN].[dbo].[AP_USER] A
-LEFT JOIN [AP_GROUP] B ON A.APG_NO = B.APG_NO
-WHERE A.SYS_ID=@SysID
-AND (
-    B.APG_NO=@GroupID
-    OR (@IsIncludeChildGroups=1 AND B.PARENT_APG_NO=@GroupID)
-)
-
+這樣你的程式可以：
+	•	TEST → 連到測試 DB
+	•	PROD → 連到正式 DB
+	•	其他字串 → 直接丟 Exception (環境參數錯誤，只接受 TEST 或 PROD)
 
 ⸻
 
-③ GetTree
-
-Request
-
-public class GetTreeRequest
-{
-    public string SysID { get; set; }
-    public string GroupID { get; set; }
-    public string Environment { get; set; }
-}
-
-Response
-
-public class GetTreeResponse
-{
-    public string Result_code { get; set; }
-    public string Msg { get; set; }
-    public List<ResultData> Result { get; set; }
-
-    public class ResultData
-    {
-        public string FuncID { get; set; }
-        public string FuncName { get; set; }
-        public string Controller { get; set; }
-        public string Action { get; set; }
-        public int Sort { get; set; }
-        public string ParentID { get; set; }
-        public string Level { get; set; }
-    }
-}
-
-SQL
-
-SELECT DISTINCT
-    a.FUNC_ID AS FuncID,
-    a.FUNC_NA AS FuncName,
-    a.VIEW_H AS Controller,
-    a.VIEW_HB AS Action,
-    a.SORT_NO AS Sort,
-    a.PARENT_ID AS ParentID,
-    CASE WHEN a.PARENT_ID='HOME' THEN '0' ELSE '1' END AS Level
-FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
-LEFT JOIN [AP_USER_FUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID
-WHERE a.SYS_ID=@SysID AND b.APG_NO=@GroupID
-
-
-⸻
-
-④ GetFuncBtn
-
-Request
-
-public class GetFuncBtnRequest
-{
-    public string SysID { get; set; }
-    public string GroupID { get; set; }
-    public string FuncID { get; set; }
-    public string Environment { get; set; }
-}
-
-Response
-
-public class GetFuncBtnResponse
-{
-    public string Result_code { get; set; }
-    public string Msg { get; set; }
-    public List<ResultData> Result { get; set; }
-
-    public class ResultData
-    {
-        public string BtnID { get; set; }
-        public string BtnName { get; set; }
-        public string Controller { get; set; }
-        public string Action { get; set; }
-        public string BtnLocation { get; set; }
-        public string BtnOnclick { get; set; }
-    }
-}
-
-SQL
-
-(選擇版本1，比較合理：從 AP_USER_RFUNC_CONFIG 控制群組的按鈕權限)
-
-SELECT DISTINCT
-    a.BTNID AS BtnID,
-    a.BTN_NAME AS BtnName,
-    a.CONTROLLER AS Controller,
-    a.ACTION AS Action,
-    a.LOC AS BtnLocation,
-    a.ONCLICK AS BtnOnclick
-FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
-LEFT JOIN [AP_USER_RFUNC_CONFIG] b ON a.FUNC_ID = b.FUNC_ID
-WHERE a.SYS_ID=@SysID AND b.APG_NO=@GroupID AND a.FUNC_ID=@FuncID
-
-
-⸻
-
-⑤ CheckBtnEnabled
-
-Request
-
-public class CheckBtnEnabledRequest
-{
-    public string SysID { get; set; }
-    public string GroupID { get; set; }
-    public string FuncID { get; set; }
-    public string BtnID { get; set; }
-    public string Environment { get; set; }
-}
-
-Response
-
-public class CheckBtnEnabledResponse
-{
-    public bool Result { get; set; }
-}
-
-SQL
-
-SELECT 1
-FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] A
-LEFT JOIN [AP_RFUNC] B ON A.FUNC_ID = B.FUNC_ID
-WHERE A.SYS_ID=@SysID AND A.APG_NO=@GroupID AND A.FUNC_ID=@FuncID AND B.BTNID=@BtnID
-
-(查到 = true, 沒有 = false)
-
-⸻
-
-建議的 DLL 結構
-
-HI_APACCESS_DLL_CORE
- └─ Models
-     ├─ GetUserNameAndGroupModel.cs
-     ├─ GetGroupAllUserModel.cs
-     ├─ GetTreeModel.cs
-     ├─ GetFuncBtnModel.cs
-     ├─ CheckBtnEnabledModel.cs
-     └─ GetFunctionAndAccessUrlModel.cs (已完成)
- └─ Factory
-     ├─ FGetUserNameAndGroup.cs
-     ├─ FGetGroupAllUser.cs
-     ├─ FGetTree.cs
-     ├─ FGetFuncBtn.cs
-     ├─ FCheckBtnEnabled.cs
-     └─ FGetFunctionAndAccessUrl.cs (已完成)
- └─ APACCESS.cs (主靜態類別，統一入口)
-
-
-⸻
-
-要不要我幫你先 寫好一個完整範例 (比如 GetUserNameAndGroup 的 Factory + Model + 主類別呼叫)，這樣你就可以直接 copy & paste 照著開發剩下的？
+要不要我幫你把 功能 1 的 Factory 改成新版，直接用 FCommon.BuildConnectionString(environment)，讓你可以測試兩個環境切換？
