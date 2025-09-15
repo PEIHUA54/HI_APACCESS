@@ -1,78 +1,291 @@
-👏 你觀察得很仔細，沒錯！我剛剛給的 SQL 邏輯是「判斷這個群組在這個功能頁是否有任一筆按鈕權限」，但 忽略了「不同按鈕的對應關係」。
-
-來，我把資料表結構拆給你看，這樣會比較清楚：
-
-⸻
-
-📌 相關資料表
-	1.	AP_RFUNC（按鈕定義表）
-	•	SYS_ID
-	•	FUNC_ID
-	•	BTNSEQ
-	•	BTNID
-	•	BTN_NAME
-	•	CONTROLLER
-	•	ACTION
-	•	LOC
-	•	ONCLICK
-
-👉 每個功能頁 (FUNC_ID) 底下，可能有多個按鈕 (BTNID)，但它們的 唯一識別 不是 BTNID，而是 (FUNC_ID + BTNSEQ)。
+非常好 👍
+現在我們已經完成 功能 1~5 的 DLL (Model + Factory + 主類別)，接下來我幫你整理：
+	1.	每個功能的用途
+	2.	測試用 Controller 方法 (放在 POSFILE_APPLY 專案)
+	3.	測試流程 (怎麼跑、會得到什麼結果)
 
 ⸻
 
-	2.	AP_USER_RFUNC_CONFIG（群組按鈕權限表）
-	•	SYS_ID
-	•	FUNC_ID
-	•	BTNSEQ
-	•	APG_NO
+📌 功能說明 (1~5)
 
-👉 這裡紀錄「哪個群組 (APG_NO) 可以用某功能頁 (FUNC_ID) 的哪個按鈕 (BTNSEQ)」。
-
-⸻
-
-📌 正確的比對方式
-	1.	先在 AP_RFUNC 找到 FUNC_ID + BTNID → 找到對應的 BTNSEQ。
-	2.	再去 AP_USER_RFUNC_CONFIG 查這個群組 (APG_NO) 是否有這個 BTNSEQ。
+🔹 功能 1：GetUserNameAndGroup
+	•	用途：查詢使用者的基本資訊與群組權限。
+	•	輸入：SysID、UserAD、Environment
+	•	輸出：UserID、UserName、GroupID、GroupName、ParentGroupID[]、ChildGroupID[]、SensitiveDataAccess、部門、職稱
+	•	情境：登入時，系統要知道「這個人是誰、在哪個群組、有什麼層級關係」。
 
 ⸻
 
-📌 修正後 SQL
-
-SELECT COUNT(*) AS Cnt
-FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] a
-INNER JOIN [HI_TMMAIN].[dbo].[AP_RFUNC] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-   AND a.BTNSEQ = b.BTNSEQ
-WHERE a.SYS_ID = @SysID
-  AND a.APG_NO = @GroupID
-  AND a.FUNC_ID = @FuncID
-  AND b.BTNID = @BtnID;
-
-👉 這樣才能精準對應「群組 007 有沒有 infolist 功能頁下的 btninsert」。
+🔹 功能 2：GetGroupAllUser
+	•	用途：取得群組內的所有使用者清單。
+	•	輸入：SysID、GroupID、IsIncludeChildGroups、Environment
+	•	輸出：UserADList (一串使用者帳號陣列)
+	•	情境：例如寄通知、顯示群組成員列表，可以用這個 API 先把所有人抓出來。
 
 ⸻
 
-📌 C# Factory 修正版
+🔹 功能 3：GetTree
+	•	用途：取得群組有權限的功能清單 (樹狀)。
+	•	輸入：SysID、GroupID、Environment
+	•	輸出：功能列表 (FuncID, FuncName, Controller, Action, Sort, ParentID, Level)
+	•	情境：登入系統後，根據群組權限，產生左邊的「功能選單」。
 
-string sql = @"
-SELECT COUNT(*) AS Cnt
-FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] a
-INNER JOIN [HI_TMMAIN].[dbo].[AP_RFUNC] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-   AND a.BTNSEQ = b.BTNSEQ
-WHERE a.SYS_ID=@SysID
-  AND a.APG_NO=@GroupID
-  AND a.FUNC_ID=@FuncID
-  AND b.BTNID=@BtnID";
+⸻
+
+🔹 功能 4：GetFuncBtn
+	•	用途：取得某功能頁群組有權限的按鈕清單。
+	•	輸入：SysID、GroupID、FuncID、Environment
+	•	輸出：按鈕清單 (BtnID, BtnName, Controller, Action, BtnLocation, BtnOnclick)
+	•	情境：例如進入「員工清單」頁面，API 會回「新增」「刪除」「匯出」這些群組能看到的按鈕。
+
+⸻
+
+🔹 功能 5：CheckBtnEnabled
+	•	用途：確認群組是否有某功能頁特定按鈕的權限。
+	•	輸入：SysID、GroupID、FuncID、BtnID、Environment
+	•	輸出：Result (true / false)
+	•	情境：進到頁面時，前端要決定「這個按鈕是 enable 還是 disable」。
+
+⸻
+
+📌 測試用程式碼 (POSFILE_APPLY 專案)
+
+Controller：APController.cs
+
+using System;
+using System.Web.Mvc;
+using HI_APACCESS_DLL_FRAMEWORK;
+using Newtonsoft.Json;
+using POSFILE_APPLY.Models;
+
+namespace POSFILE_APPLY.Controllers
+{
+    public class APController : POSFILE_APPLYBaseController
+    {
+        // ===== 功能1 測試 =====
+        public ActionResult Test_UserInfo()
+        {
+            var req = new M_AP.GetUserNameAndGroupRequestModel
+            {
+                sys_id = "HI_POSIMG",
+                user_ad = "3A001",
+                environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserNameAndGroup(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+
+            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        }
+
+        // ===== 功能2 測試 =====
+        public ActionResult Test_GroupAllUser()
+        {
+            var req = new M_AP.GetGroupAllUserRequestModel
+            {
+                sys_id = "HI_POSIMG",
+                group_id = "001",
+                is_include_child = true,
+                environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetGroupAllUser(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.GetGroupAllUserResponseModel>(response);
+
+            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        }
+
+        // ===== 功能3 測試 =====
+        public ActionResult Test_Tree()
+        {
+            var req = new M_AP.GetTreeRequestModel
+            {
+                sys_id = "HI_POSIMG",
+                group_id = "001",
+                environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetTree(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.GetTreeResponseModel>(response);
+
+            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        }
+
+        // ===== 功能4 測試 =====
+        public ActionResult Test_FuncBtn()
+        {
+            var req = new M_AP.GetFuncBtnRequestModel
+            {
+                sys_id = "HI_POSIMG",
+                group_id = "001",
+                func_id = "POS1001",
+                environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetFuncBtn(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.GetFuncBtnResponseModel>(response);
+
+            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        }
+
+        // ===== 功能5 測試 =====
+        public ActionResult Test_CheckBtn()
+        {
+            var req = new M_AP.CheckBtnEnabledRequestModel
+            {
+                sys_id = "HI_POSIMG",
+                group_id = "001",
+                func_id = "POS1001",
+                btn_id = "EDIT",
+                environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().CheckBtnEnabled(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.CheckBtnEnabledResponseModel>(response);
+
+            return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        }
+    }
+}
 
 
 ⸻
 
-✅ 總結
-	•	原本的 SQL 只判斷「有沒有權限紀錄」，但沒有細到「哪個按鈕」
-	•	正確做法 → 用 FUNC_ID + BTNSEQ 跟群組權限比對，BTNID 只是「按鈕代號」
-	•	Model 回傳 true / false 還是正確的，因為這個功能就是檢查「有沒有這個按鈕權限」
+Models：M_AP.cs (POSFILE_APPLY 專案)
+
+using System.Collections.Generic;
+
+namespace POSFILE_APPLY.Models
+{
+    public class M_AP
+    {
+        // ===== 功能1 =====
+        public class GetUserNameAndGroupRequestModel
+        {
+            public string sys_id { get; set; }
+            public string user_ad { get; set; }
+            public string environment { get; set; }
+        }
+        public class GetUserNameAndGroupResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public ResultData result { get; set; }
+            public class ResultData
+            {
+                public string UserID { get; set; }
+                public string UserName { get; set; }
+                public string GroupID { get; set; }
+                public string GroupName { get; set; }
+                public List<string> ParentGroupID { get; set; }
+                public List<string> ChildGroupID { get; set; }
+                public bool SensitiveDataAccess { get; set; }
+                public string OrganName { get; set; }
+                public string PostName { get; set; }
+            }
+        }
+
+        // ===== 功能2 =====
+        public class GetGroupAllUserRequestModel
+        {
+            public string sys_id { get; set; }
+            public string group_id { get; set; }
+            public bool is_include_child { get; set; }
+            public string environment { get; set; }
+        }
+        public class GetGroupAllUserResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public ResultData result { get; set; }
+            public class ResultData
+            {
+                public List<string> UserADList { get; set; }
+            }
+        }
+
+        // ===== 功能3 =====
+        public class GetTreeRequestModel
+        {
+            public string sys_id { get; set; }
+            public string group_id { get; set; }
+            public string environment { get; set; }
+        }
+        public class GetTreeResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public List<ResultData> result { get; set; }
+            public class ResultData
+            {
+                public string FuncID { get; set; }
+                public string FuncName { get; set; }
+                public string Controller { get; set; }
+                public string Action { get; set; }
+                public int Sort { get; set; }
+                public string ParentID { get; set; }
+                public string Level { get; set; }
+            }
+        }
+
+        // ===== 功能4 =====
+        public class GetFuncBtnRequestModel
+        {
+            public string sys_id { get; set; }
+            public string group_id { get; set; }
+            public string func_id { get; set; }
+            public string environment { get; set; }
+        }
+        public class GetFuncBtnResponseModel
+        {
+            public string code { get; set; }
+            public string message { get; set; }
+            public List<ResultData> result { get; set; }
+            public class ResultData
+            {
+                public string BtnID { get; set; }
+                public string BtnName { get; set; }
+                public string Controller { get; set; }
+                public string Action { get; set; }
+                public string BtnLocation { get; set; }
+                public string BtnOnclick { get; set; }
+            }
+        }
+
+        // ===== 功能5 =====
+        public class CheckBtnEnabledRequestModel
+        {
+            public string sys_id { get; set; }
+            public string group_id { get; set; }
+            public string func_id { get; set; }
+            public string btn_id { get; set; }
+            public string environment { get; set; }
+        }
+        public class CheckBtnEnabledResponseModel
+        {
+            public bool Result { get; set; }
+        }
+    }
+}
+
 
 ⸻
 
-要不要我幫你更新 功能 5 的完整 Factory + 主類別程式（用正確的 FUNC_ID + BTNSEQ）？
+📌 測試流程
+	1.	啟動專案 (Visual Studio → F5 → IIS Express)
+	2.	在瀏覽器呼叫不同 URL：
+	•	功能 1 → /AP/Test_UserInfo
+	•	功能 2 → /AP/Test_GroupAllUser
+	•	功能 3 → /AP/Test_Tree
+	•	功能 4 → /AP/Test_FuncBtn
+	•	功能 5 → /AP/Test_CheckBtn
+	3.	觀察回傳 JSON，會直接輸出在頁面 <pre> 區塊裡。
+
+⸻
+
+要不要我幫你把 功能 6 的測試程式也整合進來，這樣你整份測試 Controller 就能一次驗證 1~6？
