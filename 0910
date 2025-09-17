@@ -1,90 +1,53 @@
- //6 取得頁面跟權限設定功能連結
- public string GetFunctionAndAccessUrl(string requestJson)
+HI_APACCESS : HOME兩個入口需要檢查TOKEN是否失效 如果失效跳畫面為TOKEN已失效
+ [HttpGet]
+ [TokenAuthorize]
+ public ActionResult TokenEntry()
  {
-     FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
-     var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse(); //這邊sysid有值
+     var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+     var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
 
-     try
-     {
-         var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson); //這邊沒值
-
-         // 檢查類型
-         if (!func.TypeActions.ContainsKey(request.Type))
-         {
-             response.Result_code = Codes.TYPE_ERROR;
-             response.Msg = "類型錯誤，只接受 1 或 2";
-             response.Url = "";
-             return JsonConvert.SerializeObject(response);
-         }
-
-         // 檢查環境
-         if (!func.EnvironmentUrls.ContainsKey(request.Environment))
-         {
-             response.Result_code = Codes.ENV_ERROR;
-             response.Msg = "環境錯誤，只接受 TEST、PROD";
-             response.Url = "";
-             return JsonConvert.SerializeObject(response);
-         }
-
-         // 檢查系統授權
-         var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
-         if (!authorizedSystems.Contains(request.SysID))
-         {
-             response.Result_code = Codes.NO_PERMISSION;
-             response.Msg = "查無權限";
-             response.Url = "";
-             return JsonConvert.SerializeObject(response);
-         }
-
-         // 產生 Token
-         string token = func.GenerateJwtToken(request.SysID);
-         string baseUrl = func.EnvironmentUrls[request.Environment];
-         string action = func.TypeActions[request.Type];
-         string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
-
-         // 成功
-         response.Result_code = Codes.SUCCESS;
-         response.Msg = "成功";
-         response.Url = finalUrl;
-     }
-     catch (Exception ex)
-     {
-         response.Result_code = Codes.SYSTEM_ERROR;
-         response.Msg = "系統錯誤：" + ex.Message;
-         response.Url = "";
-     }
-
-     return JsonConvert.SerializeObject(response);
+     Session["CurrentSystemId"] = systemId;
+     Session["CurrentEmpNo"] = empNo;
+    
+     // 導向到群組管理
+     return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
  }
 
-model:
- internal class GetFunctionAndAccessUrlModel
- {
-     // 請求參數
-     internal class GetFunctionAndAccessUrlRequest
-     {
-         [JsonProperty]
-         [DisplayName("系統ID")]
-         internal string SysID { get; set; }        // 系統ID
-         [JsonProperty]
-         [DisplayName("類型")]
-         internal string Type { get; set; }          // 1=頁面設定, 2=權限設定
-         [JsonProperty]
-         [DisplayName("環境")]
-         internal string Environment { get; set; }   // TEST=測試, PROD=正式
-     }
 
-     // 回應結果
-     internal class GetFunctionAndAccessUrlResponse
-     {
-         [JsonProperty]
-         [DisplayName("回覆代碼")]
-         internal string Result_code { get; set; }     // 結果代碼
-         [JsonProperty]
-         [DisplayName("訊息")]
-         internal string Msg { get; set; }  // 訊息
-         [JsonProperty]
-         [DisplayName("功能連結")]
-         internal string Url { get; set; }      // 功能連結
-     }
+ [HttpGet]
+ [TokenAuthorize]
+ public ActionResult TokenEntry_FUNC()
+ {
+     var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+     var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+     Session["CurrentSystemId"] = systemId;
+     Session["CurrentEmpNo"] = empNo;
+
+     // 導向到頁面管理
+     return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
+ }
+
+// 產 JWT Token
+internal string GenerateJwtToken(string systemId)
+{
+    var claims = new[]
+    {
+        new Claim("systemId", systemId),
+    };
+
+    string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+    var token = new JwtSecurityToken(
+        issuer: "hi_ap_access_dll",
+        audience: "hi_ap_access_web",
+        claims: claims,
+        expires: DateTime.Now.AddHours(1),
+        signingCredentials: creds
+    );
+
+    return new JwtSecurityTokenHandler().WriteToken(token);
 }
