@@ -1,3 +1,24 @@
+👌 我來幫你拆解一下，你現在的程式其實已經能驗證 JWT token，但它有幾個問題：
+	1.	目前做法：
+	•	如果沒有 token → 回傳 401 Missing token
+	•	如果 token 過期 / 驗證失敗 → 回傳 401 Invalid or expired token
+	•	驗證成功 → 把 ClaimsPrincipal 設到 HttpContext.User
+
+👉 問題是：這樣寫只會給 HTTP 狀態碼 (401)，瀏覽器畫面不會自動顯示「TOKEN 已失效」對話框。
+
+⸻
+
+✅ 你要的效果
+	•	如果 token 過期 / 驗證失敗 → 頁面直接跳出 alert(TOKEN 已失效)，然後導回登入頁（或首頁）。
+
+⸻
+
+🔧 修改方向
+
+Step 1：改 TokenAuthorizeAttribute
+
+把現在的 HttpStatusCodeResult 換成 ContentResult，回傳一段 JavaScript。
+
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -10,24 +31,37 @@ namespace HI_APACCESS.Service.Validation
     public class TokenAuthorizeAttribute : ActionFilterAttribute
     {
         private static readonly string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+
         public override void OnActionExecuting(ActionExecutingContext filterContext)
         {
             var token = filterContext.HttpContext.Request.QueryString["token"];
             if (string.IsNullOrEmpty(token))
             {
-                filterContext.Result = new HttpStatusCodeResult(401, "Missing token");
+                RedirectWithError(filterContext, "缺少 Token，請重新登入");
                 return;
             }
 
             var principal = ValidateToken(token);
             if (principal == null)
             {
-                filterContext.Result = new HttpStatusCodeResult(401, "Invalid or expired token");
+                RedirectWithError(filterContext, "TOKEN 已失效，請重新登入");
                 return;
             }
 
             filterContext.HttpContext.User = principal;
             base.OnActionExecuting(filterContext);
+        }
+
+        private void RedirectWithError(ActionExecutingContext filterContext, string message)
+        {
+            filterContext.Result = new ContentResult
+            {
+                Content = $@"<script>
+                                alert('{message}');
+                                window.location.href='/Home/Login';
+                             </script>",
+                ContentType = "text/html"
+            };
         }
 
         public static ClaimsPrincipal ValidateToken(string token)
@@ -58,3 +92,56 @@ namespace HI_APACCESS.Service.Validation
         }
     }
 }
+
+
+⸻
+
+Step 2：在 HomeController 使用
+
+[HttpGet]
+[TokenAuthorize]
+public ActionResult TokenEntry()
+{
+    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+    Session["CurrentSystemId"] = systemId;
+    Session["CurrentEmpNo"] = empNo;
+
+    return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
+}
+
+[HttpGet]
+[TokenAuthorize]
+public ActionResult TokenEntry_FUNC()
+{
+    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+    Session["CurrentSystemId"] = systemId;
+    Session["CurrentEmpNo"] = empNo;
+
+    return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
+}
+
+
+⸻
+
+📌 測試流程
+	1.	用 DLL 產生一個正確的 Token → 帶到 URL
+
+http://localhost/Home/TokenEntry?token=xxxxx
+
+頁面應該正確進到 GroupManagement。
+
+	2.	把 Token 改成錯誤的 / 過期的 →
+頁面應該彈出 「TOKEN 已失效，請重新登入」，然後跳轉到 /Home/Login。
+
+⸻
+
+🎯 總結
+	•	你原本的程式「只丟 401」，瀏覽器不會 alert。
+	•	我幫你改成「回傳一段 script」，直接 alert 後導回登入頁。
+	•	這樣就完全符合你要的「TOKEN 失效提示」效果。
+
+要不要我幫你把 TokenAuthorize 抽出成 Filters/TokenAuthorize.cs 共用 class，然後在 FilterConfig.cs 註冊，讓所有需要驗證的 Controller 都能套用？
