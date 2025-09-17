@@ -1,53 +1,60 @@
-HI_APACCESS : HOME兩個入口需要檢查TOKEN是否失效 如果失效跳畫面為TOKEN已失效
- [HttpGet]
- [TokenAuthorize]
- public ActionResult TokenEntry()
- {
-     var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-     var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using System;
+using System.Web.Mvc;
 
-     Session["CurrentSystemId"] = systemId;
-     Session["CurrentEmpNo"] = empNo;
-    
-     // 導向到群組管理
-     return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
- }
-
-
- [HttpGet]
- [TokenAuthorize]
- public ActionResult TokenEntry_FUNC()
- {
-     var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-     var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-     Session["CurrentSystemId"] = systemId;
-     Session["CurrentEmpNo"] = empNo;
-
-     // 導向到頁面管理
-     return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
- }
-
-// 產 JWT Token
-internal string GenerateJwtToken(string systemId)
+namespace HI_APACCESS.Service.Validation
 {
-    var claims = new[]
+    public class TokenAuthorizeAttribute : ActionFilterAttribute
     {
-        new Claim("systemId", systemId),
-    };
+        private static readonly string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+        public override void OnActionExecuting(ActionExecutingContext filterContext)
+        {
+            var token = filterContext.HttpContext.Request.QueryString["token"];
+            if (string.IsNullOrEmpty(token))
+            {
+                filterContext.Result = new HttpStatusCodeResult(401, "Missing token");
+                return;
+            }
 
-    string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+            var principal = ValidateToken(token);
+            if (principal == null)
+            {
+                filterContext.Result = new HttpStatusCodeResult(401, "Invalid or expired token");
+                return;
+            }
 
-    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
-    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            filterContext.HttpContext.User = principal;
+            base.OnActionExecuting(filterContext);
+        }
 
-    var token = new JwtSecurityToken(
-        issuer: "hi_ap_access_dll",
-        audience: "hi_ap_access_web",
-        claims: claims,
-        expires: DateTime.Now.AddHours(1),
-        signingCredentials: creds
-    );
+        public static ClaimsPrincipal ValidateToken(string token)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(SecretKey);
 
-    return new JwtSecurityTokenHandler().WriteToken(token);
+            var parameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidIssuer = "hi_ap_access_dll",
+                ValidAudience = "hi_ap_access_web",
+                ValidateLifetime = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ClockSkew = TimeSpan.Zero
+            };
+
+            try
+            {
+                var principal = tokenHandler.ValidateToken(token, parameters, out SecurityToken validatedToken);
+                return principal;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
 }
