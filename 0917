@@ -1,119 +1,39 @@
-using HI_APACCESS_DLL_FRAMEWORK.Models;
-using System;
-using System.Collections.Generic;
-using System.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace HI_APACCESS_DLL_FRAMEWORK.Factory
-{
-    internal class FGetGroupAllUser
+    // ===== 功能2 測試 =====
+    // 取得群組人員清單
+    public ActionResult Test_GetGroupAllUser()
     {
-        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        var req = new POSFILE_APPLY.Models.M_AP.GetGroupAllUserRequestModel
         {
-            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+            SysID = "HI_POSIMG",
+            GroupID = "001",
+            IsIncludeChildGroups = true,
+            Environment = "TEST"
+        };
 
-            try
-            {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
-                    return response;
-                }
+        string json_input = JsonConvert.SerializeObject(req);
+        string response = new APACCESS().GetGroupAllUser(json_input);
+        var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetGroupAllUserResponseModel>(response);
 
-                // 2. 系統授權檢查
-                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorizedSystems.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
-                }
-
-                var userList = new List<string>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    // 3. 如果包含子群組，先把所有群組ID取出
-                    var groupIds = new List<string> { groupId };
-
-                    if (isIncludeChildGroups)
-                    {
-                        string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
-                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@SysID", sysId);
-                            cmd.Parameters.AddWithValue("@GroupID", groupId);
-                            using (var reader = cmd.ExecuteReader())
-                            {
-                                while (reader.Read())
-                                {
-                                    groupIds.Add(reader["APG_NO"].ToString());
-                                }
-                            }
-                        }
-                    }
-
-                    // 4. 查詢所有這些群組的使用者
-                    string sqlUser = @"SELECT DISTINCT U_ID 
-                                       FROM [HI_TMMAIN].[dbo].[AP_USER] 
-                                       WHERE SYS_ID=@SysID AND APG_NO IN ({0})";
-
-                    // 動態組 IN 子句
-                    var parameters = new List<string>();
-                    for (int i = 0; i < groupIds.Count; i++)
-                    {
-                        parameters.Add($"@Group{i}");
-                    }
-                    sqlUser = string.Format(sqlUser, string.Join(",", parameters));
-
-                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
-                        for (int i = 0; i < groupIds.Count; i++)
-                        {
-                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
-                        }
-
-                        using (var reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                userList.Add(reader["U_ID"].ToString());
-                            }
-                        }
-                    }
-                }
-
-                // 5. 結果判斷
-                if (userList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = new GetGroupAllUserModel.ResultData
-                    {
-                        UserIDList = userList
-                    };
-                }
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
-            }
-
-            return response;
-        }
+        return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
     }
-}
+
+        // ===== 功能2 =====
+        public class GetGroupAllUserRequestModel
+        {
+            public string SysID { get; set; }
+            public string GroupID { get; set; }
+            public bool IsIncludeChildGroups { get; set; }
+            public string Environment { get; set; }
+        }
+        public class GetGroupAllUserResponseModel
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public ResultData Result { get; set; }
+            public class ResultData
+            {
+                [JsonProperty("UserIDList")]
+                public List<string> UserIDList { get; set; }
+            }
+        }
+
