@@ -1,26 +1,108 @@
-public static MvcHtmlString Hi_Btn(this HtmlHelper helper,
-    string FUNC_ID, string APG_NO, string Type,
-    string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 {
-    // 呼叫 DLL 功能 5
-    var req = new POSFILE_APPLY.Models.M_AP.CheckBtnEnabledRequestModel
+    internal class FGetTree
     {
-        SysID = "HI_POSIMG",
-        GroupID = APG_NO,
-        FuncID = FUNC_ID,
-        BtnID = ButtonID,
-        Environment = "TEST"
-    };
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
 
-    string json = JsonConvert.SerializeObject(req);
-    string raw = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(json);
-    var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.CheckBtnEnabledResponseModel>(raw);
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
 
-    // 沒有權限 → 不產生按鈕
-    if (res == null || !res.Result) 
-        return MvcHtmlString.Empty;
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
 
-    // 有權限 → 建 button
-    TagBuilder tb = ButtonTagBuilder(ButtonText, ButtonID, ButtonType, HtmlAttributes);
-    return MvcHtmlString.Create(tb.ToString());
+                var resultList = new List<GetTreeModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    // 3. 查詢功能清單
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID
+FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID
+WHERE a.SYS_ID=@SysID 
+  AND b.APG_NO=@GroupID
+ORDER BY a.SORT_NO
+";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 4. 結果判斷
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
 }
