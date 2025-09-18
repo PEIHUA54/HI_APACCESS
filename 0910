@@ -1,316 +1,117 @@
-好 👍 我幫你重寫新版 SVS_員工基本資料，直接呼叫 DLL 的 功能 1 (GetUserNameAndGroup) 來完成「AD → 員編」與「取基本資料」，不額外做功能 7。
+哦～我懂了，你是問 改版後的 SVS_員工基本資料 跟 SVS_客製化元件，要怎麼改成呼叫 DLL 的功能 1～5，對吧？
+（之前你丟的是舊版 SVS_員工基本資料 + SVS_客製化元件，都自己打 SQL 查資料庫）
+
+⸻
+
+🔹新版設計重點
+	1.	舊版問題
+	•	SVS_員工基本資料：自己打 SQL 去抓 M1EMP_MAST / AP_USER。
+	•	SVS_客製化元件：自己打 SQL 去檢查 AP_RFUNC / AP_USER_RFUNC_CONFIG。
+	•	缺點：程式分散、SQL 依賴太重、不利維護。
+	2.	新版做法
+	•	改成呼叫 DLL（HI_APACCESS_DLL_FRAMEWORK.APACCESS）。
+	•	功能 1：取使用者群組與名稱 → 取員工基本資料。
+	•	功能 3：取樹狀清單 → 取功能清單 (Get_Tree)。
+	•	功能 5：確認是否有按鈕權限 → 取按鈕權限。
+	•	其他 SQL 就可以砍掉。
 
 ⸻
 
 🔹新版 SVS_員工基本資料
 
-using Newtonsoft.Json;
+👉 呼叫 功能 1 代替 Get_員工編號() 和 Get_員工基本資料()。
+
 using HI_APACCESS_DLL_FRAMEWORK;
-using POSFILE_APPLY.Models;
+using Newtonsoft.Json;
 using System;
-using System.Web;
+using POSFILE_APPLY.Models; // 你可以在這邊放 Request/Response Model
 
 namespace POSFILE_APPLY.Service
 {
     public class SVS_員工基本資料
     {
-        #region AD、員編
-
         /// <summary>
-        /// 取得員工 AD (從 Windows 登入資訊)
+        /// 取得員工基本資料 (透過 DLL 功能1)
         /// </summary>
-        internal static string Get_員工AD()
+        internal static M_AP.GetUserNameAndGroupResponseModel Get_員工基本資料(string sysId, string userAd, string environment)
         {
-            string EMP_DOM_ID = HttpContext.Current.User.Identity.Name
-                .Substring(HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
-
-            if (String.IsNullOrEmpty(EMP_DOM_ID))
+            var req = new M_AP.GetUserNameAndGroupRequestModel
             {
-                var principal = new System.Security.Principal.WindowsPrincipal(
-                    System.Security.Principal.WindowsIdentity.GetCurrent());
-                string[] adname = principal.Identity.Name.Split('\\');
-                EMP_DOM_ID = adname[1].ToUpper();
-            }
+                SysID = sysId,
+                UserAD = userAd,
+                Environment = environment
+            };
 
-            return EMP_DOM_ID;
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserNameAndGroup(json_input);
+
+            var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+            return res;
         }
 
         /// <summary>
-        /// 透過 DLL 功能1 取得員編
+        /// 只取員工編號 (AD → 員編)
         /// </summary>
-        internal static string Get_員工編號(string AD = null, string environment = "TEST")
+        internal static string Get_員工編號(string sysId, string userAd, string environment)
         {
-            try
-            {
-                string userAd = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
-
-                var req = new M_AP.GetUserNameAndGroupRequestModel
-                {
-                    SysID = "HI_POSIMG",   // 可依實際系統代號調整
-                    UserAD = userAd,
-                    Environment = environment
-                };
-
-                string json_input = JsonConvert.SerializeObject(req);
-                string response = new APACCESS().GetUserNameAndGroup(json_input);
-                var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
-
-                if (res.Result_code == "0000" && res.Result != null)
-                {
-                    return res.Result.UserID;  // 直接回員編
-                }
-                else
-                {
-                    return null; // 查不到或錯誤
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Get_員工編號 錯誤: {ex.Message}");
-                return null;
-            }
-        }
-
-        #endregion
-
-        /// <summary>
-        /// 取得員工基本資料（姓名、部門、職稱）
-        /// </summary>
-        internal static M_AP.EmployeeBasicInfo Get_員工基本資料(string AD, string environment = "TEST")
-        {
-            try
-            {
-                var req = new M_AP.GetUserNameAndGroupRequestModel
-                {
-                    SysID = "HI_POSIMG",
-                    UserAD = AD,
-                    Environment = environment
-                };
-
-                string json_input = JsonConvert.SerializeObject(req);
-                string response = new APACCESS().GetUserNameAndGroup(json_input);
-                var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
-
-                if (res.Result_code == "0000" && res.Result != null)
-                {
-                    return new M_AP.EmployeeBasicInfo
-                    {
-                        UserID = res.Result.UserID,
-                        UserName = res.Result.UserName,
-                        OrganName = res.Result.OrganName,
-                        PostName = res.Result.PostName
-                    };
-                }
-                else
-                {
-                    return null;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Get_員工基本資料 錯誤: {ex.Message}");
-                return null;
-            }
+            var empData = Get_員工基本資料(sysId, userAd, environment);
+            return empData?.Result?.UserID; // DLL 功能1 已經幫你轉換好 AD → 員編
         }
     }
 }
 
-
-⸻
-
-🔹POSFILE_APPLY.Models 補充模型
-
-在 M_AP 加這些 Request/Response 模型（對應 DLL 功能1）：
-
-namespace POSFILE_APPLY.Models
-{
-    public class M_AP
-    {
-        // ===== 功能1 Request =====
-        public class GetUserNameAndGroupRequestModel
-        {
-            public string SysID { get; set; }
-            public string UserAD { get; set; }
-            public string Environment { get; set; }
-        }
-
-        // ===== 功能1 Response =====
-        public class GetUserNameAndGroupResponseModel
-        {
-            public string Result_code { get; set; }
-            public string Msg { get; set; }
-            public ResultData Result { get; set; }
-
-            public class ResultData
-            {
-                public string UserID { get; set; }
-                public string UserName { get; set; }
-                public string OrganName { get; set; }
-                public string PostName { get; set; }
-            }
-        }
-
-        // ===== 簡化員工基本資料模型 =====
-        public class EmployeeBasicInfo
-        {
-            public string UserID { get; set; }
-            public string UserName { get; set; }
-            public string OrganName { get; set; }
-            public string PostName { get; set; }
-        }
-    }
-}
-
-
-⸻
-
-🔹測試方式
-
-public ActionResult Test_GetEmpInfo()
-{
-    string ad = SVS_員工基本資料.Get_員工AD();
-    string empNo = SVS_員工基本資料.Get_員工編號(ad, "TEST");
-    var empInfo = SVS_員工基本資料.Get_員工基本資料(ad, "TEST");
-
-    return Content($@"
-        AD: {ad}<br/>
-        EmpNo: {empNo}<br/>
-        Name: {empInfo?.UserName}<br/>
-        部門: {empInfo?.OrganName}<br/>
-        職稱: {empInfo?.PostName}
-    ");
-}
-
-
-⸻
-
-✅ 這樣你的 新版 SVS_員工基本資料：
-	•	只用 DLL 功能 1 (GetUserNameAndGroup)
-	•	就能完成 AD → 員編 + 基本資料查詢
-	•	不需要額外的功能 7
-
-⸻
-
-要不要我接著也幫你把 SVS_客製化元件 改寫成直接呼叫 DLL 功能 5？
-
-好 👍 那我幫你重寫新版 SVS_客製化元件，讓它完全呼叫 DLL 的 功能 5 (CheckBtnEnabled) 來判斷按鈕是否顯示。這樣 Razor 頁面 @Html.Hi_Btn(...) 就不用自己打 SQL。
 
 ⸻
 
 🔹新版 SVS_客製化元件
 
-using Newtonsoft.Json;
+👉 呼叫 功能 5 代替 IfBtnAuth_Positive。
+
 using HI_APACCESS_DLL_FRAMEWORK;
-using POSFILE_APPLY.Models;
-using System;
-using System.Collections.Generic;
+using Newtonsoft.Json;
 using System.Web.Mvc;
+using POSFILE_APPLY.Models;
 
 namespace POSFILE_APPLY.Service
 {
     public static class SVS_客製化元件
     {
-        #region 按鈕權限 - 正向法實作
-
         /// <summary>
-        /// 客製化權限 Button Helper
+        /// 新版 Hi_Btn - 使用 DLL 功能5 確認按鈕權限
         /// </summary>
-        /// <param name="helper">HtmlHelper</param>
-        /// <param name="FUNC_ID">頁面功能ID</param>
-        /// <param name="APG_NO">使用者群組</param>
-        /// <param name="ButtonID">按鈕ID</param>
-        /// <param name="ButtonText">按鈕文字</param>
-        /// <param name="ButtonType">按鈕種類：submit、button…</param>
-        /// <param name="HtmlAttributes">Html屬性：class、style、event…</param>
-        /// <returns>MvcHtmlString (有權限才回傳 button，沒權限回傳 null)</returns>
-        public static MvcHtmlString Hi_Btn(this HtmlHelper helper,
-            string FUNC_ID, string APG_NO,
-            string ButtonID, string ButtonText, string ButtonType,
-            object HtmlAttributes, string environment = "TEST")
+        public static MvcHtmlString Hi_Btn(this HtmlHelper helper, string sysId, string groupId, string funcId, string buttonId, string buttonText, string buttonType, object htmlAttributes, string environment = "TEST")
         {
-            try
+            // 呼叫 DLL 功能5
+            var req = new M_AP.CheckBtnEnabledRequestModel
             {
-                // 1. 呼叫 DLL 功能 5
-                var req = new M_AP.CheckBtnEnabledRequestModel
+                SysID = sysId,
+                GroupID = groupId,
+                FuncID = funcId,
+                BtnID = buttonId,
+                Environment = environment
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().CheckBtnEnabled(json_input);
+            var res = JsonConvert.DeserializeObject<M_AP.CheckBtnEnabledResponseModel>(response);
+
+            if (res.Result) // 有權限才產生按鈕
+            {
+                TagBuilder tb = new TagBuilder("button");
+                tb.SetInnerText(buttonText);
+                tb.Attributes.Add("id", buttonId);
+                tb.Attributes.Add("type", buttonType);
+
+                if (htmlAttributes != null)
                 {
-                    SysID = "HI_POSIMG",  // 可依實際系統代號調整
-                    FuncID = FUNC_ID,
-                    GroupID = APG_NO,
-                    BtnID = ButtonID,
-                    Environment = environment
-                };
-
-                string json_input = JsonConvert.SerializeObject(req);
-                string response = new APACCESS().CheckBtnEnabled(json_input);
-                var res = JsonConvert.DeserializeObject<M_AP.CheckBtnEnabledResponseModel>(response);
-
-                // 2. 判斷是否有權限
-                if (res.Result_code == "0000" && res.HasPermission)
-                {
-                    // 產生 button
-                    TagBuilder tb = new TagBuilder("button");
-                    if (!string.IsNullOrWhiteSpace(ButtonText)) tb.InnerHtml = ButtonText;
-                    if (!string.IsNullOrWhiteSpace(ButtonID)) tb.Attributes.Add("id", ButtonID);
-                    if (!string.IsNullOrWhiteSpace(ButtonType)) tb.Attributes.Add("type", ButtonType);
-
-                    if (HtmlAttributes != null)
-                    {
-                        var dict = JsonConvert.DeserializeObject<Dictionary<string, string>>(
-                            JsonConvert.SerializeObject(HtmlAttributes));
-                        foreach (var kv in dict)
-                        {
-                            string key = kv.Key.Contains("_") ? kv.Key.Replace("_", "-") : kv.Key;
-                            if (tb.Attributes.ContainsKey(key))
-                                tb.Attributes[key] = kv.Value;
-                            else
-                                tb.Attributes.Add(key, kv.Value);
-                        }
-                    }
-
-                    return MvcHtmlString.Create(tb.ToString());
+                    var attrs = HtmlHelper.AnonymousObjectToHtmlAttributes(htmlAttributes);
+                    tb.MergeAttributes(attrs);
                 }
 
-                // 沒有權限 → 不顯示
-                return null;
+                return MvcHtmlString.Create(tb.ToString());
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Hi_Btn 錯誤: {ex.Message}");
-                return null;
-            }
-        }
 
-        #endregion
-    }
-}
-
-
-⸻
-
-🔹POSFILE_APPLY.Models 補充模型
-
-在 M_AP 裡加功能 5 的 Request/Response 模型：
-
-namespace POSFILE_APPLY.Models
-{
-    public partial class M_AP
-    {
-        // ===== 功能5 Request =====
-        public class CheckBtnEnabledRequestModel
-        {
-            public string SysID { get; set; }
-            public string FuncID { get; set; }
-            public string GroupID { get; set; }
-            public string BtnID { get; set; }
-            public string Environment { get; set; }
-        }
-
-        // ===== 功能5 Response =====
-        public class CheckBtnEnabledResponseModel
-        {
-            public string Result_code { get; set; }
-            public string Msg { get; set; }
-            public bool HasPermission { get; set; }
+            return null; // 沒權限 → 不顯示
         }
     }
 }
@@ -318,23 +119,21 @@ namespace POSFILE_APPLY.Models
 
 ⸻
 
-🔹Razor 頁面用法
+🔹測試流程
+	1.	在 SVS_員工基本資料：
 
-以前寫法：
+var emp = SVS_員工基本資料.Get_員工基本資料("HI_POSIMG", "3B750", "TEST");
+Console.WriteLine(emp.Result.UserName); // 王小明
 
-@Html.Hi_Btn("FUNC123", "007", "btnSave", "儲存", "submit", new { @class = "btn btn-primary" })
+✅ 會回傳員工資料。
 
-新的 DLL 呼叫後，邏輯會變成：
-	•	DLL 回傳 HasPermission = true → 產生 <button>
-	•	DLL 回傳 HasPermission = false → 不產生任何東西 (null)
+	2.	在 SVS_客製化元件：
 
-⸻
+@Html.Hi_Btn("HI_POSIMG", "001", "POS1001", "BtnInsert", "新增", "button", new { @class="btn btn-primary" })
 
-✅ 這樣一來：
-	•	SVS_客製化元件 不需要自己查 SQL
-	•	權限判斷全部統一走 DLL → 功能 5
-	•	Razor 頁面照舊寫 @Html.Hi_Btn(...)，不需要改動
+✅ 如果群組 001 有 BtnInsert 權限 → 產生按鈕，否則回傳 null（按鈕隱藏）。
 
 ⸻
 
-要不要我再幫你把 舊的 Get_Tree 也一起改掉 → 直接呼叫 DLL 的 功能 3 (GetTree)？
+要不要我幫你直接把 M_AP 的測試 Request/Response Model (功能1、功能5) 一起生出來？
+這樣你 web 測試程式可以直接跑。
