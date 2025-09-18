@@ -1,135 +1,26 @@
-👌 我看懂你的狀況了，兩個問題要分開處理：
-
-⸻
-
-1️⃣ Get_Tree 沒有父子目錄，點連結會 403.14 Forbidden
-
-這是因為你現在的 DLL 改版流程 沒有模擬原本 SQL 的 NODE/階層邏輯。
-原本 SQL 用了 CONVERT(HIERARCHYID, NODE) 排序，確保父目錄在前、子目錄跟隨。
-
-但是你現在在程式裡只靠：
-
-.Where(x => x.NODE.Split('/').Length == 3) // 母目錄
-.Where(x => x.NODE.Split('/').Length == 4) // 子目錄
-
-這樣會漏掉多層巢狀 (例如三層以上)，也沒有真正建立樹狀結構。
-因此點進去時 URL 會缺路徑或找不到，最後就報 403.14。
-
-⸻
-
-✅ 解法：用 ParentID 建立樹狀 + SortNo 排序
-
-我幫你整理過程式，直接用 Dictionary 建樹狀：
-
-internal static List<VM_Employee.WebTree_Node> Get_Tree(string sysId, string groupId, string environment = "TEST")
-{
-    var req = new M_AP.GetTreeRequestModel
-    {
-        SysID = sysId,
-        GroupID = groupId,
-        Environment = environment
-    };
-
-    string json_input = JsonConvert.SerializeObject(req);
-    string response = new APACCESS().GetTree(json_input);
-    var res = JsonConvert.DeserializeObject<M_AP.GetTreeResponseModel>(response);
-
-    if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
-
-    // 轉換
-    var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
-    {
-        FUNC_ID = x.FuncID,
-        FUNC_NA = x.FuncName,
-        PARENT_ID = x.ParentID,
-        VIEW_H = x.Controller,
-        VIEW_HB = x.Action,
-        SORT_NO = x.Sort.ToString(),
-        WebTree = new List<VM_Employee.WebTree_Node>()
-    }).ToList();
-
-    // 建立字典
-    var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
-
-    // 樹狀化
-    List<VM_Employee.WebTree_Node> roots = new List<VM_Employee.WebTree_Node>();
-    foreach (var node in allNodes)
-    {
-        if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
-        {
-            roots.Add(node);
-        }
-        else if (dict.ContainsKey(node.PARENT_ID))
-        {
-            dict[node.PARENT_ID].WebTree.Add(node);
-        }
-    }
-
-    // 排序 (遞迴)
-    SortTree(roots);
-
-    return roots;
-}
-
-private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
-{
-    nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
-    foreach (var node in nodes)
-    {
-        if (node.WebTree != null && node.WebTree.Count > 0)
-        {
-            SortTree(node.WebTree);
-        }
-    }
-}
-
-👉 這樣就可以還原 SQL 的效果：
-	•	母目錄在前
-	•	子目錄跟在母目錄下面
-	•	各層都有排序
-
-⸻
-
-2️⃣ HI_BTN 有權限卻不顯示按鈕
-
-我看你的 Hi_Btn：
-
-string ret = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type) ? tb.ToString() : null;
-return MvcHtmlString.Create(ret);
-
-問題在於：
-	•	當 ret = null 時，MvcHtmlString.Create(null) 會輸出字串 "null"，不是空 → HTML 不會顯示。
-	•	而且你的 Type 參數在判斷裡根本沒用到，永遠走 正向法。
-
-⸻
-
-✅ 解法：補強判斷
-
 public static MvcHtmlString Hi_Btn(this HtmlHelper helper,
     string FUNC_ID, string APG_NO, string Type,
     string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
 {
+    // 呼叫 DLL 功能 5
+    var req = new POSFILE_APPLY.Models.M_AP.CheckBtnEnabledRequestModel
+    {
+        SysID = "HI_POSIMG",
+        GroupID = APG_NO,
+        FuncID = FUNC_ID,
+        BtnID = ButtonID,
+        Environment = "TEST"
+    };
+
+    string json = JsonConvert.SerializeObject(req);
+    string raw = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(json);
+    var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.CheckBtnEnabledResponseModel>(raw);
+
+    // 沒有權限 → 不產生按鈕
+    if (res == null || !res.Result) 
+        return MvcHtmlString.Empty;
+
+    // 有權限 → 建 button
     TagBuilder tb = ButtonTagBuilder(ButtonText, ButtonID, ButtonType, HtmlAttributes);
-    bool hasPermission = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type);
-
-    if (!hasPermission)
-        return MvcHtmlString.Empty; // ✅ 改這裡，避免輸出 "null"
-
     return MvcHtmlString.Create(tb.ToString());
 }
-
-
-⸻
-
-🔎 建議測試方向
-	1.	Get_Tree
-	•	把 AP_FUNC 的父子層級 (FUNC_ID / PARENT_ID) 印出來，確認是否正確掛上去。
-	•	確認 roots 有 HOME → child → subchild。
-	2.	Hi_Btn
-	•	先直接 Console.WriteLine($"FUNC={FUNC_ID}, APG={APG_NO}, Button={ButtonID}, result={hasPermission}")
-	•	確認 SQL 查詢是否真的有回 COUNT > 0。
-	•	若回傳有資料，按鈕應該會正常顯示。
-
-⸻
-
-要不要我幫你寫一個 Web 測試頁，同時把 權限樹 + 按鈕 渲染出來，這樣你一進去就能看結果？
