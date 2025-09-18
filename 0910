@@ -1,90 +1,96 @@
-好👌 那我幫你做一個 雙模式版本，這樣你就可以同時支援：
-	1.	使用者有輸入 AD → 優先用輸入的 AD 去查。
-	2.	使用者沒輸入 AD → fallback 去抓目前 IIS/站台登入的 HttpContext.Current.User.Identity.Name。
+   #region AD、員編、 基本資料
 
-⸻
+   /// <summary>
+   /// 權限管理-取得員工AD
+   /// </summary>
+   /// <returns>AD</returns>
+   internal static string Get_員工AD()
+   {
+       string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
 
-改版程式碼
+       if (String.IsNullOrEmpty(EMP_DOM_ID))
+       {
+           System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
+           string name = principal.Identity.Name;
+           string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+           EMP_DOM_ID = adname[1].ToString().ToUpper();
+       }
 
-internal static string Get_員工編號(string AD = null)
-{
-    // 1. 如果呼叫時沒有傳入 AD，就去抓 HttpContext
-    if (string.IsNullOrEmpty(AD))
-    {
-        string empDomId = null;
+       return EMP_DOM_ID;
+   }
 
-        if (System.Web.HttpContext.Current != null &&
-            System.Web.HttpContext.Current.User != null &&
-            System.Web.HttpContext.Current.User.Identity != null)
-        {
-            empDomId = System.Web.HttpContext.Current.User.Identity.Name;
-            if (!string.IsNullOrEmpty(empDomId) && empDomId.Contains("\\"))
-            {
-                empDomId = empDomId.Substring(empDomId.LastIndexOf("\\") + 1).ToUpper();
-            }
-        }
+   /// <summary>
+   /// 權限管理-取得員工編號 (呼叫 DLL 功能1)
+   /// </summary>
+   /// <returns>員編</returns>
+   internal static string Get_員工編號(string ad = null)
+   {
+       var req = new M_AP.GetUserNameAndGroupRequestModel
+       {
+           SysID = "HI_POSIMG",
+           UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
+           Environment = "TEST",
+       };
 
-        // 如果 HttpContext 也沒抓到 → 嘗試用 WindowsPrincipal
-        if (string.IsNullOrEmpty(empDomId))
-        {
-            var principal = new System.Security.Principal.WindowsPrincipal(
-                System.Security.Principal.WindowsIdentity.GetCurrent());
-            string name = principal.Identity.Name;
-            if (!string.IsNullOrEmpty(name) && name.Contains("\\"))
-            {
-                empDomId = name.Split('\\')[1].ToUpper();
-            }
-        }
+       string json_input = JsonConvert.SerializeObject(req);
+       string response = new APACCESS().GetUserNameAndGroup(json_input);
+       var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
 
-        AD = empDomId; // fallback 結果
-    }
+       return res?.Result?.UserID ?? req.UserAD; // 沒找到就回傳 AD
+   }
 
-    // 2. 呼叫 DB 查詢，把 AD 轉成員編
-    return GetEmpNoByAD(AD);
-}
+   /// <summary>
+   /// 取得員工基本資料 (呼叫 DLL 功能1)
+   /// </summary>
+   /// <param name="Emp_NO">員編</param>
+   /// <returns></returns>
+   internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
+   {
+       var req = new M_AP.GetUserNameAndGroupRequestModel
+       {
+           SysID = "HI_POSIMG",
+           UserAD = ad,
+           Environment = "TEST"
+       };
 
-private static string GetEmpNoByAD(string AD)
-{
-    string EMP_NO = null;
-    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpNoByAD);
-    List<SqlParameter> paras = new List<SqlParameter>
-    {
-        new SqlParameter("@AD", AD)
-    };
+       string json_input = JsonConvert.SerializeObject(req);
+       string response = new APACCESS().GetUserNameAndGroup(json_input);
+       var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
 
-    DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
-    if (table.Rows.Count > 0)
-    {
-        EMP_NO = table.Rows[0]["EMP_ID"].ToString();
-    }
+       if (res?.Result == null) return null;
 
-    // 如果查不到 → 就直接回傳 AD 本身
-    return string.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
-}
+       return new VM_Employee.VM_員工部門職稱
+       {
+           AD = req.UserAD,
+           EMP_NO = res.Result.UserID,
+           EMP_NAME = res.Result.UserName,
+           POST_NAME = res.Result.PostName,
+           ORGAN_CAP = res.Result.OrganName,
+           APG_NO = res.Result.GroupID
+       };
+   }
 
+   /// <summary>
+   /// AD轉換為員編
+   /// </summary>
+   /// <param name="AD">取得工作站登入AD</param>
+   /// <returns>員編</returns>
+   private static string GetEmpNoByAD(string AD)
+   {
+       string EMP_NO = null;
+       string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpNoByAD);
+       List<SqlParameter> paras = new List<SqlParameter>
+         {
+             new SqlParameter("@AD",AD)
+         };
+       DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
+       if (table.Rows.Count > 0)
+       {
+           EMP_NO = table.Rows[0]["EMP_ID"].ToString();
+       }
 
-⸻
+       EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
+       return EMP_NO;
+   }
 
-呼叫方式
-
-1. 有輸入 AD（例如表單、API 傳進來的）
-
-string empNo = SVS_員工基本資料.Get_員工編號("3B750");  
-// 會用 "3B750" 去 DB 查 EMP_NO
-
-2. 沒有輸入 AD（直接呼叫）
-
-string empNo = SVS_員工基本資料.Get_員工編號();
-// 會去抓 HttpContext.Current.User.Identity.Name → 再轉換員編
-
-
-⸻
-
-這樣改的好處是：
-	•	方便測試：你可以手動塞一個 AD 測試。
-	•	方便正式站台：如果沒有參數，就會自動抓 IIS 的登入帳號。
-
-⸻
-
-要不要我幫你再補一個 web 測試範例 Action？
-例如在 Controller 裡直接打 /Test/GetEmpNo?ad=3B750 可以看到結果。
+   #endregion
