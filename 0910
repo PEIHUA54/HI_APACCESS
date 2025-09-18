@@ -1,57 +1,349 @@
-好 👍 我繼續幫你把步驟補完整，針對 AD → 員編搬進 DLL 與 替換掉舊的 SVS_員工基本資料，整理成具體操作。
+沒問題～我們從頭把「設計 → 要改哪些檔 → 實作程式碼 → 怎麼測」一次講清楚，讓你不會亂 😊
 
 ⸻
 
-A. 把「AD→員編」搬進 HI_APACCESS
+0) 你要達成的目標（一句話）
+	•	外部系統都只傳 AD（UserAD）給 DLL
+	•	DLL 先把 AD 轉員編 (EMP_NO)，再執行你規格中的功能（1～5）。
+	•	對外 API 的資料結構維持你原本的規格不變（功能1回傳 UserID=員編）。
 
-1. 建立共用 Factory：FIdentity.cs
+⸻
 
-放在 HI_APACCESS_DLL_FRAMEWORK/Factory 下。
+1) 專案內檔案結構（新增與調整）
 
-using System;
-using System.Collections.Generic;
+HI_APACCESS_DLL_FRAMEWORK/
+├── Common/
+│   └── FCommon.cs                // 已有：環境連線字串、授權系統清單
+├── Factory/
+│   ├── FIdentity.cs              // ✅ 新增：AD → EMP_NO 一站式轉換
+│   ├── FGetUserNameAndGroup.cs   // ✅ 修改：改成先把 AD 轉 EMP_NO 再查
+│   ├── FGetGroupAllUser.cs       // (已完成)
+│   ├── FGetTree.cs               // (已完成)
+│   ├── FGetFuncBtn.cs            // (已完成)
+│   └── FCheckBtnEnabled.cs       // (已完成, 已修正用 FUNC_ID+BTNSEQ)
+├── Models/
+│   └── GetUserNameAndGroupModel.cs // ✅ 確認欄位、JsonProperty、DisplayName
+└── APACCESS.cs                   // ✅ 主類別：新增 ResolveEmpNoByAD() 工具方法；功能1使用它
+
+
+⸻
+
+2) 共用工具：AD→員編放進 DLL（新增 FIdentity.cs）
+
+用你提供的 SQL，直接在 DLL 內做轉換。
+之後不管功能1或別的，需要員編就用這個方法。
+
+// Factory/FIdentity.cs
 using System.Data.SqlClient;
-using System.Data;
 using HI_APACCESS_DLL_FRAMEWORK.Common;
 
 namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 {
-    internal class FIdentity
+    internal static class FIdentity
     {
-        /// <summary>
-        /// 將 AD 轉換為員編
-        /// </summary>
+        /// <summary>AD → 員編（查不到時回傳原 AD）</summary>
         internal static string GetEmpNoByAD(string ad, string environment)
         {
-            if (string.IsNullOrEmpty(ad)) return null;
+            if (string.IsNullOrWhiteSpace(ad)) return ad;
+
+            // 你的 SQL（跨 DB join 在同一 SQL Server 上）
+            string sql = @"
+SELECT EMP_ID 
+FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] 
+WHERE EMP_ID != EMP_DOM_ID
+  AND LTRIM(RTRIM(EMP_DOM_ID)) <> '' 
+  AND EMP_ID IN (
+        SELECT EMP_NO 
+        FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 
+        WHERE END_DT IS NULL
+  ) 
+  AND EMP_DOM_ID = @AD";
 
             string empNo = null;
-            string sql = @"
-                SELECT EMP_ID 
-                FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] 
-                WHERE EMP_ID != EMP_DOM_ID
-                  AND LTRIM(RTRIM(EMP_DOM_ID)) != '' 
-                  AND EMP_ID IN (
-                        SELECT EMP_NO 
-                        FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 
-                        WHERE END_DT IS NULL
-                  ) 
-                  AND EMP_DOM_ID = @AD";
-
-            using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+            using (var cmd  = new SqlCommand(sql, conn))
             {
                 cmd.Parameters.AddWithValue("@AD", ad);
                 conn.Open();
-                var result = cmd.ExecuteScalar();
-                if (result != null)
+                var o = cmd.ExecuteScalar();
+                empNo = o?.ToString();
+            }
+
+            return string.IsNullOrWhiteSpace(empNo) ? ad : empNo;
+        }
+    }
+}
+
+✅ 假設 TEST/PROD 兩個環境的 同一台 SQL Server 上都能存取這三個 DB（HILIFE_MTS、HILIFE_DB3、HI_TMMAIN）。
+若 PROD 要用不同 DataSource，請在 FCommon.BuildConnectionString(environment) 已經完成切換（你前面有做）。
+
+⸻
+
+3) 主類別新增工具方法（APACCESS.cs）
+
+這不是新的業務 API，只是工具方法（直接回傳字串），方便內外部程式在必要時單純轉換 AD→員編。
+
+// APACCESS.cs (節錄)
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+
+namespace HI_APACCESS_DLL_FRAMEWORK
+{
+    public class APACCESS
+    {
+        /// <summary>工具方法：AD 轉員編</summary>
+        public string ResolveEmpNoByAD(string userAd, string environment)
+        {
+            return FIdentity.GetEmpNoByAD(userAd, environment);
+        }
+
+        // ... 其餘功能1～6
+    }
+}
+
+
+⸻
+
+4) 功能 1 的 Model（GetUserNameAndGroupModel.cs）
+
+保持你規格；回傳 UserID=員編。
+（下面示範用 Pascal 命名＋JsonProperty，避免大小寫不一致）
+
+// Models/GetUserNameAndGroupModel.cs
+using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.ComponentModel;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Models
+{
+    internal class GetUserNameAndGroupModel
+    {
+        internal class GetUserNameAndGroupRequest
+        {
+            [JsonProperty("SysID")]
+            [DisplayName("系統ID")]
+            internal string SysID { get; set; }
+
+            [JsonProperty("UserAD")]
+            [DisplayName("使用者AD")]
+            internal string UserAD { get; set; }
+
+            [JsonProperty("Environment")]
+            [DisplayName("環境")]
+            internal string Environment { get; set; }
+        }
+
+        internal class GetUserNameAndGroupResponse
+        {
+            [JsonProperty("Result_code")]
+            [DisplayName("回覆代碼")]
+            internal string Result_code { get; set; }
+
+            [JsonProperty("Msg")]
+            [DisplayName("訊息")]
+            internal string Msg { get; set; }
+
+            [JsonProperty("Result")]
+            [DisplayName("回應內容")]
+            internal ResultData Result { get; set; }
+        }
+
+        internal class ResultData
+        {
+            [JsonProperty("UserID")]
+            [DisplayName("員編")]
+            internal string UserID { get; set; }
+
+            [JsonProperty("UserName")]
+            [DisplayName("姓名")]
+            internal string UserName { get; set; }
+
+            [JsonProperty("GroupID")]
+            [DisplayName("群組代碼")]
+            internal string GroupID { get; set; }
+
+            [JsonProperty("GroupName")]
+            [DisplayName("群組名稱")]
+            internal string GroupName { get; set; }
+
+            [JsonProperty("ParentGroupID")]
+            [DisplayName("母群組清單")]
+            internal List<string> ParentGroupID { get; set; }
+
+            [JsonProperty("ChildGroupID")]
+            [DisplayName("子群組清單")]
+            internal List<string> ChildGroupID { get; set; }
+
+            [JsonProperty("SensitiveDataAccess")]
+            [DisplayName("機敏資料權限")]
+            internal bool SensitiveDataAccess { get; set; }
+
+            [JsonProperty("OrganName")]
+            [DisplayName("部門")]
+            internal string OrganName { get; set; }
+
+            [JsonProperty("PostName")]
+            [DisplayName("職稱")]
+            internal string PostName { get; set; }
+        }
+    }
+}
+
+
+⸻
+
+5) 功能 1 Factory（FGetUserNameAndGroup.cs）
+
+重點：先把 AD 轉員編，再查。母群組直接用欄位（若你那邊存的是「001,002」就 split），子群組用你定義的邏輯查。
+
+// Factory/FGetUserNameAndGroup.cs
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
+
+namespace HI_APACCESS_DLL_FRAMEWORK.Factory
+{
+    internal class FGetUserNameAndGroup
+    {
+        internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
+        {
+            var res = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
+
+            try
+            {
+                // 0) 環境檢查
+                if (environment != "TEST" && environment != "PROD")
                 {
-                    empNo = result.ToString();
+                    res.Result_code = Codes.ENV_ERROR;
+                    res.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return res;
+                }
+
+                // 1) 系統授權檢查
+                var authorized = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorized.Contains(sysId))
+                {
+                    res.Result_code = Codes.SYS_UNAUTHORIZED;
+                    res.Msg = "系統未授權";
+                    return res;
+                }
+
+                // 2) AD → 員編
+                string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
+
+                // 3) 查使用者基本＋群組（用員編）
+                string groupId = null;
+                string groupName = null;
+                bool sensitive = false;
+                string userName = null;
+                string parentRaw = null;
+                string organ = null;
+                string post = null;
+
+                using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    // 3-1 主要資料（UserName, GroupID/Name, Sensitive, ParentGroup raw, 部門/職稱）
+                    string sqlMain = @"
+SELECT TOP 1
+    B.U_ID           AS UserID,
+    B.U_NAME         AS UserName,
+    A.APG_NO         AS GroupID,
+    A.APG_NAME       AS GroupName,
+    A.PARENT_APG_NO  AS ParentRaw,
+    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    M.ORGAN_CAP      AS OrganName,
+    M.POST_NAME      AS PostName
+FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER] B  ON A.APG_NO = B.APG_NO
+LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M ON B.U_ID = M.EMP_NO
+WHERE A.SYS_ID=@SYS_ID AND B.U_ID=@EMP_NO";
+
+                    using (var cmd = new SqlCommand(sqlMain, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            if (r.Read())
+                            {
+                                // 主要欄位
+                                userName  = r["UserName"]?.ToString();
+                                groupId   = r["GroupID"]?.ToString();
+                                groupName = r["GroupName"]?.ToString();
+                                parentRaw = r["ParentRaw"]?.ToString();
+                                sensitive = r["SensitiveDataAccess"] != DBNull.Value && Convert.ToBoolean(r["SensitiveDataAccess"]);
+                                organ     = r["OrganName"]?.ToString();
+                                post      = r["PostName"]?.ToString();
+                            }
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(groupId))
+                    {
+                        res.Result_code = Codes.NO_PERMISSION;
+                        res.Msg = "查無權限";
+                        return res;
+                    }
+
+                    // 3-2 母群組：如果資料表直接存 "003,002" 這種，就 split；如果是單一值就包成清單
+                    var parentList = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(parentRaw))
+                    {
+                        foreach (var s in parentRaw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                            parentList.Add(s.Trim());
+                    }
+
+                    // 3-3 子群組：同 SYS_ID，PARENT_APG_NO 包含我的 GroupID 的群組
+                    // 若 PARENT_APG_NO 可能存多碼（逗號分隔），用 like 包逗號防止誤判
+                    var childList = new List<string>();
+                    string sqlChild = @"
+SELECT APG_NO 
+FROM [HI_TMMAIN].[dbo].[AP_GROUP]
+WHERE SYS_ID=@SYS_ID
+  AND (',' + LTRIM(RTRIM(PARENT_APG_NO)) + ',') LIKE '%,' + @MY_GID + ',%'";
+
+                    using (var cmd2 = new SqlCommand(sqlChild, conn))
+                    {
+                        cmd2.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd2.Parameters.AddWithValue("@MY_GID", groupId);
+
+                        using (var r2 = cmd2.ExecuteReader())
+                        {
+                            while (r2.Read())
+                            {
+                                childList.Add(r2["APG_NO"].ToString());
+                            }
+                        }
+                    }
+
+                    // 4) 組回應
+                    res.Result_code = Codes.SUCCESS;
+                    res.Msg = "成功";
+                    res.Result = new GetUserNameAndGroupModel.ResultData
+                    {
+                        UserID             = empNo,      // ✅ 回傳員編
+                        UserName           = userName,
+                        GroupID            = groupId,
+                        GroupName          = groupName,
+                        ParentGroupID      = parentList,
+                        ChildGroupID       = childList,
+                        SensitiveDataAccess= sensitive,
+                        OrganName          = organ,
+                        PostName           = post
+                    };
                 }
             }
+            catch (Exception ex)
+            {
+                res.Result_code = Codes.SYSTEM_ERROR;
+                res.Msg = "系統錯誤：" + ex.Message;
+            }
 
-            // 如果查不到，就直接回傳 AD
-            return string.IsNullOrEmpty(empNo) ? ad : empNo;
+            return res;
         }
     }
 }
@@ -59,466 +351,222 @@ namespace HI_APACCESS_DLL_FRAMEWORK.Factory
 
 ⸻
 
-2. 修改功能 1 Factory：FGetUserNameAndGroup
+6) 功能 1 主類別呼叫（APACCESS.cs）
 
-原本的流程是直接拿 UserAD 去查 AP_USER → 改成：
-	•	Step 1: 呼叫 FIdentity.GetEmpNoByAD(UserAD, environment)
-	•	Step 2: 把得到的 員編 (EMP_NO) 再去查 AP_USER / AP_GROUP
+這邏輯維持簡單：反序列化 → 交給 Factory → 序列化回傳。
+Factory 裡面已經會把 AD 轉員編了。
 
-// 把傳進來的 UserAD 轉換為 EMP_NO
-string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
+// APACCESS.cs (節錄)
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_FRAMEWORK.Models;
+using HI_APACCESS_DLL_FRAMEWORK.Factory;
+using HI_APACCESS_DLL_FRAMEWORK.Common;
 
-// SQL 改成用 empNo
-WHERE A.SYS_ID = @SYS_ID AND B.U_ID = @EMP_NO
-
-這樣以後所有查詢統一用員編，不會有人再直接用 AD 去撞資料。
-
-⸻
-
-3. 提供對外統一的接口（選擇性）
-
-在 APACCESS 主類別加一個方法：
-
-public string ResolveEmpNoByAD(string requestJson)
+namespace HI_APACCESS_DLL_FRAMEWORK
 {
-    var req = JsonConvert.DeserializeObject<CommonModels.ResolveEmpNoRequest>(requestJson);
-    var empNo = FIdentity.GetEmpNoByAD(req.AD, req.Environment);
-
-    var res = new CommonModels.ResolveEmpNoResponse
+    public class APACCESS
     {
-        Result_code = Codes.SUCCESS,
-        Msg = "成功",
-        EmpNo = empNo
-    };
+        public string GetUserNameAndGroup(string requestJson)
+        {
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
 
-    return JsonConvert.SerializeObject(res);
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
+                var func = new FGetUserNameAndGroup();
+                response = func.Execute(request.SysID, request.UserAD, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse
+                {
+                    Result_code = Codes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
+            return JsonConvert.SerializeObject(response);
+        }
+
+        // 工具：AD→員編
+        public string ResolveEmpNoByAD(string userAd, string environment)
+        {
+            return FIdentity.GetEmpNoByAD(userAd, environment);
+        }
+    }
 }
 
-方便未來如果別的專案只想單純做「AD→員編」查詢，可以直接呼叫。
 
 ⸻
 
-B. 替換掉舊的 SVS_員工基本資料
+7) Web 專案：測試用 Controller + Model
 
-現在很多地方還寫死這樣：
+Controller（APController.cs）
 
-string empNo = SVS_員工基本資料.Get_員工編號();
+using System.Web.Mvc;
+using Newtonsoft.Json;
+using HI_APACCESS_DLL_FRAMEWORK;
+using POSFILE_APPLY.Models;
 
-要改的方向
-	1.	不再呼叫 SVS_DBmanager 查員編
-→ 改成呼叫 DLL GetUserNameAndGroup，把 AD 丟進去，直接得到 UserID (已經是員編)。
-	2.	舊的 Get_員工編號
-
-string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
-EMP_NO = GetEmpNoByAD(EMP_NO);
-
-→ 改成：
-
-var req = new GetUserNameAndGroupRequestModel
+public class APController : Controller
 {
-    SysID = "HI_POSIMG",
-    UserAD = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD,
-    Environment = "TEST"
-};
-
-string jsonInput = JsonConvert.SerializeObject(req);
-string response = new APACCESS().GetUserNameAndGroup(jsonInput);
-var res = JsonConvert.DeserializeObject<GetUserNameAndGroupResponseModel>(response);
-string EMP_NO = res.Result.UserID;  // ✅ 已經是員編
-
-
-	3.	舊的 Get_員工基本資料、Get_Tree、Get_資料面最高權限
-	•	全部 SQL 都不要自己打 → 改用 DLL 功能 1~5
-	•	舉例：
-	•	Get_Tree → 改呼叫 DLL 功能 3 (GetTree)
-	•	Get_資料面最高權限 → 改呼叫 DLL 功能 5 (CheckBtnEnabled)，傳指定參數
-
-⸻
-
-C. 步驟總結（你怎麼改）
-	1.	在 DLL 新增 FIdentity.cs → 專責 AD→員編轉換
-	2.	修改功能 1 (FGetUserNameAndGroup) → 傳進來是 AD，轉成員編再查
-	3.	（可選）APACCESS 對外公開 ResolveEmpNoByAD
-	4.	Web 專案：
-	•	把所有 SVS_員工基本資料.Get_員工編號() 改掉
-	•	改成呼叫 DLL → 功能 1，直接拿員編
-	•	把 Get_員工基本資料 / Get_Tree / Get_資料面最高權限 也改掉，直接對應 DLL 功能 1~5
-
-⸻
-
-⚡ 這樣改的好處：
-	•	DLL 統一管理權限、員工資料，避免各系統重複寫 SQL
-	•	Web 專案乾淨，只有呼叫 DLL，不再自己打 DB
-	•	以後只要 DLL 改一個地方，所有系統就一起更新
-
-⸻
-
-要不要我幫你把 功能 1 (GetUserNameAndGroup) 的 Factory 實作，直接改好支援 AD→員編的版本給你？
-
-好問題 👌 我幫你把 SVS_客製化元件 的處理方式也拆給你，因為這個類別就是 Button 權限檢查 / 建立 HTML，而這部分在我們的 DLL 裡，對應到的就是 功能 4（GetFuncBtn）跟功能 5（CheckBtnEnabled）。
-
-⸻
-
-🔎 舊的 SVS_客製化元件 做了什麼
-	1.	Hi_Btn() → 用來產生一個 HTML <button>，會先檢查是否有按鈕權限，沒權限就不顯示。
-	•	舊程式：
-	•	查 AP_RFUNC 找到 BTNSEQ
-	•	再查 AP_USER_RFUNC_CONFIG 判斷群組有沒有該 BTNSEQ
-	•	完全就是功能 4 + 功能 5 的事。
-	2.	IfBtnAuth_Positive() → 權限判斷核心
-	•	如果群組有那個按鈕 → true，否則 false。
-	•	這段 SQL 也就是功能 5 CheckBtnEnabled。
-
-⸻
-
-✅ 新的做法（取代 SVS_客製化元件）
-	1.	按鈕清單 → 功能 4（GetFuncBtn）
-	•	可以一次拿到某個群組在某個頁面（FUNC_ID）底下有權限的按鈕清單（BtnID, BtnName, Onclick…）。
-	2.	單顆按鈕檢查 → 功能 5（CheckBtnEnabled）
-	•	傳入 SysID + GroupID + FuncID + BtnID，回傳 true/false。
-	•	用來取代舊的 IfBtnAuth_Positive()。
-
-⸻
-
-🔧 重構方式
-
-1. 重寫 Hi_Btn
-
-直接呼叫 DLL 功能 5 來判斷權限。
-
-public static MvcHtmlString Hi_Btn(
-    this HtmlHelper helper,
-    string FUNC_ID,
-    string GroupID,
-    string ButtonID,
-    string ButtonText,
-    string ButtonType,
-    object HtmlAttributes)
-{
-    // 呼叫 DLL 功能 5
-    var req = new POSFILE_APPLY.Models.M_AP.CheckBtnEnabledRequestModel
+    // 測試：功能1 取得使用者群組與名稱（輸入 AD）
+    public ActionResult Test_GetUserNameAndGroup()
     {
-        SysID = "HI_POSIMG",
-        GroupID = GroupID,
-        FuncID = FUNC_ID,
-        BtnID = ButtonID,
-        Environment = "TEST"
-    };
-
-    string jsonInput = JsonConvert.SerializeObject(req);
-    string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(jsonInput);
-    var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.CheckBtnEnabledResponseModel>(response);
-
-    if (res.Result) // ✅ 有權限才產生 button
-    {
-        TagBuilder tb = new TagBuilder("button");
-        if (!string.IsNullOrWhiteSpace(ButtonText)) tb.InnerHtml = ButtonText;
-        if (!string.IsNullOrWhiteSpace(ButtonID)) tb.Attributes.Add("id", ButtonID);
-        if (!string.IsNullOrWhiteSpace(ButtonType)) tb.Attributes.Add("type", ButtonType);
-
-        if (HtmlAttributes != null)
+        var req = new M_AP.GetUserNameAndGroupRequestModel
         {
-            IDictionary<string, string> htmlAttributes_Dictionary =
-                JsonConvert.DeserializeObject<Dictionary<string, string>>(
-                    JsonConvert.SerializeObject(HtmlAttributes));
-            foreach (var dict in htmlAttributes_Dictionary)
+            SysID = "HI_POSIMG",
+            UserAD = "3A001",   // 測試 AD
+            Environment = "TEST"
+        };
+
+        string jsonInput = JsonConvert.SerializeObject(req);
+        string response = new APACCESS().GetUserNameAndGroup(jsonInput);
+        var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+
+        return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+    }
+}
+
+Web 測試用 Model（POSFILE_APPLY.Models.M_AP）
+
+using System.Collections.Generic;
+
+namespace POSFILE_APPLY.Models
+{
+    public class M_AP
+    {
+        // 功能1：Request
+        public class GetUserNameAndGroupRequestModel
+        {
+            public string SysID { get; set; }
+            public string UserAD { get; set; }
+            public string Environment { get; set; }
+        }
+
+        // 功能1：Response
+        public class GetUserNameAndGroupResponseModel
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public ResultData Result { get; set; }
+
+            public class ResultData
             {
-                string dictKey = dict.Key.Contains("_") ? dict.Key.Replace("_", "-") : dict.Key;
-                if (tb.Attributes.ContainsKey(dictKey))
-                    tb.Attributes[dictKey] = dict.Value;
-                else
-                    tb.Attributes.Add(dictKey, dict.Value);
+                public string UserID { get; set; }               // 員編
+                public string UserName { get; set; }
+                public string GroupID { get; set; }
+                public string GroupName { get; set; }
+                public List<string> ParentGroupID { get; set; }
+                public List<string> ChildGroupID { get; set; }
+                public bool SensitiveDataAccess { get; set; }
+                public string OrganName { get; set; }
+                public string PostName { get; set; }
             }
         }
-        return MvcHtmlString.Create(tb.ToString());
-    }
-    else
-    {
-        return null; // ❌ 沒有權限就不顯示
     }
 }
 
 
 ⸻
 
-2. 取代 IfBtnAuth_Positive
+8) Hi_Btn 以後怎麼寫？（重點邏輯）
 
-這個不用自己查 SQL 了，直接用 DLL 功能 5。
+「要不要顯示某顆按鈕」＝「群組是否對那個頁面的那顆按鈕有權限」。
+直接呼叫 DLL 功能 5（CheckBtnEnabled）即可，不要自己打 SQL。
 
-private static bool IfBtnAuth_Positive(string FUNC_ID, string GroupID, string ButtonID)
+// 範例 HtmlHelper：@Html.Hi_Btn("POS1001", "001", "EDIT", "編輯", "button", new { @class="btn" })
+public static class CustomHtmlHelpers
 {
-    var req = new POSFILE_APPLY.Models.M_AP.CheckBtnEnabledRequestModel
+    public static MvcHtmlString Hi_Btn(this HtmlHelper helper,
+        string funcId, string groupId, string btnId,
+        string text, string type, object htmlAttributes)
     {
-        SysID = "HI_POSIMG",
-        GroupID = GroupID,
-        FuncID = FUNC_ID,
-        BtnID = ButtonID,
-        Environment = "TEST"
-    };
+        // 呼叫 DLL 功能5
+        var req = new POSFILE_APPLY.Models.M_AP.CheckBtnEnabledRequestModel
+        {
+            SysID = "HI_POSIMG",
+            GroupID = groupId,
+            FuncID = funcId,
+            BtnID = btnId,
+            Environment = "TEST"
+        };
 
-    string jsonInput = JsonConvert.SerializeObject(req);
-    string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(jsonInput);
-    var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.CheckBtnEnabledResponseModel>(response);
+        string json = JsonConvert.SerializeObject(req);
+        string raw  = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(json);
+        var res     = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.CheckBtnEnabledResponseModel>(raw);
 
-    return res.Result;
-}
+        if (!res.Result) return null; // 沒權限就不顯示
 
-
-⸻
-
-🎯 改完的好處
-	1.	Web 專案不再自己打 SQL → 全部交給 DLL 功能 4 & 5。
-	2.	邏輯集中 → 權限檢查統一由 DLL 控管。
-	3.	前端呼叫很乾淨：
-	•	要畫頁面上的按鈕 → 用 Hi_Btn()
-	•	要檢查單顆按鈕 → 用 CheckBtnEnabled
-
-⸻
-
-要不要我幫你把 POSFILE_APPLY.Models.M_AP 裡的功能 4 & 5 Request/Response Model 也寫好？這樣你 Web 可以直接呼叫，不用自己對 JSON。
-
-好，我逐一幫你釐清 👇
-
-⸻
-
-1️⃣ 為什麼「Get_資料面最高權限」不是功能 5
-
-你說得對，我再仔細比對你給的 SQL：
-
-SELECT COUNT(*) AS SUP_NUM 
-FROM MRSUPPER 
-WHERE SUP_ID=@Emp_NO 
-  AND CONVERT(CHAR(10),GETDATE(),102)>=EFF_DATE
-  AND CONVERT(CHAR(10),GETDATE(),102)<=END_DATE
-
-這個邏輯完全是「判斷某員工是不是在 MRSUPPER 表裡」，跟功能 5（按鈕權限檢查）無關。
-	•	功能 5：CheckBtnEnabled → 是檢查「某群組對某頁面某按鈕是否有權限」。
-	•	Get_資料面最高權限 → 是「資料層級權限判斷」，檢查某個員編是不是屬於特定 SUP 列表。
-
-👉 所以這個功能以後應該會另外做成 功能 7 或補充 API，不應該硬對應功能 5。
-
-⸻
-
-2️⃣ Hi_Btn 以後怎麼寫？邏輯是什麼？
-
-原本邏輯
-	1.	前端 Razor 想畫一個按鈕
-	2.	呼叫 @Html.Hi_Btn("FUNC_ID", "APG_NO", "單顆", "BtnID", "文字", "button", new { … })
-	3.	內部會先查 DB 判斷群組有沒有權限
-	•	有 → 回傳 <button>
-	•	沒有 → 回傳 null
-
-新邏輯（改用 DLL）
-	1.	呼叫 DLL 功能 5 CheckBtnEnabled
-	•	參數：SysID + GroupID + FuncID + BtnID
-	•	回傳：true / false
-	2.	如果 true → 產 <button>，否則回傳 null。
-
-public static MvcHtmlString Hi_Btn(
-    this HtmlHelper helper,
-    string funcId,
-    string groupId,
-    string buttonId,
-    string buttonText,
-    string buttonType,
-    object htmlAttributes)
-{
-    var req = new M_AP.CheckBtnEnabledRequestModel
-    {
-        SysID = "HI_POSIMG",
-        GroupID = groupId,
-        FuncID = funcId,
-        BtnID = buttonId,
-        Environment = "TEST"
-    };
-
-    string jsonInput = JsonConvert.SerializeObject(req);
-    string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().CheckBtnEnabled(jsonInput);
-    var res = JsonConvert.DeserializeObject<M_AP.CheckBtnEnabledResponseModel>(response);
-
-    if (res.Result)
-    {
-        TagBuilder tb = new TagBuilder("button");
-        tb.InnerHtml = buttonText;
-        tb.Attributes["id"] = buttonId;
-        tb.Attributes["type"] = buttonType;
+        // 有權限 → 產 button
+        var tb = new TagBuilder("button");
+        if (!string.IsNullOrWhiteSpace(text)) tb.InnerHtml = text;
+        if (!string.IsNullOrWhiteSpace(btnId)) tb.Attributes["id"] = btnId;
+        if (!string.IsNullOrWhiteSpace(type)) tb.Attributes["type"] = type;
 
         if (htmlAttributes != null)
         {
-            IDictionary<string, string> htmlAttributesDict =
-                JsonConvert.DeserializeObject<Dictionary<string, string>>(
-                    JsonConvert.SerializeObject(htmlAttributes));
-            foreach (var kv in htmlAttributesDict)
+            var dict = JsonConvert.DeserializeObject<Dictionary<string,string>>(
+                JsonConvert.SerializeObject(htmlAttributes));
+            foreach (var kv in dict)
             {
-                tb.Attributes[kv.Key.Replace("_", "-")] = kv.Value;
+                var key = kv.Key.Replace("_", "-");
+                tb.Attributes[key] = kv.Value;
             }
         }
         return MvcHtmlString.Create(tb.ToString());
     }
-    return null;
 }
 
-邏輯：
-	•	「是否要顯示這個按鈕」= 「群組是否對這個頁面這個按鈕有權限」。
-	•	不再查 DB，統一由 DLL 提供結果。
+✅ 這樣改完後，Button 權限完全交給 DLL 管，Web 不再打任何權限 SQL。
 
 ⸻
 
-3️⃣ 功能 1（GetUserNameAndGroup）完整實作
+9) 「Get_資料面最高權限」不是功能 5
 
-DLL 端 (APACCESS.cs)
+你的 SQL（MRSUPPER）是資料層級的權限，不是按鈕權限。
+→ 它應該是另一支 API（例如功能 7）：輸入 Emp_NO，回傳 true/false。
+目前先不動（等你確認要不要也放進 DLL）。
 
-// 功能1 取得使用者群組與名稱
-public string GetUserNameAndGroup(string requestJson)
+⸻
+
+10) 測試流程（一步步）
+	1.	建置 DLL（HI_APACCESS_DLL_FRAMEWORK）→ 確認 .dll 出現在 Web 專案 bin。
+	2.	Web 加上 APController.Test_GetUserNameAndGroup 與 Web 模型。
+	3.	瀏覽器打：/AP/Test_GetUserNameAndGroup
+	•	成功會看到：
+
 {
-    var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetUserNameAndGroupModel.GetUserNameAndGroupRequest>(requestJson);
-
-        FGetUserNameAndGroup func = new FGetUserNameAndGroup();
-        response = func.Execute(request.SysID, request.UserAD, request.Environment);
-    }
-    catch (Exception ex)
-    {
-        response.Result_code = Codes.SYSTEM_ERROR;
-        response.Msg = "系統錯誤：" + ex.Message;
-    }
-    return JsonConvert.SerializeObject(response);
+  "Result_code": "0000",
+  "Msg": "成功",
+  "Result": {
+    "UserID": "E12345",
+    "UserName": "王小明",
+    "GroupID": "001",
+    "GroupName": "管理員(資訊)",
+    "ParentGroupID": ["003","002"],
+    "ChildGroupID": ["004","005"],
+    "SensitiveDataAccess": false,
+    "OrganName": "程式課",
+    "PostName": "高級專員"
+  }
 }
 
 
-⸻
+	•	查不到 → 0001 查無權限
+	•	環境錯誤 → 1003 環境錯誤
 
-DLL 端 (Factory/FGetUserNameAndGroup.cs)
-
-internal class FGetUserNameAndGroup
-{
-    internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
-    {
-        var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
-        try
-        {
-            // 把 AD 轉成員編
-            string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
-
-            using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-            {
-                conn.Open();
-                string sql = @"
-                SELECT TOP 1
-                       B.U_ID AS UserID,
-                       B.U_NAME AS UserName,
-                       A.APG_NO AS GroupID,
-                       A.APG_NAME AS GroupName,
-                       A.PARENT_APG_NO,
-                       A.SENSITIVE_DATA_ACCESS,
-                       M.ORGAN_CAP AS OrganName,
-                       M.POST_NAME AS PostName
-                FROM [HI_TMMAIN].[dbo].[AP_GROUP] A
-                LEFT JOIN [AP_USER] B ON A.APG_NO = B.APG_NO
-                LEFT JOIN [DB_SHARE].[dbo].[M1EMP_MAST] M ON B.U_ID = M.EMP_NO
-                WHERE A.SYS_ID=@SysID AND B.U_ID=@EmpNo";
-
-                using (SqlCommand cmd = new SqlCommand(sql, conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@EmpNo", empNo);
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            response.Result_code = Codes.SUCCESS;
-                            response.Msg = "成功";
-                            response.Result = new GetUserNameAndGroupModel.ResultData
-                            {
-                                UserID = reader["UserID"].ToString(),
-                                UserName = reader["UserName"].ToString(),
-                                GroupID = reader["GroupID"].ToString(),
-                                GroupName = reader["GroupName"].ToString(),
-                                SensitiveDataAccess = Convert.ToBoolean(reader["SENSITIVE_DATA_ACCESS"]),
-                                OrganName = reader["OrganName"].ToString(),
-                                PostName = reader["PostName"].ToString(),
-                                ParentGroupID = new List<string> { reader["PARENT_APG_NO"].ToString() }
-                            };
-                        }
-                        else
-                        {
-                            response.Result_code = Codes.NO_PERMISSION;
-                            response.Msg = "查無權限";
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            response.Result_code = Codes.SYSTEM_ERROR;
-            response.Msg = "系統錯誤：" + ex.Message;
-        }
-        return response;
-    }
-}
-
+	4.	頁面按鈕（Hi_Btn）驗證：把你頁面的 @Html.Hi_Btn(...) 改成新版本，對照功能 5 的資料檔。
 
 ⸻
 
-Web 專案 Request/Response Model (M_AP.cs)
-
-public class GetUserNameAndGroupRequestModel
-{
-    public string SysID { get; set; }
-    public string UserAD { get; set; }
-    public string Environment { get; set; }
-}
-
-public class GetUserNameAndGroupResponseModel
-{
-    public string Result_code { get; set; }
-    public string Msg { get; set; }
-    public ResultData Result { get; set; }
-
-    public class ResultData
-    {
-        public string UserID { get; set; }
-        public string UserName { get; set; }
-        public string GroupID { get; set; }
-        public string GroupName { get; set; }
-        public List<string> ParentGroupID { get; set; }
-        public List<string> ChildGroupID { get; set; }
-        public bool SensitiveDataAccess { get; set; }
-        public string OrganName { get; set; }
-        public string PostName { get; set; }
-    }
-}
-
+最後的提醒
+	•	環境連線字串：FCommon.BuildConnectionString(environment) 要能存取你三個 DB，否則 FIdentity 查不到員編。
+	•	母群組：你說「母群組可以直接撈」→ 用 PARENT_APG_NO；若是逗號分隔，就 split。
+	•	子群組：用 LIKE 包逗號避免誤判（如果 PARENT_APG_NO 允許多值）。
 
 ⸻
 
-Web 專案測試 Controller
-
-public ActionResult Test_GetUserNameAndGroup()
-{
-    var req = new POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupRequestModel
-    {
-        SysID = "HI_POSIMG",
-        UserAD = "3A001",   // 測試用 AD
-        Environment = "TEST"
-    };
-
-    string jsonInput = JsonConvert.SerializeObject(req);
-    string response = new HI_APACCESS_DLL_FRAMEWORK.APACCESS().GetUserNameAndGroup(jsonInput);
-    var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupResponseModel>(response);
-
-    return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
-}
+如果你想，我也可以把 功能 2～5 全部再掃一遍，確認是否也需要 AD→員編（通常不需要，因為 2～5 都是 GroupID 驅動），並補上測試 Controller。
 
 
-⸻
-
-✅ 這樣功能 1 的 DLL + Factory + Web 測試就全套跑得起來。
-
-⸻
-
-要不要我接下來幫你把 Get_資料面最高權限 拉出來規劃成「功能 7」的 DLL API（跟 1~5 分開），這樣就不會誤會它跟功能 5 有關？
