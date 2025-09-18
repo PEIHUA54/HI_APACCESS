@@ -1,96 +1,95 @@
-   #region AD、員編、 基本資料
+我看清楚了 👍
+你現在的程式已經一半走新邏輯（呼叫 DLL 功能 1 GetUserNameAndGroup），但還保留了舊的 GetEmpNoByAD，所以才會混亂。
 
-   /// <summary>
-   /// 權限管理-取得員工AD
-   /// </summary>
-   /// <returns>AD</returns>
-   internal static string Get_員工AD()
-   {
-       string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+我幫你整理出來應該怎麼改：
 
-       if (String.IsNullOrEmpty(EMP_DOM_ID))
-       {
-           System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
-           string name = principal.Identity.Name;
-           string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
-           EMP_DOM_ID = adname[1].ToString().ToUpper();
-       }
+⸻
 
-       return EMP_DOM_ID;
-   }
+改法建議
 
-   /// <summary>
-   /// 權限管理-取得員工編號 (呼叫 DLL 功能1)
-   /// </summary>
-   /// <returns>員編</returns>
-   internal static string Get_員工編號(string ad = null)
-   {
-       var req = new M_AP.GetUserNameAndGroupRequestModel
-       {
-           SysID = "HI_POSIMG",
-           UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
-           Environment = "TEST",
-       };
+1. Get_員工AD → 保留不動
 
-       string json_input = JsonConvert.SerializeObject(req);
-       string response = new APACCESS().GetUserNameAndGroup(json_input);
-       var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+這個方法還是負責 從 HttpContext 取出目前登入的 AD，沒問題，保留。
 
-       return res?.Result?.UserID ?? req.UserAD; // 沒找到就回傳 AD
-   }
+⸻
 
-   /// <summary>
-   /// 取得員工基本資料 (呼叫 DLL 功能1)
-   /// </summary>
-   /// <param name="Emp_NO">員編</param>
-   /// <returns></returns>
-   internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
-   {
-       var req = new M_AP.GetUserNameAndGroupRequestModel
-       {
-           SysID = "HI_POSIMG",
-           UserAD = ad,
-           Environment = "TEST"
-       };
+2. Get_員工編號 → 改成只呼叫 DLL（功能 1）
 
-       string json_input = JsonConvert.SerializeObject(req);
-       string response = new APACCESS().GetUserNameAndGroup(json_input);
-       var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+既然 DLL 功能 1 已經可以把 AD → 員編，就不需要再透過舊 SQL 查。
 
-       if (res?.Result == null) return null;
+/// <summary>
+/// 權限管理-取得員工編號 (呼叫 DLL 功能1)
+/// </summary>
+/// <returns>員編</returns>
+internal static string Get_員工編號(string ad = null)
+{
+    var req = new M_AP.GetUserNameAndGroupRequestModel
+    {
+        SysID = "HI_POSIMG",
+        UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad, // 有傳參數就用參數，沒傳就抓 HttpContext
+        Environment = "TEST",
+    };
 
-       return new VM_Employee.VM_員工部門職稱
-       {
-           AD = req.UserAD,
-           EMP_NO = res.Result.UserID,
-           EMP_NAME = res.Result.UserName,
-           POST_NAME = res.Result.PostName,
-           ORGAN_CAP = res.Result.OrganName,
-           APG_NO = res.Result.GroupID
-       };
-   }
+    string json_input = JsonConvert.SerializeObject(req);
+    string response = new APACCESS().GetUserNameAndGroup(json_input);
+    var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
 
-   /// <summary>
-   /// AD轉換為員編
-   /// </summary>
-   /// <param name="AD">取得工作站登入AD</param>
-   /// <returns>員編</returns>
-   private static string GetEmpNoByAD(string AD)
-   {
-       string EMP_NO = null;
-       string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpNoByAD);
-       List<SqlParameter> paras = new List<SqlParameter>
-         {
-             new SqlParameter("@AD",AD)
-         };
-       DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
-       if (table.Rows.Count > 0)
-       {
-           EMP_NO = table.Rows[0]["EMP_ID"].ToString();
-       }
+    // 沒找到就回傳輸入的 AD，避免整個掛掉
+    return res?.Result?.UserID ?? req.UserAD;
+}
 
-       EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
-       return EMP_NO;
-   }
 
-   #endregion
+⸻
+
+3. Get_員工基本資料 → 也是走 DLL 功能 1
+
+這裡跟你寫的差不多，但建議把 PostNo 也帶進來（以防後面要用）。
+
+/// <summary>
+/// 取得員工基本資料 (呼叫 DLL 功能1)
+/// </summary>
+internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad = null)
+{
+    var req = new M_AP.GetUserNameAndGroupRequestModel
+    {
+        SysID = "HI_POSIMG",
+        UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
+        Environment = "TEST"
+    };
+
+    string json_input = JsonConvert.SerializeObject(req);
+    string response = new APACCESS().GetUserNameAndGroup(json_input);
+    var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
+
+    if (res?.Result == null) return null;
+
+    return new VM_Employee.VM_員工部門職稱
+    {
+        AD = req.UserAD,
+        EMP_NO = res.Result.UserID,
+        EMP_NAME = res.Result.UserName,
+        POST_NO = res.Result.PostNo,
+        POST_NAME = res.Result.PostName,
+        ORGAN_NO = res.Result.OrganNo,
+        ORGAN_CAP = res.Result.OrganName,
+        APG_NO = res.Result.GroupID
+    };
+}
+
+
+⸻
+
+4. 刪掉 GetEmpNoByAD
+
+因為 DLL 功能 1 已經取代它了，這個方法可以完全移除，避免之後有人誤用。
+
+⸻
+
+✅ 這樣改完：
+	•	你輸入 AD → DLL 幫你轉成員編。
+	•	沒輸入 AD → 自動抓 HttpContext 的登入帳號，再轉員編。
+	•	基本資料 → 全部透過 DLL 功能 1 取得，不會再走舊 SQL。
+
+⸻
+
+要不要我順便幫你整理一份 新的 SVS_員工基本資料.cs 完整檔案（去掉多餘的舊方法）？
