@@ -1,22 +1,21 @@
 using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient; // 若你的專案用 System.Data.SqlClient，換回去即可
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Data;
 
 namespace HI_APACCESS_DLL.Factory
 {
-    internal class FGetTree
+    internal class FGetUserNameAndGroup
     {
-        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        internal GetUserNameAndGroupModel.GetUserNameAndGroupResponse Execute(string sysId, string userAd, string environment)
         {
-            var response = new GetTreeModel.GetTreeResponse();
+            var response = new GetUserNameAndGroupModel.GetUserNameAndGroupResponse();
 
             try
             {
-                // 1. 環境檢查
+                // 1) 環境檢查
                 if (environment != "TEST" && environment != "PROD")
                 {
                     response.Result_code = Common.Codes.ENV_ERROR;
@@ -24,76 +23,146 @@ namespace HI_APACCESS_DLL.Factory
                     return response;
                 }
 
-                // 2. 系統授權檢查
-                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorizedSystems.Contains(sysId))
+                // 2) 系統授權檢查
+                var authorized = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorized.Contains(sysId))
                 {
                     response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
                     response.Msg = "系統未授權";
                     return response;
                 }
 
-                var resultList = new List<GetTreeModel.ResultData>();
+                // 3) AD → 員編
+                string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
+                if (string.IsNullOrWhiteSpace(empNo))
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "無法由 AD 取得員編";
+                    return response;
+                }
 
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
                     conn.Open();
 
-                    // 3. 查詢功能清單
-                    string sql = @"
-SELECT DISTINCT
-    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
-         WHEN a.PARENT_ID <> 'HOME' THEN '1'
-    END AS LEVEL,
-    a.FUNC_ID,
-    a.FUNC_NA,
-    a.VIEW_H AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
-    a.SORT_NO,
-    a.PARENT_ID
-FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
-LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
-    ON a.FUNC_ID = b.FUNC_ID
-WHERE a.SYS_ID=@SysID 
-  AND b.APG_NO=@GroupID
-ORDER BY a.SORT_NO
+                    // 4) 先把「使用者在此系統的主群組」取出來
+                    //    ★ 關鍵修正：AP_USER 與 AP_GROUP 連結要同時比 SYS_ID + APG_NO
+                    //    並且 WHERE 也要限制 B.SYS_ID=@SysID，避免抓到別的系統的群組
+                    string sqlMain = @"
+;WITH base AS (
+    SELECT TOP (1)
+        B.U_ID           AS UserID,
+        B.U_NAME         AS UserName,
+        B.APG_NO         AS GroupID
+    FROM [HI_TMMAIN].[dbo].[AP_USER] B
+    WHERE B.SYS_ID = @SysID
+      AND B.U_ID   = @EmpNo
+)
+SELECT
+    b.UserID,
+    b.UserName,
+    g.APG_NO                AS GroupID,
+    g.APG_NAME              AS GroupName,
+    g.PARENT_APG_NO         AS ParentGroupCSV,
+    g.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    m.ORGAN_CAP             AS OrganName,
+    m.POST_NAME             AS PostName
+FROM base b
+JOIN [HI_TMMAIN].[dbo].[AP_GROUP] g
+  ON g.SYS_ID = @SysID
+ AND g.APG_NO = b.GroupID
+LEFT JOIN [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] m
+  ON m.EMP_NO = b.UserID;
 ";
 
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    string userId = null;
+                    string userName = null;
+                    string groupId = null;
+                    string groupName = null;
+                    bool sensitive = false;
+                    string parentCsv = null;
+                    string organName = null;
+                    string postName = null;
+
+                    using (var cmd = new SqlCommand(sqlMain, conn))
                     {
                         cmd.Parameters.AddWithValue("@SysID", sysId);
-                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+                        cmd.Parameters.AddWithValue("@EmpNo", empNo);
 
-                        using (var reader = cmd.ExecuteReader())
+                        using (var r = cmd.ExecuteReader())
                         {
-                            while (reader.Read())
+                            if (!r.Read())
                             {
-                                resultList.Add(new GetTreeModel.ResultData
-                                {
-                                    FuncID = reader["FUNC_ID"].ToString(),
-                                    FuncName = reader["FUNC_NA"].ToString(),
-                                    Controller = reader["CONTROLLER"].ToString(),
-                                    Action = reader["ACTION"].ToString(),
-                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
-                                    ParentID = reader["PARENT_ID"].ToString(),
-                                    Level = reader["LEVEL"].ToString()
-                                });
+                                response.Result_code = Common.Codes.NO_PERMISSION;
+                                response.Msg = "查無權限";
+                                return response;
+                            }
+
+                            userId    = r["UserID"]?.ToString();
+                            userName  = r["UserName"]?.ToString();
+                            groupId   = r["GroupID"]?.ToString();
+                            groupName = r["GroupName"]?.ToString();
+                            parentCsv = r["ParentGroupCSV"]?.ToString();
+                            sensitive = r["SensitiveDataAccess"] != DBNull.Value && Convert.ToBoolean(r["SensitiveDataAccess"]);
+                            organName = r["OrganName"]?.ToString();
+                            postName  = r["PostName"]?.ToString();
+                        }
+                    }
+
+                    // 5) 依據 groupId 取「子群組」
+                    //    定義：同一個 SYS_ID 下，任何一筆 AP_GROUP 的 PARENT_APG_NO 中包含我的 groupId，即為我的子群組
+                    var childGroups = new List<string>();
+                    string sqlChild = @"
+SELECT G.APG_NO
+FROM [HI_TMMAIN].[dbo].[AP_GROUP] G
+WHERE G.SYS_ID = @SysID
+  AND EXISTS (
+        SELECT 1
+        FROM STRING_SPLIT(G.PARENT_APG_NO, ',') s
+        WHERE LTRIM(RTRIM(s.value)) = @BaseGroup
+  )
+";
+                    using (var cmd = new SqlCommand(sqlChild, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@BaseGroup", groupId ?? string.Empty);
+
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            while (r.Read())
+                            {
+                                childGroups.Add(r["APG_NO"].ToString());
                             }
                         }
                     }
-                }
 
-                // 4. 結果判斷
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
-                }
-                else
-                {
+                    // 6) 母群組：直接取 AP_GROUP.PARENT_APG_NO（它存的是 CSV，如 "003,002"...）
+                    //    轉成 List<string>
+                    var parentGroups = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(parentCsv))
+                    {
+                        foreach (var p in parentCsv.Split(','))
+                        {
+                            var v = p?.Trim();
+                            if (!string.IsNullOrWhiteSpace(v)) parentGroups.Add(v);
+                        }
+                    }
+
+                    // 7) 組 Response
                     response.Result_code = Common.Codes.SUCCESS;
                     response.Msg = "成功";
-                    response.Result = resultList;
+                    response.Result = new GetUserNameAndGroupModel.ResultData
+                    {
+                        UserID             = userId,
+                        UserName           = userName,
+                        GroupID            = groupId,
+                        GroupName          = groupName,
+                        ParentGroupID      = parentGroups,  // List<string>
+                        ChildGroupID       = childGroups,   // List<string>
+                        SensitiveDataAccess= sensitive,
+                        OrganName          = organName,
+                        PostName           = postName
+                    };
                 }
             }
             catch (Exception ex)
@@ -106,3 +175,4 @@ ORDER BY a.SORT_NO
         }
     }
 }
+
