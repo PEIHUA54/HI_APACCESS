@@ -1,265 +1,135 @@
-以下這兩個失敗 你看清楚原本做法 
-我現在問題是目錄沒有父目錄以及他的子目錄然後按連接去權限管理作業會說 HTTP Error 403.14 - Forbidden錯誤訊息
-還有HI_BTN 確定有權限也沒長BTN出來 
-1.
-        /// <summary>
-        /// 取得巢狀的權限樹 
-        /// </summary>
-        /// <param name="APG_NO"></param>
-        /// <returns></returns>
-        internal static List<VM_Employee.WebTree_Node> Get_Tree(string APG_NO)
-        {
-            string SQLStrings = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.Get_Tree);
+👌 我看懂你的狀況了，兩個問題要分開處理：
 
-            List<SqlParameter> Paras = new List<SqlParameter>()
-            {
-                new SqlParameter("@SYS_ID", "HI_POSIMG"),
-                new SqlParameter("@APG_NO",APG_NO),
-            };
-            DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
+⸻
 
-            //功能樹
-            List<VM_Employee.WebTree_Node> temp_webTrees = new List<VM_Employee.WebTree_Node>();
-            if (table != null && table.Rows.Count > 0)
-            {
-                temp_webTrees = SVS_DBmanager.ConvertToList<VM_Employee.WebTree_Node>(table);
-            }
+1️⃣ Get_Tree 沒有父子目錄，點連結會 403.14 Forbidden
 
-            // 第一層：PARENT_ID 為空、HOME 或主要父節點的項目
-            List<VM_Employee.WebTree_Node> webTrees = temp_webTrees.AsEnumerable()
-                .Where(x => x.NODE.Split('/').Length == 3).ToList();
+這是因為你現在的 DLL 改版流程 沒有模擬原本 SQL 的 NODE/階層邏輯。
+原本 SQL 用了 CONVERT(HIERARCHYID, NODE) 排序，確保父目錄在前、子目錄跟隨。
 
-            // 第二層：子功能項目
-            List<VM_Employee.WebTree_Node> webTrees_Nodes = temp_webTrees.AsEnumerable()
-                .Where(x => x.NODE.Split('/').Length == 4).ToList();
+但是你現在在程式裡只靠：
 
-            for (int i = 0; i < webTrees.Count(); i++)
-            {
-                var nodes = webTrees_Nodes.Where(x => x.PARENT_ID == webTrees[i].FUNC_ID);
-                foreach (VM_Employee.WebTree_Node node in nodes)
-                {
-                    webTrees[i].WebTree = webTrees[i].WebTree ?? new List<VM_Employee.WebTree_Node>();
-                    webTrees[i].WebTree.Add(node);
-                }
-            }
+.Where(x => x.NODE.Split('/').Length == 3) // 母目錄
+.Where(x => x.NODE.Split('/').Length == 4) // 子目錄
 
-            return webTrees.ToList();
-        }
+這樣會漏掉多層巢狀 (例如三層以上)，也沒有真正建立樹狀結構。
+因此點進去時 URL 會缺路徑或找不到，最後就報 403.14。
 
-SQL:
-                case QueryKey.Get_Tree:
-                    return @"
-;WITH O AS
-(SELECT B.FUNC_ID AS FUNC_ID, B.PARENT_ID AS PARENT_ID, B.[FUNC_NA], B.[SORT_NO],
-B.VIEW_H, B.VIEW_HB 
-, CASE WHEN ISNULL(B.PARENT_ID,'') ='' OR B.PARENT_ID='HOME'
-THEN '/' + CONVERT(VARCHAR(8), B.[SORT_NO]) +'/'
-ELSE '/' + CONVERT(VARCHAR(8), (SELECT ISNULL([SORT_NO], 0) FROM [AP_FUNC] WHERE FUNC_ID = B.PARENT_ID AND SYS_ID = B.SYS_ID)) +'/' + CONVERT(VARCHAR(8), B.[SORT_NO]) + '/'
-END AS 'NODE'
-FROM [AP_USER_FUNC_CONFIG] A
-INNER JOIN [AP_FUNC] B ON A.SYS_ID = B.SYS_ID AND A.FUNC_ID = B.FUNC_ID
-WHERE A.SYS_ID = @SYS_ID --hi_posimg
-AND B.[IS_SHOW] = 'Y'
-AND A.APG_NO = @APG_NO
---AND (B.FUNC_ID = 'HOME' OR B.PARENT_ID = 'HOME')  
-)
-SELECT FUNC_ID, PARENT_ID, [FUNC_NA], [SORT_NO], NODE, VIEW_H, VIEW_HB
-FROM O
-WHERE FUNC_ID NOT LIKE '%TEST%'
-ORDER BY CONVERT(HIERARCHYID, NODE);
-";
+⸻
 
-MODEL:
+✅ 解法：用 ParentID 建立樹狀 + SortNo 排序
 
-namespace POSFILE_APPLY.ViewModels
+我幫你整理過程式，直接用 Dictionary 建樹狀：
+
+internal static List<VM_Employee.WebTree_Node> Get_Tree(string sysId, string groupId, string environment = "TEST")
 {
-    public class VM_Employee
+    var req = new M_AP.GetTreeRequestModel
     {
-        public class VM_員工部門職稱
+        SysID = sysId,
+        GroupID = groupId,
+        Environment = environment
+    };
+
+    string json_input = JsonConvert.SerializeObject(req);
+    string response = new APACCESS().GetTree(json_input);
+    var res = JsonConvert.DeserializeObject<M_AP.GetTreeResponseModel>(response);
+
+    if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
+
+    // 轉換
+    var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
+    {
+        FUNC_ID = x.FuncID,
+        FUNC_NA = x.FuncName,
+        PARENT_ID = x.ParentID,
+        VIEW_H = x.Controller,
+        VIEW_HB = x.Action,
+        SORT_NO = x.Sort.ToString(),
+        WebTree = new List<VM_Employee.WebTree_Node>()
+    }).ToList();
+
+    // 建立字典
+    var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
+
+    // 樹狀化
+    List<VM_Employee.WebTree_Node> roots = new List<VM_Employee.WebTree_Node>();
+    foreach (var node in allNodes)
+    {
+        if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
         {
-            [員編驗證]
-            [群組驗證]
-            [DisplayName("登入AD")]
-            public string AD { get; set; }
-
-            [DisplayName("員編")]
-            public string EMP_NO { get; set; }
-
-            [DisplayName("姓名")]
-            public string EMP_NAME { get; set; }
-
-            [DisplayName("職稱代碼")]
-            public string POST_NO { get; set; }
-
-            [DisplayName("職稱名稱")]
-            public string POST_NAME { get; set; }
-
-            [DisplayName("部門代號")]
-            public string ORGAN_NO { get; set; }
-
-            [DisplayName("部門名稱")]
-            public string ORGAN_CAP { get; set; }
-
-            [DisplayName("群組編號")]
-            public string APG_NO { get; set; }
-
-
+            roots.Add(node);
         }
-
-        public class WebTree_Node
+        else if (dict.ContainsKey(node.PARENT_ID))
         {
-            public string TARGET { get; set; }
-            public string FUNC_ID { get; set; }
-            public string VIEW_H { get; set; }
-            public string VIEW_HB { get; set; }
-            public string PARENT_ID { get; set; }
-            public string FUNC_NA { get; set; }
-            public string SORT_NO { get; set; }
-            public string NODE { get; set; }
-            public List<WebTree_Node> WebTree { get; set; }
+            dict[node.PARENT_ID].WebTree.Add(node);
         }
-
     }
 
+    // 排序 (遞迴)
+    SortTree(roots);
+
+    return roots;
 }
 
-2.
-      /// <summary>
-      /// 傳回"客製化權限"的 HTML BUTTON 項目(Tag/null)，以及由指定運算式表示之屬性的屬性名稱
-      /// </summary>
-      /// <param name="helper"> 此方法擴充的 HTML Helper 執行個體。</param>
-      /// <param name="FUNC_ID"> View名稱(對應舊的FUNC_ID)。 </param>
-      /// <param name="APG_NO"> 使用者群組(對應舊的APG_NO)。 </param>
-      /// <param name="Type"> 權限種類。All/單個Button </param>
-      /// <param name="ButtonID"> 按鈕ID。 </param>
-      /// <param name="ButtonText"> 按鈕文字。 </param>
-      /// <param name="ButtonType"> 按鈕種類。例：submit、button… </param>
-      /// <param name="HtmlAttributes"> Button 的任何Html屬性，例：style、class、event… </param>
-      /// <returns> Tag 或 null </returns>
-      public static MvcHtmlString Hi_Btn(this HtmlHelper helper, string FUNC_ID, string APG_NO, string Type, string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
-      {
-          TagBuilder tb = ButtonTagBuilder(ButtonText, ButtonID, ButtonType, HtmlAttributes);
-          string ret = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type) ? tb.ToString() : null;
-          return MvcHtmlString.Create(ret);
-      }
-    /// <summary>
-    /// Button TagBuilder 共用 function
-    /// </summary>
-    /// <param name="ButtonText"> 顯示的文字 </param>
-    /// <param name="ButtonID"> ID </param>
-    /// <param name="ButtonType"> 種類，例：submit、button.. </param>
-    /// <param name="HtmlAttributes"> 任何Html屬性，例：style、class、event… </param>
-    /// <returns>TagBuilder</returns>
-    private static TagBuilder ButtonTagBuilder(string ButtonText, string ButtonID, string ButtonType, object HtmlAttributes)
+private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
+{
+    nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
+    foreach (var node in nodes)
     {
-        TagBuilder tb = new TagBuilder("button");
-        try
+        if (node.WebTree != null && node.WebTree.Count > 0)
         {
-            if (!string.IsNullOrWhiteSpace(ButtonText)) tb.InnerHtml = ButtonText;
-            if (!string.IsNullOrWhiteSpace(ButtonID)) tb.Attributes.Add("id", ButtonID);
-            if (!string.IsNullOrWhiteSpace(ButtonType)) tb.Attributes.Add("type", ButtonType);
-
-            if (HtmlAttributes != null)
-            {
-                IDictionary<string, string> htmlAttributes_Dictionary = JsonConvert.DeserializeObject<Dictionary<string, string>>(JsonConvert.SerializeObject(HtmlAttributes));
-                foreach (var dict in htmlAttributes_Dictionary)
-                {
-                    string dict_Key = dict.Key.Contains("_") ? dict.Key.Replace("_", "-") : dict.Key;
-
-                    if (tb.Attributes.ContainsKey(dict_Key))
-                    {
-                        tb.Attributes[dict_Key] = dict.Value;
-                    }
-                    else
-                    {
-                        tb.Attributes.Add(dict_Key, dict.Value);
-                    }
-                }
-            }
+            SortTree(node.WebTree);
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex.Message);
-        }
-        return tb;
     }
-  /// <summary>
-  /// 正向法權限檢查 - 檢查群組是否有特定按鈕權限
-  /// </summary>
-  /// <param name="FUNC_ID">頁面功能ID</param>
-  /// <param name="APG_NO">群組編號</param>
-  /// <param name="ButtonID">按鈕ID</param>
-  /// <param name="Type">檢查類型</param>
-  /// <returns>是否有權限</returns>
-  private static bool IfBtnAuth_Positive(string FUNC_ID, string APG_NO, string ButtonID, string Type)
-  {
-      try
-      {
-          // 先查詢該按鈕在AP_RFUNC中的BTNSEQ
-          string getBtnSeqSQL = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.IfBtnAuth_Positive_BTNSEQ);
+}
 
-          List<SqlParameter> getBtnSeqParams = new List<SqlParameter>()
-          {
-              new SqlParameter("@SYS_ID", "HI_POSIMG"),
-              new SqlParameter("@FUNC_ID", FUNC_ID),
-              new SqlParameter("@BTNID", ButtonID)
-          };
+👉 這樣就可以還原 SQL 的效果：
+	•	母目錄在前
+	•	子目錄跟在母目錄下面
+	•	各層都有排序
 
-          DataTable btnSeqTable = new SVS_DBmanager().QueryBySQL(getBtnSeqSQL, getBtnSeqParams);
+⸻
 
-          if (btnSeqTable == null || btnSeqTable.Rows.Count == 0)
-          {
-              // 如果按鈕定義不存在，預設無權限
-              return false;
-          }
+2️⃣ HI_BTN 有權限卻不顯示按鈕
 
-          string btnSeq = btnSeqTable.Rows[0]["BTNSEQ"].ToString();
+我看你的 Hi_Btn：
 
-          // 查詢群組是否有該按鈕權限
-          string checkPermissionSQL = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.IfBtnAuth_Positive_Permission);
+string ret = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type) ? tb.ToString() : null;
+return MvcHtmlString.Create(ret);
 
-          List<SqlParameter> checkParams = new List<SqlParameter>()
-          {
-              new SqlParameter("@SYS_ID", "HI_POSIMG"),
-              new SqlParameter("@FUNC_ID", FUNC_ID),
-              new SqlParameter("@BTNSEQ", btnSeq),
-              new SqlParameter("@APG_NO", APG_NO)
-          };
+問題在於：
+	•	當 ret = null 時，MvcHtmlString.Create(null) 會輸出字串 "null"，不是空 → HTML 不會顯示。
+	•	而且你的 Type 參數在判斷裡根本沒用到，永遠走 正向法。
 
-          DataTable permissionTable = new SVS_DBmanager().QueryBySQL(checkPermissionSQL, checkParams);
+⸻
 
-          if (permissionTable != null && permissionTable.Rows.Count > 0)
-          {
-              int permissionCount = Convert.ToInt32(permissionTable.Rows[0]["PermissionCount"]);
+✅ 解法：補強判斷
 
-              // 正向法：有記錄就表示有權限
-              return permissionCount > 0;
-          }
+public static MvcHtmlString Hi_Btn(this HtmlHelper helper,
+    string FUNC_ID, string APG_NO, string Type,
+    string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
+{
+    TagBuilder tb = ButtonTagBuilder(ButtonText, ButtonID, ButtonType, HtmlAttributes);
+    bool hasPermission = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type);
 
-          // 預設無權限
-          return false;
-      }
-      catch (Exception ex)
-      {
-          Console.WriteLine($"權限檢查發生錯誤: {ex.Message}");
-          // 發生錯誤時預設無權限，確保安全性
-          return false;
-      }
-  }
+    if (!hasPermission)
+        return MvcHtmlString.Empty; // ✅ 改這裡，避免輸出 "null"
 
-SQL:
-                case QueryKey.IfBtnAuth_Positive_BTNSEQ:
-                    return @"
-SELECT BTNSEQ
-FROM[HI_TMMAIN].[dbo].[AP_RFUNC]
-WHERE SYS_ID = @SYS_ID
-AND FUNC_ID = @FUNC_ID
-AND BTNID = @BTNID";
-                case QueryKey.IfBtnAuth_Positive_Permission:
-                    return @"
-SELECT COUNT(*) as PermissionCount
-FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] 
-WHERE SYS_ID = @SYS_ID 
-AND FUNC_ID = @FUNC_ID 
-AND BTNSEQ = @BTNSEQ 
-AND APG_NO = @APG_NO";
+    return MvcHtmlString.Create(tb.ToString());
+}
+
+
+⸻
+
+🔎 建議測試方向
+	1.	Get_Tree
+	•	把 AP_FUNC 的父子層級 (FUNC_ID / PARENT_ID) 印出來，確認是否正確掛上去。
+	•	確認 roots 有 HOME → child → subchild。
+	2.	Hi_Btn
+	•	先直接 Console.WriteLine($"FUNC={FUNC_ID}, APG={APG_NO}, Button={ButtonID}, result={hasPermission}")
+	•	確認 SQL 查詢是否真的有回 COUNT > 0。
+	•	若回傳有資料，按鈕應該會正常顯示。
+
+⸻
+
+要不要我幫你寫一個 Web 測試頁，同時把 權限樹 + 按鈕 渲染出來，這樣你一進去就能看結果？
