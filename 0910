@@ -1,147 +1,524 @@
-👌 我來幫你拆解一下，你現在的程式其實已經能驗證 JWT token，但它有幾個問題：
-	1.	目前做法：
-	•	如果沒有 token → 回傳 401 Missing token
-	•	如果 token 過期 / 驗證失敗 → 回傳 401 Invalid or expired token
-	•	驗證成功 → 把 ClaimsPrincipal 設到 HttpContext.User
+1.我要把這個方法移到hi_apaccess 這樣他接受到ad去幫我轉換員編後再去看是功能1~5去操作
+例如功能1 接收到是userad 傳回去的是UserID 他去資料庫操作應該拿員編去執行
 
-👉 問題是：這樣寫只會給 HTTP 狀態碼 (401)，瀏覽器畫面不會自動顯示「TOKEN 已失效」對話框。
+/// <summary>
+  /// 權限管理-取得員工編號
+  /// </summary>
+  /// <returns>員編</returns>
+  internal static string Get_員工編號(string AD = null)
+  {
+      string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
+      //AD轉換為員編
+      EMP_NO = GetEmpNoByAD(EMP_NO);
+      return EMP_NO;
+  }
 
-⸻
+  /// <summary>
+  /// AD轉換為員編
+  /// </summary>
+  /// <param name="AD">取得工作站登入AD</param>
+  /// <returns>員編</returns>
+  private static string GetEmpNoByAD(string AD)
+  {
+      string EMP_NO = null;
+      string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpNoByAD);
+      List<SqlParameter> paras = new List<SqlParameter>
+      {
+          new SqlParameter("@AD",AD)
+      };
+      DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
+      if (table.Rows.Count > 0)
+      {
+          EMP_NO = table.Rows[0]["EMP_ID"].ToString();
+      }
 
-✅ 你要的效果
-	•	如果 token 過期 / 驗證失敗 → 頁面直接跳出 alert(TOKEN 已失效)，然後導回登入頁（或首頁）。
+      EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
+      return EMP_NO;
+  }
 
-⸻
+sql:
+                case QueryKey.GetEmpNoByAD:
+                    return @"
+SELECT EMP_ID FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] 
+WHERE EMP_ID!= EMP_DOM_ID
+AND LTRIM(RTRIM(EMP_DOM_ID)) != '' 
+AND EMP_ID IN (SELECT EMP_NO AS 'EMP_ID' FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE END_DT IS NULL) 
+AND EMP_DOM_ID = @AD ";
 
-🔧 修改方向
 
-Step 1：改 TokenAuthorizeAttribute
 
-把現在的 HttpStatusCodeResult 換成 ContentResult，回傳一段 JavaScript。
-
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using System;
-using System.Web.Mvc;
-
-namespace HI_APACCESS.Service.Validation
+然後第2部分
+以下是SVS_員工基本資料以前都用這樣去取資料
+現在不是有功能1~5 你看看要怎麼去替換 用dll呼叫即可
+namespace POSFILE_APPLY.Service
 {
-    public class TokenAuthorizeAttribute : ActionFilterAttribute
+    public class SVS_員工基本資料
     {
-        private static readonly string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+        #region AD、員編
 
-        public override void OnActionExecuting(ActionExecutingContext filterContext)
+        /// <summary>
+        /// 權限管理-取得員工AD
+        /// </summary>
+        /// <returns>AD</returns>
+        internal static string Get_員工AD()
         {
-            var token = filterContext.HttpContext.Request.QueryString["token"];
-            if (string.IsNullOrEmpty(token))
+            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+
+            if (String.IsNullOrEmpty(EMP_DOM_ID))
             {
-                RedirectWithError(filterContext, "缺少 Token，請重新登入");
-                return;
+                System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
+                string name = principal.Identity.Name;
+                string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+                EMP_DOM_ID = adname[1].ToString().ToUpper();
             }
 
-            var principal = ValidateToken(token);
-            if (principal == null)
-            {
-                RedirectWithError(filterContext, "TOKEN 已失效，請重新登入");
-                return;
-            }
-
-            filterContext.HttpContext.User = principal;
-            base.OnActionExecuting(filterContext);
+            return EMP_DOM_ID;
         }
 
-        private void RedirectWithError(ActionExecutingContext filterContext, string message)
+        /// <summary>
+        /// 權限管理-取得員工編號
+        /// </summary>
+        /// <returns>員編</returns>
+        internal static string Get_員工編號(string AD = null)
         {
-            filterContext.Result = new ContentResult
+            //舉例:
+            //var req = new POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupRequestModel
+            //{
+            //    SysID = "HI_POSIMG",
+            //    UserAD = "3B750",   //SVS_員工基本資料.Get_員工AD(),
+            //    Environment = "TEST"
+            //};
+
+            //string json_input = JsonConvert.SerializeObject(req);
+            //string response = new APACCESS().GetUserNameAndGroup(json_input);
+            //var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUserNameAndGroupResponseModel>(response);
+            //string EMP_NO = res.USERID;
+
+            string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
+            //AD轉換為員編
+            EMP_NO = GetEmpNoByAD(EMP_NO);
+            return EMP_NO;
+        }
+
+        /// <summary>
+        /// AD轉換為員編
+        /// </summary>
+        /// <param name="AD">取得工作站登入AD</param>
+        /// <returns>員編</returns>
+        private static string GetEmpNoByAD(string AD)
+        {
+            string EMP_NO = null;
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpNoByAD);
+            List<SqlParameter> paras = new List<SqlParameter>
             {
-                Content = $@"<script>
-                                alert('{message}');
-                                window.location.href='/Home/Login';
-                             </script>",
-                ContentType = "text/html"
+                new SqlParameter("@AD",AD)
             };
+            DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
+            if (table.Rows.Count > 0)
+            {
+                EMP_NO = table.Rows[0]["EMP_ID"].ToString();
+            }
+
+            EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
+            return EMP_NO;
         }
 
-        public static ClaimsPrincipal ValidateToken(string token)
+        #endregion AD、員編
+
+        /// <summary>
+        /// 取得員工基本資料
+        /// </summary>
+        /// <param name="Emp_NO">員編</param>
+        /// <returns></returns>
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string Emp_NO)
         {
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(SecretKey);
+            string SQLStrings = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.Get_員工基本資料);
 
-            var parameters = new TokenValidationParameters
+            List<SqlParameter> Paras = new List<SqlParameter>()
             {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidIssuer = "hi_ap_access_dll",
-                ValidAudience = "hi_ap_access_web",
-                ValidateLifetime = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ClockSkew = TimeSpan.Zero
+                new SqlParameter("@SYS_ID","HI_POSIMG"),
+                new SqlParameter("@EMP_NO",Get_員工編號(Emp_NO)),
             };
+            DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
 
-            try
+            //員編姓名
+            List<VM_Employee.VM_員工部門職稱> list_所有員編姓名 = new List<VM_Employee.VM_員工部門職稱>();
+            if (table != null && table.Rows.Count > 0)
             {
-                var principal = tokenHandler.ValidateToken(token, parameters, out SecurityToken validatedToken);
-                return principal;
+                list_所有員編姓名 = SVS_DBmanager.ConvertToList<VM_Employee.VM_員工部門職稱>(table);
             }
-            catch
-            {
-                return null;
-            }
+            return list_所有員編姓名.AsEnumerable().FirstOrDefault();
         }
+
+        /// <summary>
+        /// 取得巢狀的權限樹
+        /// </summary>
+        /// <param name="APG_NO"></param>
+        /// <returns></returns>
+        internal static List<VM_Employee.WebTree_Node> Get_Tree(string APG_NO)
+        {
+            string SQLStrings = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.Get_Tree);
+
+            List<SqlParameter> Paras = new List<SqlParameter>()
+            {
+                new SqlParameter("@SYS_ID", "HI_POSIMG"),
+                new SqlParameter("@APG_NO",APG_NO),
+            };
+            DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
+
+            //功能樹
+            List<VM_Employee.WebTree_Node> temp_webTrees = new List<VM_Employee.WebTree_Node>();
+            if (table != null && table.Rows.Count > 0)
+            {
+                temp_webTrees = SVS_DBmanager.ConvertToList<VM_Employee.WebTree_Node>(table);
+            }
+
+            // 第一層：PARENT_ID 為空、HOME 或主要父節點的項目 (如 posimg1)
+            List<VM_Employee.WebTree_Node> webTrees = temp_webTrees.AsEnumerable()
+                .Where(x => x.NODE.Split('/').Length == 3).ToList();
+
+            // 第二層：子功能項目 (如 posimg1001)
+            List<VM_Employee.WebTree_Node> webTrees_Nodes = temp_webTrees.AsEnumerable()
+                .Where(x => x.NODE.Split('/').Length == 4).ToList();
+
+            for (int i = 0; i < webTrees.Count(); i++)
+            {
+                var nodes = webTrees_Nodes.Where(x => x.PARENT_ID == webTrees[i].FUNC_ID);
+                foreach (VM_Employee.WebTree_Node node in nodes)
+                {
+                    webTrees[i].WebTree = webTrees[i].WebTree ?? new List<VM_Employee.WebTree_Node>();
+                    webTrees[i].WebTree.Add(node);
+                }
+            }
+
+            return webTrees.ToList();
+        }
+
+        /// <summary>
+        /// 取得資料面最高權限， 用於 H8PROM_000、 H8QUERY
+        /// </summary>
+        /// <param name="Emp_NO"></param>
+        /// <returns></returns>
+        internal static bool Get_資料面最高權限(string Emp_NO)
+        {
+            string SQLStrings = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.Get_資料面最高權限);
+
+            List<SqlParameter> Paras = new List<SqlParameter>()
+            {
+                new SqlParameter("@Emp_NO", Emp_NO),
+            };
+            DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
+
+            if (table != null && table.Rows.Count > 0
+                && Convert.ToInt16(table.Rows[0]["SUP_NUM"].ToString()) > 0)
+            {
+                return false;
+            }
+            return true;
+        }
+
+
     }
 }
 
-
-⸻
-
-Step 2：在 HomeController 使用
-
-[HttpGet]
-[TokenAuthorize]
-public ActionResult TokenEntry()
+namespace POSFILE_APPLY.Service
 {
-    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+    public static class SVS_客製化元件
+    {
 
-    Session["CurrentSystemId"] = systemId;
-    Session["CurrentEmpNo"] = empNo;
+    #region 按鈕權限 - 正向法實作
 
-    return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
+    /// <summary>
+    /// 傳回"客製化權限"的 HTML BUTTON 項目(Tag/null)，以及由指定運算式表示之屬性的屬性名稱
+    /// </summary>
+    /// <param name="helper"> 此方法擴充的 HTML Helper 執行個體。</param>
+    /// <param name="FUNC_ID"> View名稱(對應舊的FUNC_ID)。 </param>
+    /// <param name="APG_NO"> 使用者群組(對應舊的APG_NO)。 </param>
+    /// <param name="Type"> 權限種類。All/單個Button </param>
+    /// <param name="ButtonID"> 按鈕ID。 </param>
+    /// <param name="ButtonText"> 按鈕文字。 </param>
+    /// <param name="ButtonType"> 按鈕種類。例：submit、button… </param>
+    /// <param name="HtmlAttributes"> Button 的任何Html屬性，例：style、class、event… </param>
+    /// <returns> Tag 或 null </returns>
+    public static MvcHtmlString Hi_Btn(this HtmlHelper helper, string FUNC_ID, string APG_NO, string Type, string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
+    {
+        TagBuilder tb = ButtonTagBuilder(ButtonText, ButtonID, ButtonType, HtmlAttributes);
+        string ret = IfBtnAuth_Positive(FUNC_ID, APG_NO, ButtonID, Type) ? tb.ToString() : null;
+        return MvcHtmlString.Create(ret);
+    }
+
+    /// <summary>
+    /// Button TagBuilder 共用 function
+    /// </summary>
+    /// <param name="ButtonText"> 顯示的文字 </param>
+    /// <param name="ButtonID"> ID </param>
+    /// <param name="ButtonType"> 種類，例：submit、button.. </param>
+    /// <param name="HtmlAttributes"> 任何Html屬性，例：style、class、event… </param>
+    /// <returns>TagBuilder</returns>
+    private static TagBuilder ButtonTagBuilder(string ButtonText, string ButtonID, string ButtonType, object HtmlAttributes)
+    {
+        TagBuilder tb = new TagBuilder("button");
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(ButtonText)) tb.InnerHtml = ButtonText;
+            if (!string.IsNullOrWhiteSpace(ButtonID)) tb.Attributes.Add("id", ButtonID);
+            if (!string.IsNullOrWhiteSpace(ButtonType)) tb.Attributes.Add("type", ButtonType);
+
+            if (HtmlAttributes != null)
+            {
+                IDictionary<string, string> htmlAttributes_Dictionary = JsonConvert.DeserializeObject<Dictionary<string, string>>(JsonConvert.SerializeObject(HtmlAttributes));
+                foreach (var dict in htmlAttributes_Dictionary)
+                {
+                    string dict_Key = dict.Key.Contains("_") ? dict.Key.Replace("_", "-") : dict.Key;
+
+                    if (tb.Attributes.ContainsKey(dict_Key))
+                    {
+                        tb.Attributes[dict_Key] = dict.Value;
+                    }
+                    else
+                    {
+                        tb.Attributes.Add(dict_Key, dict.Value);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+        return tb;
+    }
+
+    /// <summary>
+    /// 正向法權限檢查 - 檢查群組是否有特定按鈕權限
+    /// </summary>
+    /// <param name="FUNC_ID">頁面功能ID</param>
+    /// <param name="APG_NO">群組編號</param>
+    /// <param name="ButtonID">按鈕ID</param>
+    /// <param name="Type">檢查類型</param>
+    /// <returns>是否有權限</returns>
+    private static bool IfBtnAuth_Positive(string FUNC_ID, string APG_NO, string ButtonID, string Type)
+    {
+        try
+        {
+            // 先查詢該按鈕在AP_RFUNC中的BTNSEQ
+            string getBtnSeqSQL = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.IfBtnAuth_Positive_BTNSEQ);
+
+            List<SqlParameter> getBtnSeqParams = new List<SqlParameter>()
+            {
+                new SqlParameter("@SYS_ID", "HI_POSIMG"),
+                new SqlParameter("@FUNC_ID", FUNC_ID),
+                new SqlParameter("@BTNID", ButtonID)
+            };
+
+            DataTable btnSeqTable = new SVS_DBmanager().QueryBySQL(getBtnSeqSQL, getBtnSeqParams);
+
+            if (btnSeqTable == null || btnSeqTable.Rows.Count == 0)
+            {
+                // 如果按鈕定義不存在，預設無權限
+                return false;
+            }
+
+            string btnSeq = btnSeqTable.Rows[0]["BTNSEQ"].ToString();
+
+            // 查詢群組是否有該按鈕權限
+            string checkPermissionSQL = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.IfBtnAuth_Positive_Permission);
+
+            List<SqlParameter> checkParams = new List<SqlParameter>()
+            {
+                new SqlParameter("@SYS_ID", "HI_POSIMG"),
+                new SqlParameter("@FUNC_ID", FUNC_ID),
+                new SqlParameter("@BTNSEQ", btnSeq),
+                new SqlParameter("@APG_NO", APG_NO)
+            };
+
+            DataTable permissionTable = new SVS_DBmanager().QueryBySQL(checkPermissionSQL, checkParams);
+
+            if (permissionTable != null && permissionTable.Rows.Count > 0)
+            {
+                int permissionCount = Convert.ToInt32(permissionTable.Rows[0]["PermissionCount"]);
+
+                // 正向法：有記錄就表示有權限
+                return permissionCount > 0;
+            }
+
+            // 預設無權限
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"權限檢查發生錯誤: {ex.Message}");
+            // 發生錯誤時預設無權限，確保安全性
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region 按鈕權限
+
+    /// <summary>
+    /// 傳回"客製化權限"的 HTML BUTTON 項目(Tag/null)，以及由指定運算式表示之屬性的屬性名稱
+    /// </summary>
+    /// <param name="helper"> 此方法擴充的 HTML Helper 執行個體。</param>
+    /// <param name="FUNC_ID"> View名稱。 </param>
+    /// <param name="APG_NO"> 使用者群組。 </param>
+    /// <param name="Type"> 權限種類。All/單個Button </param>
+    /// <param name="ButtonID"> 按鈕ID。 </param>
+    /// <param name="ButtonText"> 按鈕文字。 </param>
+    /// <param name="ButtonType"> 按鈕種類。例：submit、button... </param>
+    /// <param name="HtmlAttributes"> Button 的任何Html屬性，例：style、class、event... </param>
+    /// <returns> Tag 或 null </returns>
+    //public static MvcHtmlString Hi_Btn_old(this HtmlHelper helper, string FUNC_ID, string APG_NO, string Type, string ButtonID, string ButtonText, string ButtonType, object HtmlAttributes)
+    //{
+    //    TagBuilder tb = ButtonTagBuilder_exist(ButtonText, ButtonID, ButtonType, HtmlAttributes);
+    //    string ret = IfBtnAuth(FUNC_ID, APG_NO, ButtonID, Type) ? tb.ToString() : null;
+    //    return MvcHtmlString.Create(ret);
+    //}
+
+    /// <summary>
+    /// Button TagBuilder 共用 function
+    /// </summary>
+    /// <param name="ButtonText"> 顯示的文字 </param>
+    /// <param name="ButtonID"> ID </param>
+    /// <param name="ButtonType"> 種類，例：submit、button.. </param>
+    /// <param name="HtmlAttributes"> 任何Html屬性，例：style、class、event... </param>
+    /// <returns>TagBuilder</returns>
+    private static TagBuilder ButtonTagBuilder_exist(string ButtonText, string ButtonID, string ButtonType, object HtmlAttributes)
+    {
+        TagBuilder tb = new TagBuilder("button");
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(ButtonText)) tb.InnerHtml = ButtonText;
+            if (!string.IsNullOrWhiteSpace(ButtonID)) tb.Attributes.Add("id", ButtonID);
+            if (!string.IsNullOrWhiteSpace(ButtonType)) tb.Attributes.Add("type", ButtonType);
+
+            if (HtmlAttributes != null)
+            {
+                IDictionary<string, string> htmlAttributes_Dictionary = JsonConvert.DeserializeObject<Dictionary<string, string>>(JsonConvert.SerializeObject(HtmlAttributes));
+                foreach (var dict in htmlAttributes_Dictionary)
+                {
+                    string dict_Key = dict.Key.Contains("_") ? dict.Key.Replace("_", "-") : dict.Key;
+
+                    if (tb.Attributes.ContainsKey(dict_Key))
+                    {
+                        tb.Attributes[dict_Key] = dict.Value;
+                    }
+                    else
+                    {
+                        tb.Attributes.Add(dict_Key, dict.Value);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+        return tb;
+    }
+
+    ////暫且拿掉
+    //private static bool IfBtnAuth(string FUNC_ID, string APG_NO, string ButtonID, string Type)
+    //{
+    //    string SQLStrings = "SELECT [BTNSEQ] FROM [AP_USER_RFUNC_CONFIG] WHERE SYS_ID=@SYS_ID AND FUNC_ID=@FUNC_ID AND APG_NO=@U_ID";
+    //    List<SqlParameter> Paras = new List<SqlParameter>()
+    //    {
+    //        new SqlParameter("@SYS_ID","HI_POSIMG"),
+    //        new SqlParameter("@FUNC_ID",FUNC_ID),
+    //        new SqlParameter("@U_ID",APG_NO),
+    //    };
+    //    DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
+
+    //    if (table != null && table.Rows.Count > 0)
+    //    {
+    //        List<string> list_keyID = table.AsEnumerable()
+    //                   .Select(r => r.Field<string>("KEY_ID")).ToList();
+
+    //        if (Type == "ALL")
+    //        {
+    //            //一般物件權限隱藏
+    //            if (!list_keyID.Contains(ButtonID))
+    //            {
+    //                return false;
+    //            }
+    //        }
+    //        else
+    //        {
+    //            if (list_keyID.Contains(ButtonID))
+    //            {
+    //                return false;
+    //            }
+    //        }
+    //    }
+    //    return true;
+    //}
+
+    #endregion
+}
 }
 
-[HttpGet]
-[TokenAuthorize]
-public ActionResult TokenEntry_FUNC()
-{
-    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+相關sql:
+                case QueryKey.IfBtnAuth_Positive_BTNSEQ:
+                    return @"
+SELECT BTNSEQ
+FROM[HI_TMMAIN].[dbo].[AP_RFUNC]
+WHERE SYS_ID = @SYS_ID
+AND FUNC_ID = @FUNC_ID
+AND BTNID = @BTNID";
 
-    Session["CurrentSystemId"] = systemId;
-    Session["CurrentEmpNo"] = empNo;
+                case QueryKey.IfBtnAuth_Positive_Permission:
+                    return @"
+SELECT COUNT(*) as PermissionCount
+FROM [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] 
+WHERE SYS_ID = @SYS_ID 
+AND FUNC_ID = @FUNC_ID 
+AND BTNSEQ = @BTNSEQ 
+AND APG_NO = @APG_NO";
 
-    return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
-}
+                case QueryKey.Get_資料面最高權限:
+                    return @"
+SELECT COUNT(*) AS SUP_NUM FROM MRSUPPER WHERE SUP_ID=@Emp_NO 
+AND CONVERT(CHAR(10),GETDATE(),102)>=EFF_DATE
+AND CONVERT(CHAR(10),GETDATE(),102)<=END_DATE ";
 
+                case QueryKey.Get_Tree:
+                    return @"
+;WITH O AS
+(SELECT B.FUNC_ID AS FUNC_ID, B.PARENT_ID AS PARENT_ID, B.[FUNC_NA], B.[SORT_NO],
+B.VIEW_H, B.VIEW_HB 
+, CASE WHEN ISNULL(B.PARENT_ID,'') ='' OR B.PARENT_ID='HOME'
+THEN '/' + CONVERT(VARCHAR(8), B.[SORT_NO]) +'/'
+ELSE '/' + CONVERT(VARCHAR(8), (SELECT ISNULL([SORT_NO], 0) FROM [AP_FUNC] WHERE FUNC_ID = B.PARENT_ID AND SYS_ID = B.SYS_ID)) +'/' + CONVERT(VARCHAR(8), B.[SORT_NO]) + '/'
+END AS 'NODE'
+FROM [AP_USER_FUNC_CONFIG] A
+INNER JOIN [AP_FUNC] B ON A.SYS_ID = B.SYS_ID AND A.FUNC_ID = B.FUNC_ID
+WHERE A.SYS_ID = @SYS_ID --hi_posimg
+AND B.[IS_SHOW] = 'Y'
+AND A.APG_NO = @APG_NO
+--AND (B.FUNC_ID = 'HOME' OR B.PARENT_ID = 'HOME')  
+)
+SELECT FUNC_ID, PARENT_ID, [FUNC_NA], [SORT_NO], NODE, VIEW_H, VIEW_HB
+FROM O
+WHERE FUNC_ID NOT LIKE '%TEST%'
+ORDER BY CONVERT(HIERARCHYID, NODE);
+";
 
-⸻
+                case QueryKey.Get_員工基本資料:
+                    return @"
+SELECT EMP_NO,EMP_NAME,ORGAN_NO,ORGAN_CAP,POST_NO,POST_NAME,APG_NO 
+FROM DB_SHARE.DBO.M1EMP_MAST M 
+LEFT JOIN(SELECT U_ID, APG_NO, U_NAME FROM AP_USER WHERE SYS_ID = @SYS_ID AND U_ID = @EMP_NO) A
+ON M.EMP_NO = A.U_ID 
+WHERE EMP_NO = @EMP_NO ";
 
-📌 測試流程
-	1.	用 DLL 產生一個正確的 Token → 帶到 URL
+                case QueryKey.GetEmpNoByAD:
+                    return @"
+SELECT EMP_ID FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] 
+WHERE EMP_ID!= EMP_DOM_ID
+AND LTRIM(RTRIM(EMP_DOM_ID)) != '' 
+AND EMP_ID IN (SELECT EMP_NO AS 'EMP_ID' FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE END_DT IS NULL) 
+AND EMP_DOM_ID = @AD ";
 
-http://localhost/Home/TokenEntry?token=xxxxx
-
-頁面應該正確進到 GroupManagement。
-
-	2.	把 Token 改成錯誤的 / 過期的 →
-頁面應該彈出 「TOKEN 已失效，請重新登入」，然後跳轉到 /Home/Login。
-
-⸻
-
-🎯 總結
-	•	你原本的程式「只丟 401」，瀏覽器不會 alert。
-	•	我幫你改成「回傳一段 script」，直接 alert 後導回登入頁。
-	•	這樣就完全符合你要的「TOKEN 失效提示」效果。
-
-要不要我幫你把 TokenAuthorize 抽出成 Filters/TokenAuthorize.cs 共用 class，然後在 FilterConfig.cs 註冊，讓所有需要驗證的 Controller 都能套用？
+如果你還有想看甚麼sql還是程式碼在跟我說
+步驟講清楚 要怎麼改 為什麼這樣改
