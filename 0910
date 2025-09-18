@@ -1,95 +1,96 @@
-我看清楚了 👍
-你現在的程式已經一半走新邏輯（呼叫 DLL 功能 1 GetUserNameAndGroup），但還保留了舊的 GetEmpNoByAD，所以才會混亂。
+了解 👌 你現在想直接在 SQL Server 裡測試「功能樹狀結構」，確認不同使用者 (AD → 員編 → 群組) 出來的目錄是否一致。
 
-我幫你整理出來應該怎麼改：
-
-⸻
-
-改法建議
-
-1. Get_員工AD → 保留不動
-
-這個方法還是負責 從 HttpContext 取出目前登入的 AD，沒問題，保留。
+我幫你整理一個 長出完整功能樹的 SQL，直接在 SSMS 可以跑：
 
 ⸻
 
-2. Get_員工編號 → 改成只呼叫 DLL（功能 1）
+SQL：產生功能樹 (依群組取功能)
 
-既然 DLL 功能 1 已經可以把 AD → 員編，就不需要再透過舊 SQL 查。
+;WITH FuncCTE AS
+(
+    SELECT 
+        f.FUNC_ID,
+        f.PARENT_ID,
+        f.FUNC_NA,
+        f.SORT_NO,
+        f.VIEW_H,
+        f.VIEW_HB,
+        0 AS LEVEL,
+        CAST(f.FUNC_ID AS VARCHAR(MAX)) AS PATH
+    FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
+    INNER JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] u
+        ON f.SYS_ID = u.SYS_ID AND f.FUNC_ID = u.FUNC_ID
+    WHERE f.SYS_ID = @SysID
+      AND u.APG_NO = @GroupID
+      AND f.IS_SHOW = 'Y'                 -- 只顯示需要顯示的頁面
+      AND (f.PARENT_ID IS NULL OR f.PARENT_ID = 'HOME')
 
-/// <summary>
-/// 權限管理-取得員工編號 (呼叫 DLL 功能1)
-/// </summary>
-/// <returns>員編</returns>
-internal static string Get_員工編號(string ad = null)
-{
-    var req = new M_AP.GetUserNameAndGroupRequestModel
-    {
-        SysID = "HI_POSIMG",
-        UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad, // 有傳參數就用參數，沒傳就抓 HttpContext
-        Environment = "TEST",
-    };
+    UNION ALL
 
-    string json_input = JsonConvert.SerializeObject(req);
-    string response = new APACCESS().GetUserNameAndGroup(json_input);
-    var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
-
-    // 沒找到就回傳輸入的 AD，避免整個掛掉
-    return res?.Result?.UserID ?? req.UserAD;
-}
-
-
-⸻
-
-3. Get_員工基本資料 → 也是走 DLL 功能 1
-
-這裡跟你寫的差不多，但建議把 PostNo 也帶進來（以防後面要用）。
-
-/// <summary>
-/// 取得員工基本資料 (呼叫 DLL 功能1)
-/// </summary>
-internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad = null)
-{
-    var req = new M_AP.GetUserNameAndGroupRequestModel
-    {
-        SysID = "HI_POSIMG",
-        UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
-        Environment = "TEST"
-    };
-
-    string json_input = JsonConvert.SerializeObject(req);
-    string response = new APACCESS().GetUserNameAndGroup(json_input);
-    var res = JsonConvert.DeserializeObject<M_AP.GetUserNameAndGroupResponseModel>(response);
-
-    if (res?.Result == null) return null;
-
-    return new VM_Employee.VM_員工部門職稱
-    {
-        AD = req.UserAD,
-        EMP_NO = res.Result.UserID,
-        EMP_NAME = res.Result.UserName,
-        POST_NO = res.Result.PostNo,
-        POST_NAME = res.Result.PostName,
-        ORGAN_NO = res.Result.OrganNo,
-        ORGAN_CAP = res.Result.OrganName,
-        APG_NO = res.Result.GroupID
-    };
-}
+    SELECT 
+        f.FUNC_ID,
+        f.PARENT_ID,
+        f.FUNC_NA,
+        f.SORT_NO,
+        f.VIEW_H,
+        f.VIEW_HB,
+        c.LEVEL + 1,
+        CAST(c.PATH + '>' + f.FUNC_ID AS VARCHAR(MAX)) AS PATH
+    FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
+    INNER JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] u
+        ON f.SYS_ID = u.SYS_ID AND f.FUNC_ID = u.FUNC_ID
+    INNER JOIN FuncCTE c
+        ON f.PARENT_ID = c.FUNC_ID
+    WHERE f.SYS_ID = @SysID
+      AND u.APG_NO = @GroupID
+      AND f.IS_SHOW = 'Y'
+)
+SELECT 
+    FUNC_ID,
+    PARENT_ID,
+    FUNC_NA,
+    SORT_NO,
+    VIEW_H,
+    VIEW_HB,
+    LEVEL,
+    PATH
+FROM FuncCTE
+ORDER BY PATH;
 
 
 ⸻
 
-4. 刪掉 GetEmpNoByAD
+使用方式
+	1.	換掉參數：
 
-因為 DLL 功能 1 已經取代它了，這個方法可以完全移除，避免之後有人誤用。
+DECLARE @SysID NVARCHAR(50) = 'HI_POSIMG';
+DECLARE @GroupID NVARCHAR(50) = '007';  -- 群組編號（由員編對應查出來）
+
+
+	2.	執行後結果會顯示：
+	•	FUNC_ID = 功能代號
+	•	FUNC_NA = 功能名稱
+	•	LEVEL = 樹狀層級 (0=根目錄, 1=子節點 …)
+	•	PATH = 完整路徑 (方便你 debug)
 
 ⸻
 
-✅ 這樣改完：
-	•	你輸入 AD → DLL 幫你轉成員編。
-	•	沒輸入 AD → 自動抓 HttpContext 的登入帳號，再轉員編。
-	•	基本資料 → 全部透過 DLL 功能 1 取得，不會再走舊 SQL。
+重點說明
+	•	AP_FUNC = 功能定義表
+	•	AP_USER_FUNC_CONFIG = 群組對應的功能授權
+	•	IS_SHOW='Y' → 過濾掉隱藏的頁面
+	•	主管的 AD → 員編 → 群組可能跟一般員工不一樣，所以會拿到不同的 GroupID，導致功能樹不一樣。
 
 ⸻
 
-要不要我順便幫你整理一份 新的 SVS_員工基本資料.cs 完整檔案（去掉多餘的舊方法）？
+👉 建議你先：
+
+SELECT * 
+FROM [HI_TMMAIN].[dbo].[AP_USER] 
+WHERE U_ID = '<員編>'
+
+看這個員編對應到哪些 APG_NO，再丟進上面 SQL 測功能樹。
+
+⸻
+
+要不要我幫你寫一個 輸入 AD → 自動轉員編 → 找群組 → 長功能樹的完整 SQL？这样你一行就能跑，不用自己拆查詢。
