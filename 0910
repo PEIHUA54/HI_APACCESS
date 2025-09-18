@@ -1,96 +1,108 @@
-了解 👌 你現在想直接在 SQL Server 裡測試「功能樹狀結構」，確認不同使用者 (AD → 員編 → 群組) 出來的目錄是否一致。
+using HI_APACCESS_DLL.Models;
+using System;
+using System.Collections.Generic;
+using Microsoft.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
-我幫你整理一個 長出完整功能樹的 SQL，直接在 SSMS 可以跑：
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetTree
+    {
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
 
-⸻
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
 
-SQL：產生功能樹 (依群組取功能)
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
 
-;WITH FuncCTE AS
-(
-    SELECT 
-        f.FUNC_ID,
-        f.PARENT_ID,
-        f.FUNC_NA,
-        f.SORT_NO,
-        f.VIEW_H,
-        f.VIEW_HB,
-        0 AS LEVEL,
-        CAST(f.FUNC_ID AS VARCHAR(MAX)) AS PATH
-    FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
-    INNER JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] u
-        ON f.SYS_ID = u.SYS_ID AND f.FUNC_ID = u.FUNC_ID
-    WHERE f.SYS_ID = @SysID
-      AND u.APG_NO = @GroupID
-      AND f.IS_SHOW = 'Y'                 -- 只顯示需要顯示的頁面
-      AND (f.PARENT_ID IS NULL OR f.PARENT_ID = 'HOME')
+                var resultList = new List<GetTreeModel.ResultData>();
 
-    UNION ALL
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
 
-    SELECT 
-        f.FUNC_ID,
-        f.PARENT_ID,
-        f.FUNC_NA,
-        f.SORT_NO,
-        f.VIEW_H,
-        f.VIEW_HB,
-        c.LEVEL + 1,
-        CAST(c.PATH + '>' + f.FUNC_ID AS VARCHAR(MAX)) AS PATH
-    FROM [HI_TMMAIN].[dbo].[AP_FUNC] f
-    INNER JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] u
-        ON f.SYS_ID = u.SYS_ID AND f.FUNC_ID = u.FUNC_ID
-    INNER JOIN FuncCTE c
-        ON f.PARENT_ID = c.FUNC_ID
-    WHERE f.SYS_ID = @SysID
-      AND u.APG_NO = @GroupID
-      AND f.IS_SHOW = 'Y'
-)
-SELECT 
-    FUNC_ID,
-    PARENT_ID,
-    FUNC_NA,
-    SORT_NO,
-    VIEW_H,
-    VIEW_HB,
-    LEVEL,
-    PATH
-FROM FuncCTE
-ORDER BY PATH;
+                    // 3. 查詢功能清單
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID
+FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID
+WHERE a.SYS_ID=@SysID 
+  AND b.APG_NO=@GroupID
+ORDER BY a.SORT_NO
+";
 
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
 
-⸻
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
 
-使用方式
-	1.	換掉參數：
+                // 4. 結果判斷
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
 
-DECLARE @SysID NVARCHAR(50) = 'HI_POSIMG';
-DECLARE @GroupID NVARCHAR(50) = '007';  -- 群組編號（由員編對應查出來）
-
-
-	2.	執行後結果會顯示：
-	•	FUNC_ID = 功能代號
-	•	FUNC_NA = 功能名稱
-	•	LEVEL = 樹狀層級 (0=根目錄, 1=子節點 …)
-	•	PATH = 完整路徑 (方便你 debug)
-
-⸻
-
-重點說明
-	•	AP_FUNC = 功能定義表
-	•	AP_USER_FUNC_CONFIG = 群組對應的功能授權
-	•	IS_SHOW='Y' → 過濾掉隱藏的頁面
-	•	主管的 AD → 員編 → 群組可能跟一般員工不一樣，所以會拿到不同的 GroupID，導致功能樹不一樣。
-
-⸻
-
-👉 建議你先：
-
-SELECT * 
-FROM [HI_TMMAIN].[dbo].[AP_USER] 
-WHERE U_ID = '<員編>'
-
-看這個員編對應到哪些 APG_NO，再丟進上面 SQL 測功能樹。
-
-⸻
-
-要不要我幫你寫一個 輸入 AD → 自動轉員編 → 找群組 → 長功能樹的完整 SQL？这样你一行就能跑，不用自己拆查詢。
+            return response;
+        }
+    }
+}
