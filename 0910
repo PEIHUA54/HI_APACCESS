@@ -1,16 +1,444 @@
-SELECT DISTINCT
-    a.BTNID,
-    a.BTN_NAME,
-    a.CONTROLLER,
-    a.ACTION,
-    a.LOC AS BtnLocation,
-    a.ONCLICK AS BtnOnclick
-FROM [HI_TMMAIN].[dbo].[AP_RFUNC] a
-INNER JOIN [HI_TMMAIN].[dbo].[AP_USER_RFUNC_CONFIG] b 
-    ON a.SYS_ID = b.SYS_ID
-   AND a.FUNC_ID = b.FUNC_ID
-   AND a.BTNSEQ = b.BTNSEQ
-WHERE a.SYS_ID = @SysID 
-  AND b.APG_NO = @GroupID
-  AND a.FUNC_ID = @FuncID
-ORDER BY a.BTNID
+用這個Info_List當範例改給我看
+001群組有權限按鈕為新增(位置上方)修改刪除(位置在row)
+其他群組只能新增
+查詢(位置上方)是所有群都可以使用
+還有幾個問題是位置只是用來區分這個迴圈要長哪幾個按鈕嗎? onclick寫事件後面代的參數又要怎麼寫在資料表內?
+onclick寫事件後面代的參數若新增跟查詢的參數不同要怎麼寫?
+新增跟查詢的action不一樣又要怎麼寫?
+功能5跟hi_btn不適用hi_btn就可以做到權限跟長按鈕了嗎?
+controller
+     [HttpGet]
+     public ActionResult Info_List(string filetype, string selectedPositem, string Select_key, [Bind] Models.M_POS_IMG.Select Select = Models.M_POS_IMG.Select.nodata, int PageNo = 1)
+     {
+         filetype = "A";
+
+         var queryResult = F_Common.GetPosInfo_ABE<M_POS_INFO>(APG_NO, filetype, selectedPositem);
+
+         var filterResult = queryResult.AsQueryable();
+
+         if (Select != Models.M_POS_IMG.Select.nodata && !string.IsNullOrEmpty(Select_key))
+         {
+             switch (Select)
+             {
+                 case Models.M_POS_IMG.Select.FILE_NAME:
+                     filterResult = filterResult.Where(x => x.FILE_NAME.Contains(Select_key));
+                     break;
+                 case Models.M_POS_IMG.Select.FILE_FORMAT:
+                     filterResult = filterResult.Where(x => x.FILE_FORMAT.Contains(Select_key));
+                     break;
+                 case Models.M_POS_IMG.Select.CASE_UNIT:
+                     filterResult = filterResult.Where(x => x.CASE_UNIT.Contains(Select_key));
+                     break;
+             }
+         }
+         var result = filterResult.ToList();
+
+         ViewBag.posItem = F_POSIMG_INFO.Get_DropDownList_PosItem();
+         ViewBag.Select = Select;
+         ViewBag.Select_key = Select_key;
+         return View(result.ToPagedList(PageNo, 25));
+     }
+
+
+view:
+@model IEnumerable<POSFILE_APPLY.Models.M_POS_IMG.M_POS_INFO>
+
+@using POSFILE_APPLY.Service;
+@using X.PagedList.Mvc;
+@using X.PagedList.Mvc.Common;
+@using X.PagedList;
+
+@{
+    ViewBag.Title = "POS圖檔查詢New";
+    POSFILE_APPLY.Controllers.POSFILE_APPLYBaseController controller = ViewContext.Controller as POSFILE_APPLY.Controllers.POSFILE_APPLYBaseController;
+    var emp_APG_NO = controller.APG_NO;
+    var emp_no = controller.Emp_NO;
+    var ctrlName = ViewContext.RouteData.Values["controller"].ToString();
+}
+
+<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
+<link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css","CSS")" />
+<style>
+    .tb-workonroad a {
+        text-decoration: none;
+        color: #ffffff;
+        display: block;
+    }
+
+    .tb-workonroad thead tr {
+        background-color: #E6CCB2;
+    }
+
+        .tb-workonroad thead tr th a {
+            color: #000000;
+        }
+
+    .tb-workonroad tbody tr:nth-child(2n) {
+        background-color: #EDE0D4;
+    }
+
+    .tb-workonroad tbody tr:hover {
+        background-color: #FFBD00;
+    }
+
+    .cd-workonroad {
+        background-color: #FFF1E6;
+    }
+
+    .pg-workonroad {
+        background-color: #FFF1E6;
+        margin: 0 auto;
+    }
+</style>
+
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">POS圖檔設定管理New</div>
+</section>
+
+
+<ul class="nav nav-tabs" id="myTab">
+    <li class="nav-item">
+        @*<a class="nav-link" id="Tab1" href="#Tab1_Panel">POS圖檔設定</a>*@
+    </li>
+</ul>
+
+<div>
+    <div>
+        @using (Html.BeginForm("Info_List", "PosImage", FormMethod.Get))
+        {
+            <div class="card cd-workonroad">
+                <div class="card-body">
+                    <div class="row">
+
+                        <div class="col-4 row d-flex align-items-center">
+                            <div class="col-3">
+                                POS項目 篩選
+                            </div>
+                            <div class="col-9">
+                                @Html.DropDownList("selectedPositem", ViewBag.posItem as IEnumerable<SelectListItem>, "-- 請選擇 --", new { @class = "form-control", id = "selectedPositem" })
+                            </div>
+                        </div>
+
+                        <div class="col-4 row d-flex align-items-center">
+                            <div class="col-3">
+                                篩選欄位
+                            </div>
+                            <div class="col-4">
+                                <select class="form-control" name="Select" id="Select">
+                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.nodata">--請選擇--</option>
+                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.FILE_NAME">檔案名稱</option>
+                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.FILE_FORMAT">檔案格式</option>
+                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.CASE_UNIT">使用單位</option>
+                                </select>
+                            </div>
+                            <div class="col-5">
+                                <input class="form-control" name="Select_key" id="Select_key" type="text" value="@ViewBag.Select_key" placeholder="請輸入搜尋關鍵字" autocomplete="off" />
+                            </div>
+                        </div>
+
+                        <div class="col-4 row d-flex align-items-center ">
+                            <br />
+                            <button type="submit" class="btn btn-warning" onclick="performSearch()">查詢</button>
+                            @Html.ActionLink("清除所有篩選", "Info_List", null, new { @class = "btn btn-outline-secondary" })
+                        </div>
+
+                        @*<div class="col-12 row d-flex align-items-center justify-content-end">
+                                   <small>說明：點選表格標頭可遞增或遞減排序</small>
+                            </div>*@
+                    </div>
+                </div>
+            </div>
+
+        }
+
+        <div style="overflow-y: auto; height: 835px; overflow-x: auto; ">
+            <section class="form-data" id="table-border">
+                <table id="promTable" class="table table-bordered">
+                    <thead style="position:sticky; top:-0.1px; z-index:2;">
+                        <tr>
+                            <th style="width:100px;">@Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_insert", "新增", "submit", new { @class = "btn btn-green loadingButton", onclick = $"location.href='{Url.Action("Info_Insert", "PosImage")}'" })</th>
+                            <th>@Html.DisplayNameFor(x => x.FILE_NAME)</th>
+                            <th style="width:100px;">@Html.DisplayNameFor(x => x.FILE_FORMAT)</th>
+                            <th style="width:80px;">@Html.DisplayNameFor(x => x.PX_WIDTH)</th>
+                            <th style="width:80px;">@Html.DisplayNameFor(x => x.PX_LENGTH)</th>
+                            <th>@Html.DisplayNameFor(x => x.CASE_UNIT)</th>
+                            <th>@Html.DisplayNameFor(x => x.POS_ITEM)</th>
+                            <th>@Html.DisplayNameFor(x => x.MEMO)</th>
+                            @if (emp_APG_NO == "001")
+                            {
+                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CREATE_TIME)</th>
+                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CREATE_USER)</th>
+                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CHG_TIME)</th>
+                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CHG_USER)</th>
+                            }
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @if (Model != null && Model.Any())
+                        {
+                            foreach (var item in Model)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class=" d-flex">
+
+                                            @Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_update", "修改", "submit", new { @class = "btn btn-blue loadingButton", onclick = $"location.href='{Url.Action("Info_Update", "PosImage")}?filename={@item.FILE_NAME}'" })
+
+                                            @using (Html.BeginForm("Info_Delete", "PosImage", FormMethod.Post, new { @id = "deleteForm" }))
+                                            {
+                                                <input type="hidden" name="filename" value="@item.FILE_NAME" />
+                                                @Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_delete", "刪除", "submit", new { @class = "btn btn-orange btn_delete" })
+                                            }
+                                        </div>
+                                    </td>
+                                    <td>@item.FILE_NAME</td>
+                                    <td>@item.FILE_FORMAT</td>
+                                    <td>@item.PX_WIDTH</td>
+                                    <td>@item.PX_LENGTH</td>
+                                    <td>@item.CASE_UNIT</td>
+                                    <td>@item.POS_ITEM</td>
+                                    <td>@item.MEMO</td>
+
+                                    @if (emp_APG_NO == "001")
+                                    {
+                                        <td>@item.CREATE_TIME</td>
+                                        <td>@item.CREATE_USER</td>
+                                        <td>@item.CHG_TIME</td>
+                                        <td>@item.CHG_USER</td>
+                                    }
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            if (emp_APG_NO == "001")
+                            {
+                                <tr>
+                                    <td colspan="16" style="text-align:center; font-weight:600;">查無資料</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                <tr>
+                                    <td colspan="8" style="text-align:center; font-weight:600;">查無資料</td>
+                                </tr>
+                            }
+                        }
+
+                    </tbody>
+                </table>
+
+                @if (Model != null && Model.Any())
+                {
+                    @Html.PagedListPager((IPagedList)Model, PageNo => Url.Action("INFO_LIST", ctrlName,
+                      new
+                      {
+                          PageNo = PageNo
+                      })
+                      , new PagedListRenderOptions
+                      {
+                          LiElementClasses = new string[] { "page-item" },
+                          PageClasses = new string[] { "page-link" },
+                          EllipsesElementClass = "page-link",
+                      })
+                }
+            </section>
+        </div>
+    </div>
+</div>
+
+
+@section Scripts{
+    <script>
+
+        $(document).ready(function () {
+            initPage();
+
+            // 提案案號填上modal網址
+            $(".btn_modal").click(function () {
+                const t_cas_no = $(this).data("tcasno")
+                let url = $("#promFrame").prop("src")
+                url = `${url.substring(0, url.indexOf("T_CAS_NO"))}T_CAS_NO=${t_cas_no}`
+                $("#promFrame").prop("src", url)
+            })
+
+            //切換分頁，顯示不同內容
+            $("ul.nav-tabs a").click(function (e) {
+                e.preventDefault();
+
+                $("[id=Tab]").val($(this).attr("id"))
+
+                $(this).tab('show');
+            });
+
+            // CheckBox打勾才加入頁數a的href
+            $(".pagination .page-item a").click(function () {
+                let href = $(this).attr("href");
+
+
+                $(this).prop("href", href);
+            })
+
+            $(".btn_delete").click(function (e) {
+                e.preventDefault();
+
+                var confirmDelete = confirm("確定要刪除嗎?");
+                if (confirmDelete) {
+                    (this).closest("form").submit();
+
+                    alert("刪除完畢!");
+                }
+                else {
+                    alert("取消刪除!");
+                }
+
+            });
+
+        });
+
+        function initPage() {
+                // Tab
+                let tabValue = "@ViewBag.tab";
+                if (!tabValue) tabValue = "Tab1"
+                $(`#${tabValue}`).tab('show');
+
+                // Alert
+                setTimeout(function () {
+                    const message = `@ViewBag.message`;
+                    if (message) alert(message);
+                }, 0)
+
+                //$('#searchButton').click(performSearch);
+                //$('#clearButton').click(clearInput);
+
+            $('#Select').val('@ViewBag.Select')
+
+            }
+
+
+        function performSearch() {
+            var Select = document.getElementById('Select').value;
+            var Select_key = document.getElementById('Select_key').value;
+            var selectedPositem = document.getElementById('selectedPositem').value;
+
+            console.log(Select, Select_key, selectedPositem);
+
+            $.ajax({
+                url: '@Url.Action("Info_List", "PosImage")',
+                type: 'GET',
+                data: {
+                    Select: Select,
+                    Select_key: Select_key,
+                    selectedPositem: selectedPositem
+                }
+            })
+                .done(function (result) {
+                    $('#form').html(result);
+                })
+                .fail(function (error) {
+                    console.error('搜尋錯誤:', error);
+                })
+        }
+
+
+    </script>
+}
+
+model:
+
+namespace POSFILE_APPLY.Models.M_POS_IMG
+{
+    public class M_POS_INFO
+    {
+        [Required(ErrorMessage = "檔案名稱為必填的")]
+        [DisplayName("檔案名稱")]
+        public string FILE_NAME { get; set; }
+
+
+        [DisplayName("檔案類型")]
+        public string FILE_TYPE { get; set; }
+
+
+        [Required(ErrorMessage = "檔案格式為必填的")]
+        [DisplayName("檔案格式")]
+        public string FILE_FORMAT { get; set; }
+
+
+        [Required(ErrorMessage = "像素為必填的")]
+        [DisplayName("像素(寬)")]
+        [Range(1, int.MaxValue, ErrorMessage = "寬度必須為正整數")]
+        [RegularExpression(@"^[1-9]\d*$", ErrorMessage = "只能輸入正整數，不能包含小數點或負數")]
+        public string PX_WIDTH { get; set; }
+
+
+        [DisplayName("像素(長)")]
+        [Range(1, int.MaxValue, ErrorMessage = "寬度必須為正整數")]
+        [RegularExpression(@"^[1-9]\d*$", ErrorMessage = "只能輸入正整數，不能包含小數點或負數")]
+        public string PX_LENGTH { get; set; }
+
+
+
+        [Required(ErrorMessage = "使用單位為必填的")]
+        [DisplayName("使用單位")]
+        public string CASE_UNIT { get; set; }
+
+
+        [DisplayName("存放位址")]
+        public string SAVE_POSITION { get; set; }
+
+
+        [DisplayName("SC通訊目錄")]
+        public string SC_CATELOG { get; set; }
+
+
+        [DisplayName("SC.SERVICE")]
+        public string SC_SERVICE { get; set; }
+
+
+        [DisplayName("TM路徑")]
+        public string TM_PATH { get; set; }
+
+
+        [DisplayName("建立人員")]
+        public string CREATE_USER { get; set; }
+
+
+        [DisplayName("建立日期")]
+        public string CREATE_TIME { get; set; }
+
+
+        [DisplayName("修改人員")]
+        public string CHG_USER { get; set; }
+
+
+        [DisplayName("修改日期")]
+        public string CHG_TIME { get; set; }
+
+
+        [Required(ErrorMessage = "POS項目為必填的")]
+        [DisplayName("POS項目")]
+        public string POS_ITEM { get; set; }
+
+
+        [DisplayName("活動說明")]
+        public string MEMO { get; set; }
+
+        //TODO
+        [Required(ErrorMessage = "USER_FLAG為必選的")]
+        [DisplayName("USER是否可使用(Y:可以、N不可以))")]
+        public string USER_FLAG { get; set; }
+
+    }
+
+    public enum Select
+    {
+        nodata = 0,
+        FILE_NAME = 1,
+        FILE_FORMAT = 2,
+        CASE_UNIT = 3,
+
+    }
+}
