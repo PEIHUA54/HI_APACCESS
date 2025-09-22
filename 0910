@@ -1,444 +1,1129 @@
-用這個Info_List當範例改給我看
-001群組有權限按鈕為新增(位置上方)修改刪除(位置在row)
-其他群組只能新增
-查詢(位置上方)是所有群都可以使用
-還有幾個問題是位置只是用來區分這個迴圈要長哪幾個按鈕嗎? onclick寫事件後面代的參數又要怎麼寫在資料表內?
-onclick寫事件後面代的參數若新增跟查詢的參數不同要怎麼寫?
-新增跟查詢的action不一樣又要怎麼寫?
-功能5跟hi_btn不適用hi_btn就可以做到權限跟長按鈕了嗎?
-controller
-     [HttpGet]
-     public ActionResult Info_List(string filetype, string selectedPositem, string Select_key, [Bind] Models.M_POS_IMG.Select Select = Models.M_POS_IMG.Select.nodata, int PageNo = 1)
-     {
-         filetype = "A";
 
-         var queryResult = F_Common.GetPosInfo_ABE<M_POS_INFO>(APG_NO, filetype, selectedPositem);
+        //匯入上傳檔案
+        [HttpPost]
+        public ActionResult UpLoadCheckshow(HttpPostedFileBase File, string CASE_NO, string COND_NO, string COND_TYPE)
+        {
+            if (File == null || File.ContentLength == 0)
+            {
+                return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+            }
 
-         var filterResult = queryResult.AsQueryable();
-
-         if (Select != Models.M_POS_IMG.Select.nodata && !string.IsNullOrEmpty(Select_key))
-         {
-             switch (Select)
-             {
-                 case Models.M_POS_IMG.Select.FILE_NAME:
-                     filterResult = filterResult.Where(x => x.FILE_NAME.Contains(Select_key));
-                     break;
-                 case Models.M_POS_IMG.Select.FILE_FORMAT:
-                     filterResult = filterResult.Where(x => x.FILE_FORMAT.Contains(Select_key));
-                     break;
-                 case Models.M_POS_IMG.Select.CASE_UNIT:
-                     filterResult = filterResult.Where(x => x.CASE_UNIT.Contains(Select_key));
-                     break;
-             }
-         }
-         var result = filterResult.ToList();
-
-         ViewBag.posItem = F_POSIMG_INFO.Get_DropDownList_PosItem();
-         ViewBag.Select = Select;
-         ViewBag.Select_key = Select_key;
-         return View(result.ToPagedList(PageNo, 25));
-     }
+            // 檢查檔案格式
+            string[] allowedExtensions = { ".xlsx", ".xls" };
+            string fileExtension = Path.GetExtension(File.FileName).ToLower();
+         
+            // 使用安全的副檔名驗證方法
+            if (!PathValidator.IsValidFileExtension(File.FileName, allowedExtensions))
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = "請上傳Excel檔案(.xlsx或.xls)",
+                    errors = new[] { new {
+                RowNumber = 0,
+                KeyValue = "檔案格式錯誤",
+                ErrorMessage = "請上傳Excel檔案(.xlsx或.xls)"
+            }}
+                });
+            }
 
 
+            // 確保上傳檔案存在
+            string uploadDir = Service.SVS_Dictionary.uploadFilePath;
+            if (!Directory.Exists(uploadDir))
+            {
+                Directory.CreateDirectory(uploadDir);
+            }
+
+          
+            // 生成唯一檔案名並移除任何可能的路徑字元
+            string sanitizedCondNo = Path.GetFileNameWithoutExtension(COND_NO); // 防止COND_NO中包含路徑字元
+            string uniqueFileName = $"Import_{sanitizedCondNo}_{DateTime.Now.ToString("yyyyMMddHHmmss")}{fileExtension}";
+            // 使用安全的路徑合併方法
+            string uploadPath = PathValidator.GetSafePath(uploadDir, uniqueFileName);
+
+            try
+            {
+                // 保存上傳的檔案
+                File.SaveAs(uploadPath);
+
+                // Excel資料
+                var importResult = f_CollStamp_HB.ImportExcelDataWithResult(uploadPath, CASE_NO, COND_NO, COND_TYPE, this.Emp_NO);
+
+                //資料結果=>成功
+                if (importResult.IsSuccess)
+                {
+                    return Json(new
+                    {
+                        success = true,
+                        message = $"成功匯入 {importResult.ValidRows} 筆資料！"
+                    });
+                }
+                else
+                {
+                    //資料結果=>失敗(錯誤訊息)
+                    string errorMessage = importResult.ErrorMessage;
+                    if (string.IsNullOrEmpty(errorMessage) && importResult.Errors.Count > 0)
+                    {
+                        errorMessage = $"匯入失敗，共有 {importResult.Errors.Count} 筆資料有錯誤";
+                    }
+
+                    return Json(new
+                    {
+                        success = false,
+                        message = errorMessage,
+                        errors = importResult.Errors
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                string errorMessage = ex.Message;
+
+                // 處理特定錯誤類型
+                if (ex.Message.Contains("Microsoft.ACE.OLEDB.12.0") || ex.Message.Contains("提供者"))
+                {
+                    errorMessage = "Excel讀取錯誤: 系統缺少必要的Excel讀取元件。";
+                }
+                else if (ex.Message.Contains("DATA$") || ex.Message.Contains("工作表"))
+                {
+                    //工作表:DATA
+                    errorMessage = "Excel錯誤: 找不到名為 '資料' 的工作表。請確認Excel檔案包含正確的工作表名稱。";
+                }
+                else if (ex.Message.Contains("無法將類型") || ex.Message.Contains("轉換"))
+                {
+                    errorMessage = "Excel欄位錯誤：Excel中的某些欄位資料不符合要求。請檢查欄位表頭是否正確。";
+                }
+
+                return Json(new
+                {
+                    success = false,
+                    message = errorMessage,
+                    errors = new[] { new {
+                    RowNumber = 0,
+                    KeyValue = "檔案處理錯誤",
+                    ErrorMessage = errorMessage
+                    }}
+                });
+            }
+            finally
+            {
+                //// 刪除臨時檔案
+                //if (System.IO.File.Exists(uploadPath))
+                //{
+                //    //fortify漏洞
+                //    //f_COMMON.SafeDeleteFile
+                //    System.IO.File.Delete(uploadPath);
+                //}
+                // 刪除臨時檔案
+                if (System.IO.File.Exists(uploadPath))
+                {
+                    // 使用安全刪除檔案的方法替代直接刪除
+                    // fortify漏洞修正：使用安全的檔案刪除方法
+                    F_Common f_COMMON = new F_Common();
+                    f_COMMON.SafeDeleteFile(uploadDir, uniqueFileName);
+                }
+            }
+        }
+
+
+
+        //檢查促銷案號是否重複
+        [HttpPost]
+        public JsonResult CheckRoundNoExists(string COND_NO, string ROUND_NO)
+        {
+            try
+            {
+                bool exists = f_CollStamp_HB.CheckRoundNoExists(COND_NO, ROUND_NO);
+                return Json(new { success = true, exists = exists });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = ex.Message });
+            }
+        }
+
+        //Excel五種條件類型的範本
+        [HttpGet]
+        public ActionResult DownloadExcelTemplate(string COND_TYPE)
+        {
+            try
+            {
+                // 檢查條件類型是否有效
+                if (string.IsNullOrEmpty(COND_TYPE) || !new[] { "1", "2", "3", "4", "5" }.Contains(COND_TYPE))
+                {
+                    return Json(new { success = false, message = "無效的條件類型" }, JsonRequestBehavior.AllowGet);
+                }
+
+                string templateFileName;
+                switch (COND_TYPE)
+                {
+                    case "1":
+                        templateFileName = "範本_條件類型1_商品銷售.xlsx";
+                        break;
+                    case "2":
+                        templateFileName = "範本_條件類型2_商品兌換.xlsx";
+                        break;
+                    case "3":
+                        templateFileName = "範本_條件類型3_代收代號.xlsx";
+                        break;
+                    case "4":
+                        templateFileName = "範本_條件類型4_支付事件代號.xlsx";
+                        break;
+                    case "5":
+                        templateFileName = "範本_條件類型5_MMK代號.xlsx";
+                        break;
+                    default:
+                        return Content("無效的條件類型");
+                }
+
+                // 範本檔案路徑 D:\開發\3B750_沛樺\COLL_STAMP\COLL_STAMP\COLL_STAMP\File
+                string templatePath = Server.MapPath($"~/File/File/{templateFileName}");
+
+                // 檢查檔案是否存在
+                if (!System.IO.File.Exists(templatePath))
+                {
+                    return Json(new { success = false, message = $"找不到條件類型 {COND_TYPE} 的範本檔案" }, JsonRequestBehavior.AllowGet);
+                }
+
+                // 讀取檔案並回傳
+                byte[] fileBytes = System.IO.File.ReadAllBytes(templatePath);
+                return File(fileBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", templateFileName);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "下載範本失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
 view:
-@model IEnumerable<POSFILE_APPLY.Models.M_POS_IMG.M_POS_INFO>
+@model COLL_STAMP.Models.M_COLL_STAMP.M_CollStamp_HB
 
-@using POSFILE_APPLY.Service;
-@using X.PagedList.Mvc;
-@using X.PagedList.Mvc.Common;
-@using X.PagedList;
+@using COLL_STAMP.Service;
 
 @{
-    ViewBag.Title = "POS圖檔查詢New";
-    POSFILE_APPLY.Controllers.POSFILE_APPLYBaseController controller = ViewContext.Controller as POSFILE_APPLY.Controllers.POSFILE_APPLYBaseController;
+    ViewBag.Title = "來蓋章提案身檔查詢New";
+    COLL_STAMP.Controllers.COLL_STAMPBaseController controller = ViewContext.Controller as COLL_STAMP.Controllers.COLL_STAMPBaseController;
     var emp_APG_NO = controller.APG_NO;
     var emp_no = controller.Emp_NO;
     var ctrlName = ViewContext.RouteData.Values["controller"].ToString();
+    var actionName = ViewContext.RouteData.Values["action"].ToString();
 }
 
-<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
-<link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css","CSS")" />
-<style>
-    .tb-workonroad a {
-        text-decoration: none;
-        color: #ffffff;
-        display: block;
-    }
-
-    .tb-workonroad thead tr {
-        background-color: #E6CCB2;
-    }
-
-        .tb-workonroad thead tr th a {
-            color: #000000;
-        }
-
-    .tb-workonroad tbody tr:nth-child(2n) {
-        background-color: #EDE0D4;
-    }
-
-    .tb-workonroad tbody tr:hover {
-        background-color: #FFBD00;
-    }
-
-    .cd-workonroad {
-        background-color: #FFF1E6;
-    }
-
-    .pg-workonroad {
-        background-color: #FFF1E6;
-        margin: 0 auto;
-    }
-</style>
-
+<link rel="stylesheet" href="@Url.Version("Form.css", "CSS")" />
+<link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css", "CSS")" />
 
 <section class="page-title">
     <div class="triangle"></div>
-    <div class="title-text">POS圖檔設定管理New</div>
+    <div class="title-text">來蓋章提案身檔管理</div>
+    @Html.ActionLink("回上頁", "COLLSTAMP_Combined", "COLLSTAMP", new { CASE_NO = @Model.CASE_NO }, new { @class = "btn btn-olive" })
 </section>
 
 
-<ul class="nav nav-tabs" id="myTab">
-    <li class="nav-item">
-        @*<a class="nav-link" id="Tab1" href="#Tab1_Panel">POS圖檔設定</a>*@
-    </li>
-</ul>
-
-<div>
-    <div>
-        @using (Html.BeginForm("Info_List", "PosImage", FormMethod.Get))
-        {
-            <div class="card cd-workonroad">
-                <div class="card-body">
-                    <div class="row">
-
-                        <div class="col-4 row d-flex align-items-center">
-                            <div class="col-3">
-                                POS項目 篩選
-                            </div>
-                            <div class="col-9">
-                                @Html.DropDownList("selectedPositem", ViewBag.posItem as IEnumerable<SelectListItem>, "-- 請選擇 --", new { @class = "form-control", id = "selectedPositem" })
-                            </div>
-                        </div>
-
-                        <div class="col-4 row d-flex align-items-center">
-                            <div class="col-3">
-                                篩選欄位
-                            </div>
-                            <div class="col-4">
-                                <select class="form-control" name="Select" id="Select">
-                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.nodata">--請選擇--</option>
-                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.FILE_NAME">檔案名稱</option>
-                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.FILE_FORMAT">檔案格式</option>
-                                    <option value="@POSFILE_APPLY.Models.M_POS_IMG.Select.CASE_UNIT">使用單位</option>
-                                </select>
-                            </div>
-                            <div class="col-5">
-                                <input class="form-control" name="Select_key" id="Select_key" type="text" value="@ViewBag.Select_key" placeholder="請輸入搜尋關鍵字" autocomplete="off" />
-                            </div>
-                        </div>
-
-                        <div class="col-4 row d-flex align-items-center ">
-                            <br />
-                            <button type="submit" class="btn btn-warning" onclick="performSearch()">查詢</button>
-                            @Html.ActionLink("清除所有篩選", "Info_List", null, new { @class = "btn btn-outline-secondary" })
-                        </div>
-
-                        @*<div class="col-12 row d-flex align-items-center justify-content-end">
-                                   <small>說明：點選表格標頭可遞增或遞減排序</small>
-                            </div>*@
-                    </div>
+@if (Model.CHK_FLAG == "N")
+{
+    <section>
+        <div class="tab-content">
+            <section class="page-form">
+                <div>
+                    <button type="button" class="btn btn-success" id="btnShowInsertModal">
+                        <i class="fa fa-plus"></i> 單筆新增
+                    </button> |
+                    <button type="button" class="btn btn-primary" id="btnShowImport">
+                        <i class="fa fa-file-import"></i> 批次新增
+                    </button>
                 </div>
-            </div>
-
-        }
-
-        <div style="overflow-y: auto; height: 835px; overflow-x: auto; ">
-            <section class="form-data" id="table-border">
-                <table id="promTable" class="table table-bordered">
-                    <thead style="position:sticky; top:-0.1px; z-index:2;">
-                        <tr>
-                            <th style="width:100px;">@Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_insert", "新增", "submit", new { @class = "btn btn-green loadingButton", onclick = $"location.href='{Url.Action("Info_Insert", "PosImage")}'" })</th>
-                            <th>@Html.DisplayNameFor(x => x.FILE_NAME)</th>
-                            <th style="width:100px;">@Html.DisplayNameFor(x => x.FILE_FORMAT)</th>
-                            <th style="width:80px;">@Html.DisplayNameFor(x => x.PX_WIDTH)</th>
-                            <th style="width:80px;">@Html.DisplayNameFor(x => x.PX_LENGTH)</th>
-                            <th>@Html.DisplayNameFor(x => x.CASE_UNIT)</th>
-                            <th>@Html.DisplayNameFor(x => x.POS_ITEM)</th>
-                            <th>@Html.DisplayNameFor(x => x.MEMO)</th>
-                            @if (emp_APG_NO == "001")
-                            {
-                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CREATE_TIME)</th>
-                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CREATE_USER)</th>
-                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CHG_TIME)</th>
-                                <th style="width:108px;">@Html.DisplayNameFor(x => x.CHG_USER)</th>
-                            }
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        @if (Model != null && Model.Any())
-                        {
-                            foreach (var item in Model)
-                            {
-                                <tr>
-                                    <td>
-                                        <div class=" d-flex">
-
-                                            @Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_update", "修改", "submit", new { @class = "btn btn-blue loadingButton", onclick = $"location.href='{Url.Action("Info_Update", "PosImage")}?filename={@item.FILE_NAME}'" })
-
-                                            @using (Html.BeginForm("Info_Delete", "PosImage", FormMethod.Post, new { @id = "deleteForm" }))
-                                            {
-                                                <input type="hidden" name="filename" value="@item.FILE_NAME" />
-                                                @Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_delete", "刪除", "submit", new { @class = "btn btn-orange btn_delete" })
-                                            }
-                                        </div>
-                                    </td>
-                                    <td>@item.FILE_NAME</td>
-                                    <td>@item.FILE_FORMAT</td>
-                                    <td>@item.PX_WIDTH</td>
-                                    <td>@item.PX_LENGTH</td>
-                                    <td>@item.CASE_UNIT</td>
-                                    <td>@item.POS_ITEM</td>
-                                    <td>@item.MEMO</td>
-
-                                    @if (emp_APG_NO == "001")
-                                    {
-                                        <td>@item.CREATE_TIME</td>
-                                        <td>@item.CREATE_USER</td>
-                                        <td>@item.CHG_TIME</td>
-                                        <td>@item.CHG_USER</td>
-                                    }
-                                </tr>
-                            }
-                        }
-                        else
-                        {
-                            if (emp_APG_NO == "001")
-                            {
-                                <tr>
-                                    <td colspan="16" style="text-align:center; font-weight:600;">查無資料</td>
-                                </tr>
-                            }
-                            else
-                            {
-                                <tr>
-                                    <td colspan="8" style="text-align:center; font-weight:600;">查無資料</td>
-                                </tr>
-                            }
-                        }
-
-                    </tbody>
-                </table>
-
-                @if (Model != null && Model.Any())
-                {
-                    @Html.PagedListPager((IPagedList)Model, PageNo => Url.Action("INFO_LIST", ctrlName,
-                      new
-                      {
-                          PageNo = PageNo
-                      })
-                      , new PagedListRenderOptions
-                      {
-                          LiElementClasses = new string[] { "page-item" },
-                          PageClasses = new string[] { "page-link" },
-                          EllipsesElementClass = "page-link",
-                      })
-                }
             </section>
+        </div>
+    </section>
+}
+
+<!-- 資料表格 -->
+<div style="overflow-y: auto; height: auto; overflow-x:auto;">
+    <section class="form-data" id="table-border">
+        <table id="promTable" class="table table-bordered">
+            <thead style="position:sticky; top:-0.1px; z-index:2;">
+                <tr>
+
+                    @if (Model.CHK_FLAG == "N")
+                    {
+                        <th>
+                            @Html.HiddenFor(m => m.COND_NO)
+                            <div class="text-center d-flex">
+                                @using (Html.BeginForm("COLLSTAMP_HB_Delete", "COLLSTAMP", FormMethod.Post, new { @id = "DeleteForm" }))
+                                {
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="COND_NO" value="@Model.COND_NO" />
+                                    <button type="submit" class="btn btn-red btn_delete">
+                                        全刪除
+                                    </button>
+
+                                    @*@Html.Hi_Btn("ACT_LIST", emp_APG_NO, "", "btn_delete", "全刪除", "submit", new { @class = "btn btn-red btn_delete" })*@
+                                }
+                            </div>
+                        </th>
+                    }
+                    <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().COND_NO)</th>
+                    @if (Model.COND_TYPE == "1")
+                    {
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().PRD_ID)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_A)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_B)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_C)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_D)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().ROUND_NO)</th>
+                    }
+                    else if (Model.COND_TYPE == "2")
+                    {
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().PRD_ID)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_A)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_B)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_C)</th>
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().SHELF_D)</th>
+                    }
+                    else if (Model.COND_TYPE == "3")
+                    {
+
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().EXPR_NO)</th>
+                    }
+                    else if (Model.COND_TYPE == "4")
+                    {
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().PAY_EVENT_ID)</th>
+                    }
+                    else
+                    {
+                        <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().MMK_NO)</th>
+                    }
+                    <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().CREATE_TIME)</th>
+                    <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().CREATOR)</th>
+                    <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().EDIT_TIME)</th>
+                    <th>@Html.DisplayNameFor(model => model.ACT_BODIES.FirstOrDefault().EDITOR)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (@Model.ACT_BODIES != null && Model.ACT_BODIES.Any())
+                {
+                    foreach (var item in Model.ACT_BODIES)
+                    {
+                        <tr>
+                            @if (Model.CHK_FLAG == "N")
+                            {
+                                <td>
+                                    <div class="text-center d-flex">
+                                        <button type="submit" class="btn btn-blue" onclick="location.href='@Url.Action("COLLSTAMP_HB_Update", "COLLSTAMP")?COND_NO=@item.COND_NO&ID=@item.ID&COND_TYPE=@Model.COND_TYPE'">
+                                            修改
+                                        </button>
+                                        @*@Html.Hi_Btn("ACT_LIST", emp_APG_NO, "", "btn_update", "修改", "submit", new { @class = "btn btn-blue loadingButton", onclick = $"location.href='{Url.Action("COLLSTAMP_HB_Update", "COLLSTAMP")}?COND_NO={@item.COND_NO}&&ID={item.ID}&&COND_TYPE={@Model.COND_TYPE}'" })*@
+                                        @using (Html.BeginForm("COLLSTAMP_HB_Delete_ONE", "COLLSTAMP", FormMethod.Post))
+                                        {
+                                            <input type="hidden" name="COND_NO" value="@item.COND_NO" />
+                                            <input type="hidden" name="ID" value="@item.ID" />
+                                            <button type="submit" class="btn btn-orange btn_deleteone">
+                                                清除
+                                            </button>
+                                            @*@Html.Hi_Btn("ACT_LIST", emp_APG_NO, "", "btn_delete", "清除", "submit", new { @class = "btn btn-orange btn_deleteone" })*@
+                                        }
+                                    </div>
+                                </td>
+                            }
+                            <td>@Html.DisplayFor(model => item.COND_NO)</td>
+                            @if (Model.COND_TYPE == "1")
+                            {
+                                <td>@Html.DisplayFor(model => item.PRD_ID)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_A)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_B)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_C)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_D)</td>
+                                <td>@Html.DisplayFor(model => item.ROUND_NO)</td>
+
+                            }
+                            else if (Model.COND_TYPE == "2")
+                            {
+                                <td>@Html.DisplayFor(model => item.PRD_ID)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_A)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_B)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_C)</td>
+                                <td>@Html.DisplayFor(model => item.SHELF_D)</td>
+                            }
+                            else if (Model.COND_TYPE == "3")
+                            {
+                                <td>
+                                    @Html.DisplayFor(model => item.EXPR_NO)
+                                    @Html.DisplayFor(model => item.EXPR_NAME)
+                                </td>
+                            }
+                            else if (Model.COND_TYPE == "4")
+                            {
+                                <td>
+                                    @Html.DisplayFor(model => item.PAY_EVENT_ID)
+                                    @Html.DisplayFor(model => item.PAY_EVENT_NAME)
+                                </td>
+                            }
+                            else if (Model.COND_TYPE == "5")
+                            {
+                                <td>
+                                    @Html.DisplayFor(model => item.MMK_NO)
+                                    @Html.DisplayFor(model => item.MMK_NAME)
+                                </td>
+                            }
+                            <td>@Html.DisplayFor(model => item.CREATE_TIME)</td>
+                            <td>@Html.DisplayFor(model => item.CREATOR)</td>
+                            <td>@Html.DisplayFor(model => item.EDIT_TIME)</td>
+                            <td>@Html.DisplayFor(model => item.EDITOR)</td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="15" style="text-align:center; font-weight:600;">查無資料</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+</div>
+
+
+<!-- 單筆新增的 Modal -->
+<div class="modal fade" id="insertModal" tabindex="-1" aria-labelledby="insertModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="insertModalLabel">單筆新增</h5>
+                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                @using (Html.BeginForm("COLLSTAMP_HB_Insert", "COLLSTAMP", FormMethod.Post, new { id = "insertForm" }))
+                {
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="COND_NO" value="@Model.COND_NO" />
+                    <input type="hidden" name="CASE_NO" value="@Model.CASE_NO" />
+                    <input type="hidden" name="COND_TYPE" value="@Model.COND_TYPE" />
+                    @Html.Partial("_Insert_Body", new COLL_STAMP.Models.M_COLL_STAMP.M_CollStamp_HB.Insert { COND_NO = Model.COND_NO, COND_TYPE = Model.COND_TYPE, CASE_NO = Model.CASE_NO })
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+            </div>
         </div>
     </div>
 </div>
 
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">批次新增</h5>
+                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="uploadFormSection">
+                    <div>
+                        <p class="mt-2">
+                            <button type="button" class="btn btn-sm btn-success" id="btnDownloadTemplate">
+                                <i class="fa fa-download"></i> 下載Excel資料範本
+                            </button>
+                        </p>
+                        <br />
+                    </div>
+                    <form id="uploadForm" method="post" enctype="multipart/form-data" action="@Url.Action("UpLoadCheckshow", "COLLSTAMP")">
+                        <input type="hidden" name="COND_NO" value="@Model.COND_NO" />
+                        <input type="hidden" name="CASE_NO" value="@Model.CASE_NO" />
+                        <input type="hidden" name="COND_TYPE" value="@Model.COND_TYPE" />
+                        <div class="mb-3">
+                            <input type="file" class="form-control" id="excelFile" name="File" accept=".xls, .xlsx" required />
+                        </div>
+                        <div>
+                            <button type="submit" class="btn btn-primary" id="btnUpload">匯入檔案</button>
+                        </div>
+                    </form>
 
-@section Scripts{
+                    <div id="uploadProgress" class="progress mt-3 d-none">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- 錯誤顯示部分 -->
+                <div id="errorSection" class="mt-4 d-none">
+                    <div class="alert alert-danger">
+                        <strong>匯入失敗：</strong> <span id="errorMessage"></span>
+                    </div>
+
+                    <!-- 錯誤區塊 -->
+                    <div id="structureErrorSection" class="mb-4 d-none">
+                        <div class="card border-danger">
+                            <div class="card-header bg-danger text-white">
+                                <i class="fas fa-exclamation-triangle"></i> Excel檔案錯誤
+                            </div>
+                            <div class="card-body">
+                                <h5 class="card-title">請檢查以下問題：</h5>
+                                <ul id="structureErrorList">
+                                    <!-- 動態填充錯誤 -->
+                                </ul>
+                                <div class="mt-3">
+                                    <strong>正確的Excel範本：</strong>
+                                    <ul>
+                                        <li>必須包含名為 <code>DATA</code> 的工作表</li>
+                                        <li id="requiredColumnsInfo">必須包含以下欄位：<span id="requiredColumns"></span></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 錯誤表格 -->
+                    <div id="dataErrorSection">
+                        <h5>資料錯誤詳情：</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-striped" id="errorTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>行號</th>
+                                        <th>欄位</th>
+                                        <th>錯誤訊息</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- 錯誤數據 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning" id="btnRetryUpload">重新上傳</button>
+                    </div>
+                </div>
+
+                <!-- 成功顯示 -->
+                <div id="successSection" class="mt-4 d-none">
+                    <div class="alert alert-success">
+                        <strong>匯入成功：</strong> <span id="successMessage"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
     <script>
-
         $(document).ready(function () {
-            initPage();
+            let debounceTimer; // 防抖動計時器
 
-            // 提案案號填上modal網址
-            $(".btn_modal").click(function () {
-                const t_cas_no = $(this).data("tcasno")
-                let url = $("#promFrame").prop("src")
-                url = `${url.substring(0, url.indexOf("T_CAS_NO"))}T_CAS_NO=${t_cas_no}`
-                $("#promFrame").prop("src", url)
-            })
+            // 商品代號輸入時查詢商品名稱 (新增功能)
+            $('#PRD_ID').on('input', function () {
+                var prdId = $(this).val();
 
-            //切換分頁，顯示不同內容
-            $("ul.nav-tabs a").click(function (e) {
-                e.preventDefault();
+                // 清空商品名稱顯示
+                $('#PRD_NAME_DISPLAY').val('');
 
-                $("[id=Tab]").val($(this).attr("id"))
-
-                $(this).tab('show');
+                if (prdId && prdId.length > 0) {
+                    // 檢查格式
+                    var prdIdPattern = /^\d{8}$/;
+                    if (prdId.length === 8) {
+                        if (!prdIdPattern.test(prdId)) {
+                            $('#PRD_NAME_DISPLAY').val('格式錯誤：必須是八碼數字');
+                            return;
+                        }
+                        // 檢查是否存在於商品主檔
+                        $.ajax({
+                            url: '@Url.Action("GetProductName", "COLLSTAMP")',
+                            type: 'POST',
+                            data: { prdId: prdId },
+                            success: function (response) {
+                                if (response.success) {
+                                    if (response.productName) {
+                                        $('#PRD_NAME_DISPLAY').val(response.productName);
+                                    } else {
+                                        $('#PRD_NAME_DISPLAY').val('不存在於商品主檔');
+                                    }
+                                } else {
+                                    $('#PRD_NAME_DISPLAY').val('查詢失敗');
+                                }
+                            },
+                            error: function () {
+                                $('#PRD_NAME_DISPLAY').val('查詢錯誤');
+                            }
+                        });
+                    } else if (prdId.length < 8) {
+                        $('#PRD_NAME_DISPLAY').val('請輸入完整的八碼數字');
+                    }
+                }
             });
 
-            // CheckBox打勾才加入頁數a的href
-            $(".pagination .page-item a").click(function () {
-                let href = $(this).attr("href");
-
-
-                $(this).prop("href", href);
-            })
-
-            $(".btn_delete").click(function (e) {
-                e.preventDefault();
-
-                var confirmDelete = confirm("確定要刪除嗎?");
-                if (confirmDelete) {
-                    (this).closest("form").submit();
-
-                    alert("刪除完畢!");
-                }
-                else {
-                    alert("取消刪除!");
-                }
-
+            // 新增單筆顯示 Modal
+            $("#btnShowInsertModal").click(function () {
+                // 重置表單
+                $("#insertForm")[0].reset();
+                // 清除所有驗證訊息
+                $('#expr_validation').text('');
+                // 顯示 Modal
+                $("#insertModal").modal("show");
             });
 
-        });
+            // 提交表單的 Modal 按鈕點擊
+            $("#btnSubmitInsertForm").click(function () {
+                // 觸發表單提交
+                $("#insertForm").submit();
+            });
 
-        function initPage() {
-                // Tab
-                let tabValue = "@ViewBag.tab";
-                if (!tabValue) tabValue = "Tab1"
-                $(`#${tabValue}`).tab('show');
+            // 匯入按鈕點擊事件 - 顯示模態框
+            $("#btnShowImport").click(function () {
+                resetImportModal();
+                $("#importModal").modal("show");
+            });
 
-                // Alert
-                setTimeout(function () {
-                    const message = `@ViewBag.message`;
-                    if (message) alert(message);
-                }, 0)
+            $("#btnDownloadTemplate").click(function () {
+                window.location.href = '@Url.Action("DownloadExcelTemplate", "COLLSTAMP")?COND_TYPE=@Model.COND_TYPE';
+            });
 
-                //$('#searchButton').click(performSearch);
-                //$('#clearButton').click(clearInput);
-
-            $('#Select').val('@ViewBag.Select')
-
+            // 重置匯入
+            function resetImportModal() {
+                $("#uploadFormSection").removeClass("d-none");
+                $("#errorSection").addClass("d-none");
+                $("#successSection").addClass("d-none");
+                $("#excelFile").val("");
+                $("#errorTable tbody").empty();
+                $("#errorMessage").text("");
+                $("#successMessage").text("");
+                $("#uploadProgress").addClass("d-none");
+                $("#uploadProgress .progress-bar").width("0%");
+                $("#btnUpload").prop("disabled", false).html("匯入檔案");
+                $("#structureErrorSection").addClass("d-none");
+                $("#structureErrorList").empty();
             }
 
+            // 重新上傳按鈕點擊事件
+            $("#btnRetryUpload").click(function () {
+                $("#errorSection").addClass("d-none");
+                $("#uploadFormSection").removeClass("d-none");
+                $("#excelFile").val("");
+            });
 
-        function performSearch() {
-            var Select = document.getElementById('Select').value;
-            var Select_key = document.getElementById('Select_key').value;
-            var selectedPositem = document.getElementById('selectedPositem').value;
+            // 檔案上傳表單提交
+            $("#uploadForm").submit(function (e) {
+           e.preventDefault();
 
-            console.log(Select, Select_key, selectedPositem);
+           // 檢查是否選擇了檔案
+           if (!$("#excelFile").val()) {
+               alert("請選擇要匯入的Excel檔案");
+               return false;
+           }
 
-            $.ajax({
-                url: '@Url.Action("Info_List", "PosImage")',
-                type: 'GET',
-                data: {
-                    Select: Select,
-                    Select_key: Select_key,
-                    selectedPositem: selectedPositem
+           // 檢查檔案類型
+           var fileInput = $("#excelFile")[0];
+           var fileName = fileInput.files[0].name;
+           var fileExt = fileName.substring(fileName.lastIndexOf(".")).toLowerCase();
+
+           if (fileExt != ".xls" && fileExt != ".xlsx") {
+               alert("請上傳Excel檔案(.xls或.xlsx)");
+               return false;
+           }
+
+           // 顯示進度條
+           $("#uploadProgress").removeClass("d-none");
+
+           // 建立FormData對象用於上傳
+           var formData = new FormData(this);
+
+           // 提交表單
+           $.ajax({
+               url: $(this).attr("action"),
+               type: "POST",
+               data: formData,
+               processData: false,
+               contentType: false,
+               xhr: function () {
+                   var xhr = new window.XMLHttpRequest();
+
+                   // 上傳進度
+                   xhr.upload.addEventListener("progress", function (evt) {
+                       if (evt.lengthComputable) {
+                           var percentComplete = evt.loaded / evt.total * 100;
+                           $("#uploadProgress .progress-bar").width(percentComplete + "%");
+                       }
+                   }, false);
+
+                   return xhr;
+               },
+               beforeSend: function () {
+                   // 禁用上傳按鈕，避免重複提交
+                   $("#btnUpload").prop("disabled", true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 處理中...');
+               },
+               success: function (response) {
+                   // 隱藏進度條
+                   $("#uploadProgress").addClass("d-none");
+
+                   if (response.success) {
+                       // 顯示成功訊息
+                       $("#successMessage").text(response.message);
+                       $("#uploadFormSection").addClass("d-none");
+                       $("#successSection").removeClass("d-none");
+
+                       // 刷新頁面顯示新資料
+                       setTimeout(function () {
+                           window.location.reload();
+                       }, 2000);
+                   } else {
+                       // 顯示錯誤訊息
+                       $("#errorMessage").text(response.message);
+
+                       // 檢查是否為結構錯誤
+                       var hasStructureError = false;
+                       $("#structureErrorList").empty();
+
+                       if (response.errors && response.errors.length > 0) {
+                           // 分類錯誤：結構錯誤和數據錯誤
+                           var structureErrors = [];
+                           var dataErrors = [];
+
+                           $.each(response.errors, function (index, error) {
+                               if (error.RowNumber === 0 ||
+                                   error.ErrorMessage.includes("工作表") ||
+                                   error.ErrorMessage.includes("欄位") ||
+                                   error.KeyValue.includes("結構錯誤") ||
+                                   error.KeyValue.includes("表頭欄位錯誤") ||
+                                   error.KeyValue.includes("工作表錯誤") ||
+                                   error.KeyValue.includes("系統錯誤") ||
+                                   error.KeyValue.includes("檔案錯誤") ||
+                                   error.KeyValue.includes("讀取錯誤")) {
+
+                                   structureErrors.push(error);
+                                   hasStructureError = true;
+                               } else {
+                                   dataErrors.push(error);
+                               }
+                           });
+
+                           // 處理結構錯誤
+                           if (hasStructureError) {
+                               $("#structureErrorSection").removeClass("d-none");
+                               $.each(structureErrors, function (index, error) {
+                                   $("#structureErrorList").append(
+                                       '<li>' + error.ErrorMessage + '</li>'
+                                   );
+                               });
+
+                               // 顯示必要欄位信息
+                               var requiredColumns = getRequiredColumns('@Model.COND_TYPE');
+                               $("#requiredColumns").text(requiredColumns.join(", "));
+                           } else {
+                               $("#structureErrorSection").addClass("d-none");
+                           }
+
+                           // 處理數據錯誤
+                           $("#errorTable tbody").empty();
+                           if (dataErrors.length > 0) {
+                               $("#dataErrorSection").removeClass("d-none");
+                               $.each(dataErrors, function (index, error) {
+                                   $("#errorTable tbody").append(
+                                       '<tr>' +
+                                       '<td>' + error.RowNumber + '</td>' +
+                                       '<td>' + error.KeyValue + '</td>' +
+                                       '<td>' + error.ErrorMessage + '</td>' +
+                                       '</tr>'
+                                   );
+                               });
+                           } else {
+                               $("#dataErrorSection").addClass("d-none");
+                           }
+                       } else {
+                           // 沒有詳細錯誤，只顯示錯誤訊息
+                           $("#structureErrorSection").addClass("d-none");
+                           $("#dataErrorSection").addClass("d-none");
+                       }
+
+                       // 顯示錯誤區塊
+                       $("#uploadFormSection").addClass("d-none");
+                       $("#errorSection").removeClass("d-none");
+                   }
+               },
+               error: function (xhr, status, error) {
+                   // 隱藏進度條
+                   $("#uploadProgress").addClass("d-none");
+
+                   // 啟用上傳按鈕
+                   $("#btnUpload").prop("disabled", false).text("上傳並匯入");
+
+                   try {
+                       var response = JSON.parse(xhr.responseText);
+                       $("#errorMessage").text(response.message || "匯入失敗，請稍後再試");
+
+                       // 處理錯誤數據
+                       if (response.errors && response.errors.length > 0) {
+                           $("#structureErrorSection").removeClass("d-none");
+                           $("#structureErrorList").empty();
+
+                           $.each(response.errors, function (index, error) {
+                               $("#structureErrorList").append(
+                                   '<li>' + error.ErrorMessage + '</li>'
+                               );
+                           });
+
+                           // 顯示必要欄位信息
+                           var requiredColumns = getRequiredColumns('@Model.COND_TYPE');
+                           $("#requiredColumns").text(requiredColumns.join(", "));
+                       }
+                   } catch (e) {
+                       $("#errorMessage").text("匯入失敗：" + error);
+                       $("#structureErrorSection").addClass("d-none");
+                   }
+
+                   // 顯示錯誤區塊
+                   $("#uploadFormSection").addClass("d-none");
+                   $("#errorSection").removeClass("d-none");
+                   $("#dataErrorSection").addClass("d-none");
+               },
+               complete: function () {
+                   // 啟用上傳按鈕
+                   $("#btnUpload").prop("disabled", false).text("上傳並匯入");
+               }
+           });
+       });
+            // 取必要欄位
+            function getRequiredColumns(condType) {
+                switch (condType) {
+                    case "1": return ["商品代號", "貨架", "描一", "描二", "描三", "促銷案號"];
+                    case "2": return ["商品代號", "貨架", "描一", "描二", "描三"];
+                    case "3": return ["代收代號"];
+                    case "4": return ["支付事件代號"];
+                    case "5": return ["MMK代號"];
+                    default: return [];
                 }
-            })
-                .done(function (result) {
-                    $('#form').html(result);
-                })
-                .fail(function (error) {
-                    console.error('搜尋錯誤:', error);
-                })
-        }
+            }
 
+            // 檢查商品代號是否存在
+            function checkProductExists(prdId) {
+                return $.ajax({
+                    url: '@Url.Action("CheckProductExists", "COLLSTAMP")',
+                    type: 'POST',
+                    data: {
+                        COND_NO: '@Model.COND_NO',
+                        PRD_ID: prdId
+                    }
+                });
+            }
 
+            // 當選擇下拉選單時清空手key輸入框
+            $('#dropdown_EXPR_NO').change(function () {  // 修正ID
+                if ($(this).val()) {
+                    $('#EXPR_NO_KEY').val('');
+                    $('#expr_validation').text(''); // 清除驗證訊息
+                }
+            });
+
+            // 當輸入手key時清空下拉選單
+            $('#EXPR_NO_KEY').on('input', function () {
+                var inputVal = $(this).val();
+
+                if (inputVal) {
+                    $('#dropdown_EXPR_NO').val(''); // 修正ID
+                }
+
+                // 清除之前的計時器
+                clearTimeout(debounceTimer);
+
+                // 立即清除驗證訊息
+                $('#expr_validation').text('');
+
+                // 如果輸入為空，不進行檢查
+                if (!inputVal) {
+                    return;
+                }
+
+                // 設置防抖動，500ms後執行檢查
+                debounceTimer = setTimeout(function() {
+                    if (inputVal.length >= 3) {
+                        checkExprCodeSuffix(inputVal);
+                    }
+                }, 500);
+            });
+
+            // 檢查代收代號三碼是否存在
+            function checkExprCodeSuffix(input) {
+                if (!input || input.length < 3) {
+                    return;
+                }
+
+                // 根據輸入長度決定檢查邏輯
+                let checkValue;
+                if (input.length === 3) {
+                    // 如果輸入3碼，直接檢查這3碼
+                    checkValue = input;
+                } else if (input.length > 3) {
+                    // 如果輸入超過3碼，檢查後三碼
+                    checkValue = input.substring(input.length - 3);
+                }
+
+                $.ajax({
+                    url: '@Url.Action("CheckExprCodeSuffix", "COLLSTAMP")',
+                    type: 'POST',
+                    data: { suffix: checkValue },
+                    success: function(response) {
+                        if (response.success) {
+                            if (!response.exists) {
+                                if (input.length === 3) {
+                                    $('#expr_validation').text('此3碼代收代號不存在');
+                                } else {
+                                    $('#expr_validation').text('後三碼(' + checkValue + ')不存在');
+                                }
+                            } else {
+                                $('#expr_validation').text('');
+                            }
+                        }
+                    },
+                    error: function() {
+                        $('#expr_validation').text('檢查代收代號時發生錯誤');
+                    }
+                });
+            }
+
+            // 檢查代收代號是否與現有代號衝突
+            function checkExprNoConflict(exprNo) {
+                return $.ajax({
+                    url: '@Url.Action("CheckExprNoConflict", "COLLSTAMP")',
+                    type: 'POST',
+                    data: {
+                        COND_NO: '@Model.COND_NO',
+                        EXPR_NO: exprNo
+                    }
+                });
+            }
+
+            // 檢查促銷案號是否存在
+            function checkRoundNoExists(roundNo) {
+                return $.ajax({
+                    url: '@Url.Action("CheckRoundNoExists", "COLLSTAMP")',
+                    type: 'POST',
+                    data: {
+                        COND_NO: '@Model.COND_NO',
+                        ROUND_NO: roundNo
+                    }
+                });
+            }
+
+            // 全部刪除
+            $(".btn_delete").click(function (e) {
+                e.preventDefault();
+                var confirmDelete = confirm("確定要全部刪除嗎?");
+                if (confirmDelete) {
+                    $(this).closest("form").submit();
+                    alert("刪除完畢!");
+                } else {
+                    alert("取消刪除!");
+                }
+            });
+
+            // 單筆刪除
+            $(".btn_deleteone").click(function (e) {
+                e.preventDefault();
+                var confirmDelete = confirm("確定這筆要刪除嗎?");
+                if (confirmDelete) {
+                    $(this).closest("form").submit();
+                    alert("刪除完畢!");
+                } else {
+                    alert("取消刪除!");
+                }
+            });
+
+            // 單筆新增表單提交邏輯
+            $('#insertForm').submit(async function (e) {
+                e.preventDefault();
+
+                // 檢查必填欄位
+                const prdId = $('#PRD_ID').val();
+                const shelfA = $('#SHELF_A').val();
+                const shelfB = $('#SHELF_B').val();
+                const shelfC = $('#SHELF_C').val();
+                const shelfD = $('#SHELF_D').val();
+                const roundNo = $('#ROUND_NO').val();
+                const exprNo = $('#dropdown_EXPR_NO').val(); // 修正ID
+                const keyExprNo = $('#EXPR_NO_KEY').val();
+                const payeventNo = $('#PAY_EVENT_ID').val();
+                const mmkNo = $('#MMK_NO').val();
+                const condType = '@Model.COND_TYPE';
+
+                // 檢查是否至少填寫一個欄位
+                if (!prdId && !shelfA && !shelfB && !shelfC && !shelfD && !roundNo && !exprNo && !keyExprNo && !payeventNo && !mmkNo) {
+                    alert('請至少選擇一個欄位！');
+                    return false;
+                }
+
+                // 檢查商品代號 (必須是八碼數字) 及 要在商品主檔DB
+                if (prdId && (condType === '1' || condType === '2')) {
+                    // 檢查商品代號是否為八碼數字
+                    var prdIdPattern = /^\d{8}$/;
+                    if (!prdIdPattern.test(prdId)) {
+                        alert('必須是八碼數字！');
+                        $('#PRD_ID').focus();
+                        return false;
+                    }
+
+                    // 檢查商品代號是否存在於商品主檔和條件中
+                    try {
+                        const checkResult = await checkProductExists(prdId);
+                        if (checkResult.success) {
+                            if (!checkResult.inMasterFile) {
+                                alert('此商品代號不存在於商品主檔中！');
+                                $('#PRD_ID').focus();
+                                return false;
+                            }
+                            if (checkResult.exists) {
+                                alert('此商品代號已存在於此條件編號中！');
+                                $('#PRD_ID').focus();
+                                return false;
+                            }
+                        } else {
+                            alert('檢查商品代號時發生錯誤：' + checkResult.message);
+                            return false;
+                        }
+                    } catch (error) {
+                        alert('檢查商品代號時發生錯誤');
+                        console.error(error);
+                        return false;
+                    }
+                }
+
+                // 代收代號類型特殊處理
+                if (condType === '3') {
+                    // 檢查是否同時填寫了下拉選單和手key輸入框
+                    if (exprNo && keyExprNo) {
+                        alert('請選擇使用下拉選單或手動輸入，不可同時使用');
+                        return false;
+                    }
+
+                    // 如果兩者皆為空，提示錯誤
+                    if (!exprNo && !keyExprNo) {
+                        alert('請選擇代收代號或手動輸入代收代號');
+                        return false;
+                    }
+
+                    // 檢查手key代收代號的格式
+                    if (keyExprNo) {
+                        // 檢查長度
+                        if (keyExprNo.length > 6) {
+                            alert('手動輸入代收代號長度不得超過6碼');
+                            return false;
+                        }
+
+                        if (keyExprNo.length < 3) {
+                            alert('手動輸入代收代號長度至少需要3碼');
+                            return false;
+                        }
+
+                        // 檢查是否有錯誤訊息顯示
+                        if ($('#expr_validation').text() !== '') {
+                            alert('請修正代收代號的錯誤：' + $('#expr_validation').text());
+                            return false;
+                        }
+
+                        // 再次檢查代收代號是否存在（最終檢查）
+                        try {
+                            let checkValue;
+                            if (keyExprNo.length === 3) {
+                                checkValue = keyExprNo;
+                            } else {
+                                checkValue = keyExprNo.substring(keyExprNo.length - 3);
+                            }
+
+                            const suffixResult = await $.ajax({
+                                url: '@Url.Action("CheckExprCodeSuffix", "COLLSTAMP")',
+                                type: 'POST',
+                                data: { suffix: checkValue }
+                            });
+
+                            if (suffixResult.success && !suffixResult.exists) {
+                                if (keyExprNo.length === 3) {
+                                    alert('此3碼代收代號不存在');
+                                } else {
+                                    alert('代收代號後三碼(' + checkValue + ')不存在');
+                                }
+                                return false;
+                            }
+
+                            // 檢查是否與現有代號衝突
+                            const conflictResult = await checkExprNoConflict(keyExprNo);
+                            if (conflictResult.success && conflictResult.exists) {
+                                alert('此代收代號已存在或與現有代號衝突');
+                                return false;
+                            }
+                        } catch (error) {
+                            alert('檢查代收代號時發生錯誤');
+                            console.error(error);
+                            return false;
+                        }
+                    } else if (exprNo) {
+                        // 檢查下拉選單選擇的代收代號是否衝突
+                        try {
+                            const conflictResult = await checkExprNoConflict(exprNo);
+                            if (conflictResult.success && conflictResult.exists) {
+                                alert('此代收代號已存在或與現有代號衝突');
+                                return false;
+                            }
+                        } catch (error) {
+                            alert('檢查代收代號衝突時發生錯誤');
+                            console.error(error);
+                            return false;
+                        }
+                    }
+                }
+
+                try {
+                    if (prdId) {
+                        const checkResult = await checkProductExists(prdId);
+                        if (checkResult.success && checkResult.exists) {
+                            alert('此商品代號已存在！');
+                            return false;
+                        }
+                    }
+
+                    if (roundNo) {
+                        const checkResult = await checkRoundNoExists(roundNo);
+                        if (checkResult.success && checkResult.exists) {
+                            alert('此促銷案號已存在！');
+                            return false;
+                        }
+
+                        var roundNoPattern = /^[Nn]\d{7}$/;
+                        if (!roundNoPattern.test(roundNo)) {
+                            alert('促銷案號格式不正確，應為N開頭後接7碼數字，共8碼');
+                            $('#ROUND_NO').focus();
+                            return false;
+                        }
+                    }
+
+                    // 禁用提交按鈕，避免重複提交
+                    $("#btnSubmitInsertForm").prop("disabled", true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 處理中...');
+
+                    $.ajax({
+                        url: '@Url.Action("COLLSTAMP_HB_Insert", "COLLSTAMP")',
+                        type: 'POST',
+                        data: $(this).serialize(),
+                        success: function (response) {
+                            if (response.success) {
+                                $("#insertModal").modal("hide");
+                                window.location.href = '@Url.Action("COLLSTAMP_HB", "COLLSTAMP", new { COND_NO = Model.COND_NO})';
+                            } else {
+                                alert('儲存失敗：' + response.message);
+                                $("#btnSubmitInsertForm").prop("disabled", false).text("儲存");
+                            }
+                        },
+                        error: function () {
+                            alert('發生錯誤，請稍後再試。');
+                            $("#btnSubmitInsertForm").prop("disabled", false).text("儲存");
+                        }
+                    });
+                } catch (error) {
+                    alert('檢查數據時發生錯誤');
+                    console.error(error);
+                    $("#btnSubmitInsertForm").prop("disabled", false).text("儲存");
+                }
+            });
+        });
     </script>
 }
-
-model:
-
-namespace POSFILE_APPLY.Models.M_POS_IMG
-{
-    public class M_POS_INFO
-    {
-        [Required(ErrorMessage = "檔案名稱為必填的")]
-        [DisplayName("檔案名稱")]
-        public string FILE_NAME { get; set; }
-
-
-        [DisplayName("檔案類型")]
-        public string FILE_TYPE { get; set; }
-
-
-        [Required(ErrorMessage = "檔案格式為必填的")]
-        [DisplayName("檔案格式")]
-        public string FILE_FORMAT { get; set; }
-
-
-        [Required(ErrorMessage = "像素為必填的")]
-        [DisplayName("像素(寬)")]
-        [Range(1, int.MaxValue, ErrorMessage = "寬度必須為正整數")]
-        [RegularExpression(@"^[1-9]\d*$", ErrorMessage = "只能輸入正整數，不能包含小數點或負數")]
-        public string PX_WIDTH { get; set; }
-
-
-        [DisplayName("像素(長)")]
-        [Range(1, int.MaxValue, ErrorMessage = "寬度必須為正整數")]
-        [RegularExpression(@"^[1-9]\d*$", ErrorMessage = "只能輸入正整數，不能包含小數點或負數")]
-        public string PX_LENGTH { get; set; }
-
-
-
-        [Required(ErrorMessage = "使用單位為必填的")]
-        [DisplayName("使用單位")]
-        public string CASE_UNIT { get; set; }
-
-
-        [DisplayName("存放位址")]
-        public string SAVE_POSITION { get; set; }
-
-
-        [DisplayName("SC通訊目錄")]
-        public string SC_CATELOG { get; set; }
-
-
-        [DisplayName("SC.SERVICE")]
-        public string SC_SERVICE { get; set; }
-
-
-        [DisplayName("TM路徑")]
-        public string TM_PATH { get; set; }
-
-
-        [DisplayName("建立人員")]
-        public string CREATE_USER { get; set; }
-
-
-        [DisplayName("建立日期")]
-        public string CREATE_TIME { get; set; }
-
-
-        [DisplayName("修改人員")]
-        public string CHG_USER { get; set; }
-
-
-        [DisplayName("修改日期")]
-        public string CHG_TIME { get; set; }
-
-
-        [Required(ErrorMessage = "POS項目為必填的")]
-        [DisplayName("POS項目")]
-        public string POS_ITEM { get; set; }
-
-
-        [DisplayName("活動說明")]
-        public string MEMO { get; set; }
-
-        //TODO
-        [Required(ErrorMessage = "USER_FLAG為必選的")]
-        [DisplayName("USER是否可使用(Y:可以、N不可以))")]
-        public string USER_FLAG { get; set; }
-
-    }
-
-    public enum Select
-    {
-        nodata = 0,
-        FILE_NAME = 1,
-        FILE_FORMAT = 2,
-        CASE_UNIT = 3,
-
-    }
-}
+             
