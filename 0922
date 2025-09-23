@@ -1,289 +1,261 @@
-明白 👍 你的需求就是要照「匯入 + 下載範本」這個模式來做，像你給的 UpLoadCheckshow 和 DownloadExcelTemplate。我幫你針對「批次匯入使用者」整理一個完整範例：
+👌 好，我幫你整理成一份乾淨的、完整的程式碼，全部串起來（Controller / F_AP / View / JS / Model）。
+並且按照你的要求：
+	1.	SYS_ID：全部從 Session["SYS_ID"] 取，不再用 BaseController。
+	2.	批次匯入：檢查兩個條件
+	•	員編必須存在於 [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]。
+	•	員編不能已存在於該群組 (AP_USER)。
+	3.	下載範例檔：從 ~/File/批次匯入使用者範本.xlsx 抓現成檔案。
+	4.	View 已包含 批次匯入 Modal，結果以錯誤清單方式顯示。
 
 ⸻
 
-1️⃣ Controller (APController.cs)
+① Model
+
+public class UserModel
+{
+    public string SYS_ID { get; set; }
+    public string APG_NO { get; set; }
+    public string U_ID { get; set; }
+    public string U_NAME { get; set; }
+    public string CREATOR { get; set; }
+    public DateTime CREATE_TIME { get; set; }
+}
+
+
+⸻
+
+② Controller (APController.cs)
+
+#region 使用者管理
 
 // 批次匯入使用者
 [HttpPost]
-public ActionResult UploadUsers(HttpPostedFileBase File, string apg_no)
+public JsonResult ImportUsers(HttpPostedFileBase file, string apg_no)
 {
-    if (File == null || File.ContentLength == 0)
-    {
-        return Json(new { success = false, message = "請選擇要匯入的 Excel 檔案" });
-    }
+    if (file == null || file.ContentLength == 0)
+        return Json(new { success = false, message = "請選擇 Excel 檔案" });
 
-    // 檢查副檔名
-    string[] allowedExtensions = { ".xlsx", ".xls" };
-    string fileExtension = Path.GetExtension(File.FileName).ToLower();
-    if (!allowedExtensions.Contains(fileExtension))
-    {
-        return Json(new
-        {
-            success = false,
-            message = "請上傳 Excel 檔案(.xlsx 或 .xls)",
-            errors = new[] {
-                new { RowNumber = 0, KeyValue = "檔案格式錯誤", ErrorMessage = "請上傳正確格式" }
-            }
-        });
-    }
+    string sysId = Session["SYS_ID"]?.ToString();
+    if (string.IsNullOrEmpty(sysId))
+        return Json(new { success = false, message = "系統代號不存在，請重新進入群組管理" });
 
-    // 檔案存放目錄
     string uploadDir = Server.MapPath("~/File/Upload");
-    if (!Directory.Exists(uploadDir))
-        Directory.CreateDirectory(uploadDir);
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
 
-    // 生成安全檔名
-    string uniqueFileName = $"Users_{DateTime.Now:yyyyMMddHHmmss}{fileExtension}";
-    string uploadPath = Path.Combine(uploadDir, uniqueFileName);
+    string filePath = Path.Combine(uploadDir, Path.GetFileName(file.FileName));
+    file.SaveAs(filePath);
 
     try
     {
-        File.SaveAs(uploadPath);
-
-        // 呼叫 F_AP 方法去處理 Excel
-        var result = f_AP.ImportUsersFromExcel(uploadPath, apg_no, this.Emp_NO);
-
-        if (result.IsSuccess)
-        {
-            return Json(new
-            {
-                success = true,
-                message = $"成功匯入 {result.ValidRows} 筆資料！"
-            });
-        }
-        else
-        {
-            return Json(new
-            {
-                success = false,
-                message = result.ErrorMessage,
-                errors = result.Errors
-            });
-        }
+        var service = GetAPService();
+        var result = service.ImportUsers(filePath, sysId, apg_no, Emp_NO);
+        return Json(result);
     }
     catch (Exception ex)
     {
-        return Json(new
-        {
-            success = false,
-            message = "匯入錯誤：" + ex.Message
-        });
+        return Json(new { success = false, message = "匯入發生錯誤：" + ex.Message });
     }
     finally
     {
-        if (System.IO.File.Exists(uploadPath))
-        {
-            System.IO.File.Delete(uploadPath);
-        }
+        if (System.IO.File.Exists(filePath))
+            System.IO.File.Delete(filePath);
     }
 }
 
-// 提供下載 Excel 範本
+// 下載匯入範本
 [HttpGet]
-public ActionResult DownloadUserTemplate()
+public ActionResult DownloadImportTemplate()
 {
-    try
-    {
-        string templateFileName = "批次匯入使用者範本.xlsx";
-        string templatePath = Server.MapPath($"~/File/{templateFileName}");
+    string fileName = "批次匯入使用者範本.xlsx";
+    string filePath = Server.MapPath("~/File/" + fileName);
 
-        if (!System.IO.File.Exists(templatePath))
-        {
-            return Json(new { success = false, message = "找不到範本檔案" }, JsonRequestBehavior.AllowGet);
-        }
-
-        byte[] fileBytes = System.IO.File.ReadAllBytes(templatePath);
-        return File(fileBytes,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            templateFileName);
-    }
-    catch (Exception ex)
+    if (!System.IO.File.Exists(filePath))
     {
-        return Json(new { success = false, message = "下載範本失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
+        return Json(new { success = false, message = "找不到範本檔案" }, JsonRequestBehavior.AllowGet);
     }
+
+    byte[] fileBytes = System.IO.File.ReadAllBytes(filePath);
+    return File(fileBytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileName);
 }
+
+#endregion
 
 
 ⸻
 
-2️⃣ F_AP.cs
+③ F_AP.cs (Service 層)
 
-public class ImportResult
-{
-    public bool IsSuccess { get; set; }
-    public int ValidRows { get; set; }
-    public string ErrorMessage { get; set; }
-    public List<object> Errors { get; set; } = new List<object>();
-}
+#region 批次匯入
 
-public ImportResult ImportUsersFromExcel(string filePath, string apgNo, string creator)
+public object ImportUsers(string filePath, string sysId, string apgNo, string creator)
 {
-    var result = new ImportResult();
-    try
+    var errors = new List<string>();
+    int successCount = 0;
+
+    string connStr = $@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={filePath};
+                        Extended Properties='Excel 12.0 Xml;HDR=YES;IMEX=1'";
+
+    using (var conn = new OleDbConnection(connStr))
     {
-        using (var package = new OfficeOpenXml.ExcelPackage(new FileInfo(filePath)))
+        conn.Open();
+        var cmd = new OleDbCommand("SELECT * FROM [Sheet1$]", conn);
+        using (var reader = cmd.ExecuteReader())
         {
-            var ws = package.Workbook.Worksheets.First();
-            var rowCount = ws.Dimension.Rows;
-            int successCount = 0;
-
-            for (int row = 2; row <= rowCount; row++)
+            int row = 1;
+            while (reader.Read())
             {
-                string empNo = ws.Cells[row, 1].Text.Trim();
+                row++;
+                string empNo = reader["員編"].ToString().Trim();
                 if (string.IsNullOrEmpty(empNo)) continue;
 
-                // 檢查員工是否存在
+                // 1) 檢查員編是否存在 M1EMP_MAST
                 if (!CheckEmployeeExists(empNo))
                 {
-                    result.Errors.Add(new { RowNumber = row, KeyValue = empNo, ErrorMessage = "不存在於 M1EMP_MAST" });
+                    errors.Add($"第 {row} 行 {empNo} 不存在於員工資料表");
                     continue;
                 }
 
-                // 檢查是否已在群組
-                if (CheckUserInGroup(_sysId, apgNo, empNo))
+                // 2) 檢查是否已存在於群組
+                if (CheckUserInGroup(sysId, apgNo, empNo))
                 {
-                    result.Errors.Add(new { RowNumber = row, KeyValue = empNo, ErrorMessage = "已存在此群組" });
+                    errors.Add($"第 {row} 行 {empNo} 已存在此群組");
                     continue;
                 }
 
-                // 取得員工資訊
+                // 3) 寫入
                 var emp = GetEmployeeInfo(empNo);
-                if (emp == null)
-                {
-                    result.Errors.Add(new { RowNumber = row, KeyValue = empNo, ErrorMessage = "找不到員工基本資料" });
-                    continue;
-                }
-
-                // 新增
                 var model = new UserModel
                 {
-                    SYS_ID = _sysId,
+                    SYS_ID = sysId,
                     APG_NO = apgNo,
                     U_ID = emp.EMP_NO,
                     U_NAME = emp.EMP_NAME,
-                    CREATOR = creator,
-                    CREATE_TIME = DateTime.Now
+                    CREATOR = creator
                 };
                 InsertUser(model, creator);
                 successCount++;
             }
-
-            result.IsSuccess = result.Errors.Count == 0;
-            result.ValidRows = successCount;
-            if (result.Errors.Count > 0)
-            {
-                result.ErrorMessage = $"有 {result.Errors.Count} 筆資料錯誤";
-            }
         }
     }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = ex.Message;
-    }
-    return result;
+
+    if (errors.Any())
+        return new { success = false, message = "匯入完成，但有錯誤", successCount, errors };
+    else
+        return new { success = true, message = $"成功匯入 {successCount} 筆" };
 }
+
+// 檢查員編是否存在 M1EMP_MAST
+private bool CheckEmployeeExists(string empNo)
+{
+    string sql = @"SELECT EMP_NO FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
+    var dt = SVS_DBmanager.QueryBySQL(sql, new List<SqlParameter> { new SqlParameter("@EMP_NO", empNo) });
+    return dt.Rows.Count > 0;
+}
+
+// 檢查是否已存在於群組
+private bool CheckUserInGroup(string sysId, string apgNo, string empNo)
+{
+    string sql = @"SELECT U_ID FROM [HI_TMMAIN].[dbo].[AP_USER]
+                   WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+    var dt = SVS_DBmanager.QueryBySQL(sql, new List<SqlParameter> {
+        new SqlParameter("@SYS_ID", sysId),
+        new SqlParameter("@APG_NO", apgNo),
+        new SqlParameter("@U_ID", empNo)
+    });
+    return dt.Rows.Count > 0;
+}
+
+#endregion
 
 
 ⸻
 
-3️⃣ View (cshtml)
+④ View (cshtml 片段)
 
-<div>
-    <button type="button" class="btn btn-primary" id="btnShowImport">批次匯入</button>
-    <button type="button" class="btn btn-success" id="btnDownloadTemplate">下載範本</button>
-</div>
+在「管理使用者」區塊的 header 裡補一個 批次匯入按鈕：
 
-<!-- 匯入 Modal -->
+<button type="button" class="btn btn-primary" onclick="openImportModal()" id="importUserBtn" disabled>
+    <i class="fas fa-file-import"></i> 批次匯入使用者
+</button>
+
+新增 Modal：
+
 <div class="modal fade" id="importModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">批次匯入使用者</h5>
-        <button type="button" class="btn-close" data-dismiss="modal"></button>
+        <button type="button" class="close" data-dismiss="modal">&times;</button>
       </div>
       <div class="modal-body">
-        <form id="uploadForm" enctype="multipart/form-data" method="post" action="@Url.Action("UploadUsers","AP")">
-          <input type="hidden" name="apg_no" value="@ViewBag.APG_NO" />
-          <div class="mb-3">
-            <input type="file" class="form-control" id="excelFile" name="File" accept=".xls,.xlsx" required />
+        <form id="importForm" enctype="multipart/form-data" method="post">
+          <input type="hidden" name="apg_no" id="importGroupNo" />
+          <input type="file" class="form-control mb-2" name="file" accept=".xls,.xlsx" required />
+          <div class="d-flex justify-content-between">
+              <button type="submit" class="btn btn-primary">匯入</button>
+              <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                  <i class="fas fa-download"></i> 下載範本
+              </button>
           </div>
-          <button type="submit" class="btn btn-primary" id="btnUpload">匯入</button>
         </form>
-
-        <!-- 錯誤表格 -->
-        <div id="errorSection" class="mt-4 d-none">
-          <h5>錯誤清單：</h5>
-          <table class="table table-bordered" id="errorTable">
-            <thead>
-              <tr>
-                <th>行號</th>
-                <th>員編</th>
-                <th>錯誤訊息</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-
-        <!-- 成功訊息 -->
-        <div id="successSection" class="alert alert-success mt-4 d-none"></div>
+        <div id="importResult" class="mt-3"></div>
       </div>
     </div>
   </div>
 </div>
 
-@section scripts{
-<script>
-$(function(){
-    $("#btnShowImport").click(function(){
-        $("#importModal").modal("show");
-    });
 
-    $("#btnDownloadTemplate").click(function(){
-        window.location.href='@Url.Action("DownloadUserTemplate","AP")';
-    });
+⸻
 
-    $("#uploadForm").submit(function(e){
-        e.preventDefault();
-        var formData = new FormData(this);
-        $.ajax({
-            url: $(this).attr("action"),
-            type: "POST",
-            data: formData,
-            processData: false,
-            contentType: false,
-            success: function(res){
-                if(res.success){
-                    $("#successSection").removeClass("d-none").text(res.message);
-                    $("#errorSection").addClass("d-none");
-                }else{
-                    $("#errorSection").removeClass("d-none");
-                    $("#errorTable tbody").empty();
-                    if(res.errors){
-                        $.each(res.errors,function(i,err){
-                            $("#errorTable tbody").append(
-                                `<tr><td>${err.RowNumber}</td><td>${err.KeyValue}</td><td>${err.ErrorMessage}</td></tr>`
-                            );
-                        });
-                    }
-                }
-            }
-        });
-    });
-});
-</script>
+⑤ JS
+
+function openImportModal() {
+    $("#importGroupNo").val($("#groupSelect").val()); // 帶目前選的群組
+    $("#importModal").modal("show");
 }
 
+function downloadTemplate() {
+    window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
+}
+
+$("#importForm").submit(function(e){
+    e.preventDefault();
+    var formData = new FormData(this);
+    $.ajax({
+        url: '@Url.Action("ImportUsers", "AP")',
+        type: 'POST',
+        data: formData,
+        contentType: false,
+        processData: false,
+        success: function(res){
+            if(res.success){
+                $("#importResult").html('<div class="alert alert-success">'+res.message+'</div>');
+                loadUsers();
+            }else{
+                let html = '<div class="alert alert-danger">'+res.message+'</div>';
+                if(res.errors){
+                    html += '<ul>';
+                    res.errors.forEach(err => { html += `<li>${err}</li>`; });
+                    html += '</ul>';
+                }
+                $("#importResult").html(html);
+            }
+        }
+    });
+});
+
 
 ⸻
 
-✅ 這樣就有：
-	•	「批次匯入」Modal（上傳 Excel）
-	•	「下載範本」按鈕（從 ~/File/批次匯入使用者範本.xlsx 下載）
-	•	後端會驗證員編是否存在、是否重複，錯誤會以表格顯示
+✅ 這樣整理完：
+	•	Model：UserModel
+	•	Controller：ImportUsers / DownloadImportTemplate
+	•	F_AP：ImportUsers + CheckEmployeeExists + CheckUserInGroup
+	•	View：批次匯入 Modal + 按鈕
+	•	JS：Ajax 上傳、結果顯示
 
 ⸻
 
-要不要我幫你直接生一份 Excel 範本檔內容（只有標題列：員編），讓使用者能下載？
+要不要我幫你在 批次匯入錯誤清單 裡加「表格格式」(行號 / 員編 / 錯誤原因)，而不是單純 <ul>？這樣看起來更整齊。
