@@ -1,102 +1,85 @@
---結構檢查部分
-BEGIN TRY
--- 先創建一個臨時表來導入Excel數據
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+我幫你把目前的重點逐條檢查，因為你說還是 0 筆匯入成功，代表 Excel → 臨時表 (#TEMP_IMPORT) 這段沒有資料進來。
 
-CREATE TABLE #TEMP_IMPORT (
-RowNum INT IDENTITY(1,1),
-EMP_NO VARCHAR(20),
-IsValid BIT DEFAULT 1,
-ErrorMsg NVARCHAR(200)
-);
+⸻
 
---嘗試導入Excel數據
-DECLARE @Query NVARCHAR(MAX);
-SET @Query = N'
-INSERT INTO #TEMP_IMPORT (EMP_NO)
-SELECT CAST(t.[員工編號] AS VARCHAR(20))
+1️⃣ Extended Properties 是否正確？
+
+你現在的檔案是 批次匯入使用者範本.xlsx，工作表名稱是 DATA。
+那 SQL 必須是這樣：
+
 FROM OpenDataSource(
-    ''Microsoft.ACE.OLEDB.12.0'',
-    ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';
-    Extended properties=""Excel 12.0 Xml;HDR=YES""''
+    'Microsoft.ACE.OLEDB.12.0',
+    'Data Source=' + REPLACE(@filePath, '''', '''''') + ';
+    Extended properties="Excel 12.0 Xml;HDR=YES"'
 )...[DATA$] AS t
-WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''''
-';
-EXEC sp_executesql @Query;
 
--- 檢查是否有匯入的資料
-DECLARE @RowCount INT = (SELECT COUNT(*) FROM #TEMP_IMPORT);
+👉 確認 Xml、HDR=YES 都有加上。
+如果還是 Excel 12.0 沒有 Xml，就一定會讀不到 .xlsx。
 
-IF @RowCount = 0
-BEGIN
---沒有資料被導入，可能是 Excel 中欄位名稱不符合或工作表名稱不正確
-SELECT 0 AS SuccessCount;
-SELECT 0 AS RowNumber, '資料錯誤' AS EmpNo,'匯入失敗：Excel 檔案中沒有符合條件的資料，請檢查工作表名稱是否為 DATA，以及必要欄位[員工編號]是否存在' AS ErrorMessage;
+⸻
 
---清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END
+2️⃣ Excel 檔案表頭
 
---檢查是否已經有錯誤記錄
-IF EXISTS (SELECT 1 FROM #TEMP_IMPORT WHERE IsValid = 0)
-BEGIN
-SELECT 0 AS SuccessCount;
-SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage
-FROM #TEMP_IMPORT
-WHERE IsValid = 0;
+你說表頭已經改成 「員工編號」，所以 SQL 的 SELECT 是：
 
---清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END
-END TRY
-BEGIN CATCH
---捕獲並處理錯誤
-DECLARE @ErrorMessage NVARCHAR(MAX) = ERROR_MESSAGE();
+SELECT CAST(t.[員工編號] AS VARCHAR(20))
 
---返回錯誤信息
-SELECT 0 AS SuccessCount;
+⚠️ 注意：表頭必須完全一樣，不能有空白、隱藏字元。
+建議你開 Excel，按 F2 編輯那個欄位，看是不是其實是 "員工編號 "（多了一個全形/半形空格）。
 
--- 處理常見錯誤
-IF @ErrorMessage LIKE '%DATA$%'
-SELECT 0 AS RowNumber,'工作表錯誤' AS EmpNo, '找不到名為 ''DATA'' 的工作表' AS ErrorMessage;
-ELSE IF @ErrorMessage LIKE '%員工編號%'
-SELECT 0 AS RowNumber, '欄位錯誤' AS EmpNo, '找不到必要的欄位[員工編號]，請檢查Excel的表頭欄位名稱是否正確' AS ErrorMessage;
-ELSE
-SELECT 0 AS RowNumber, '讀取錯誤' AS EmpNo, @ErrorMessage AS ErrorMessage;
+⸻
 
--- 清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END CATCH;
+3️⃣ Excel 檔案儲存格型別
 
--- 如果結構檢查通過，繼續處理
--- 員工不存在檢查
-UPDATE t SET IsValid=0, ErrorMsg=N'員工不存在'
-FROM #TEMP_IMPORT t
-WHERE NOT EXISTS (
-SELECT 1 FROM VW_M1EMP_MAST e WHERE e.EMP_NO = t.EMP_NO
-);
+OLEDB 讀 Excel 的時候，會「猜型別」，如果前幾列是空白或文字，OLEDB 會把整欄判成 NULL。
+例如：
+	•	如果前 8 列都是空的，第 9 列才有員工編號 → 可能整欄都被當 NULL。
+	•	如果有人員工編號是 000123 → 可能被轉成 123。
 
---已存在於群組檢查
-UPDATE t SET IsValid=0, ErrorMsg=N'群組已存在此員工'
-FROM #TEMP_IMPORT t
-WHERE EXISTS (
-SELECT 1 FROM AP_USER u
-WHERE u.SYS_ID=@SYS_ID AND u.APG_NO=@APG_NO AND u.U_ID=t.EMP_NO
-);
+✅ 解法：
+在 SQL 的 WHERE 裡面你已經寫：
 
---寫入正式表
-INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
-SELECT @SYS_ID, @APG_NO, e.EMP_NO, e.EMP_NAME, @CREATOR, GETDATE()
-FROM #TEMP_IMPORT t
-JOIN VW_M1EMP_MAST e ON e.EMP_NO=t.EMP_NO
-WHERE t.IsValid=1;
+WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''
 
---回傳結果
-SELECT COUNT(*) AS SuccessCount FROM #TEMP_IMPORT WHERE IsValid=1;
-SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage FROM #TEMP_IMPORT WHERE IsValid=0;
+這是對的，但建議把 CAST 拿掉，先直接塞進去看看：
 
---清理臨時表
-DROP TABLE #TEMP_IMPORT
+SELECT t.[員工編號]
+
+這樣比較容易 debug。
+
+⸻
+
+4️⃣ Debug 方法
+
+我建議你先在 SQL Server Management Studio 裡，直接執行下面這段：
+
+SELECT *
+FROM OpenDataSource(
+    'Microsoft.ACE.OLEDB.12.0',
+    'Data Source=C:\你的路徑\批次匯入使用者範本.xlsx;
+    Extended properties="Excel 12.0 Xml;HDR=YES"'
+)...[DATA$]
+
+👉 看看能不能真的抓到資料。
+如果這邊都沒有東西，那問題就是 Excel 檔案本身（表頭或格式）。
+
+⸻
+
+5️⃣ 你的 SQL 結構
+
+你現在 BuildUserImportSql() 裡面的邏輯本身沒問題，流程是：
+	1.	建 #TEMP_IMPORT
+	2.	用 OLEDB 匯入 Excel
+	3.	檢查員工是否存在 (VW_M1EMP_MAST)
+	4.	檢查是否已存在群組 (AP_USER)
+	5.	插入 AP_USER
+	6.	回傳成功/失敗筆數
+
+這一整段唯一會導致 **「0 筆成功匯入」**的，就是 Step 2 匯入失敗（但沒進 CATCH 區塊）。
+
+⸻
+
+✅ 我建議你：
+先照 Step 4 在 SSMS 裡跑 OpenDataSource，確定能抓到 員工編號 的值。
+
+要不要我直接幫你修改 BuildUserImportSql()，讓它在匯入完 #TEMP_IMPORT 之後，先 SELECT * FROM #TEMP_IMPORT 出來，方便你看到 Excel 到底有沒有被讀進來？
