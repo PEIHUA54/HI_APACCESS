@@ -1,45 +1,24 @@
-了解 👍 既然你已經把表頭確定改成 員工編號，那現在仍然匯入 0 筆，代表 SQL 執行到這段的 OpenDataSource 根本沒有讀到任何資料：
-
-INSERT INTO #TEMP_IMPORT (EMP_NO)
-SELECT CAST(t.[員工編號] AS VARCHAR(20))
-FROM OpenDataSource(
-    'Microsoft.ACE.OLEDB.12.0',
-    'Data Source=...;User ID=Admin;Password=;Extended properties=Excel 12.0'
-)...[DATA$] AS t
-WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''
-
+好，謝謝你提供細節 👌
+	•	檔案副檔名：批次匯入使用者範本.xlsx → 這是新版 Excel (.xlsx) 格式
+	•	第一個工作表名稱：DATA → 你 SQL 寫 ...[DATA$] 是對的
 
 ⸻
 
-🔎 為什麼還是 0 筆？
+🔎 問題出在 Extended Properties
 
-我幫你列幾個最常見的情況：
-	1.	工作表名稱不是 DATA
-	•	這裡一定要是 DATA$，而且大小寫要對。
-	•	如果你的 Excel 第一個工作表叫「Sheet1」或「員工名單」，就會直接沒資料。
-	2.	Excel 版本不符合
-	•	你 SQL 用的是：Extended properties=Excel 12.0 → 這代表 .xls (舊格式)。
-	•	如果你上傳的是 .xlsx (新格式)，應該用：
+你的 SQL 用的是這個：
+
+Extended properties=Excel 12.0
+
+這其實是給舊的 .xls 用的。
+對 .xlsx 必須用這個：
 
 Extended properties="Excel 12.0 Xml;HDR=YES";
 
 
-	•	少了 Xml 的話，ACE 會讀不到。
-
-	3.	HDR 沒設
-	•	預設 HDR=NO，SQL Server 會把第一列當成資料，不會當欄位名稱。
-	•	這樣你查 t.[員工編號] 就會找不到。
-	•	正確應該是：
-
-Extended properties="Excel 12.0 Xml;HDR=YES";
-
-
-
 ⸻
 
-✅ 建議修正
-
-把 SQL 那段改成這樣：
+✅ 修正後完整 SQL 片段
 
 SET @Query = N'
 INSERT INTO #TEMP_IMPORT (EMP_NO)
@@ -52,18 +31,23 @@ FROM OpenDataSource(
 WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''''
 ';
 
-⚠️ 重點：
-	•	Excel 12.0 Xml → 對應 .xlsx
-	•	HDR=YES → 讓第一列當欄位名稱（你才抓得到 員工編號）
 
 ⸻
 
-📌 如果你上傳的 Excel 其實是 .xls 舊格式，那就改回：
+🚀 這樣改的效果
+	1.	Xml → 對應 .xlsx 格式，不會再抓不到。
+	2.	HDR=YES → 第一列會當欄位名稱，你才能正確用 t.[員工編號]。
+
+⸻
+
+再提醒一次 ⚠️
+	•	如果有一天你要支援 .xls 舊格式，就要用：
 
 Extended properties="Excel 8.0;HDR=YES";
 
 
+	•	現在你的範本是 .xlsx，所以必須用 Excel 12.0 Xml;HDR=YES。
+
 ⸻
 
-👉 你要不要把你現在上傳的 Excel 實際檔名 + 副檔名 + 第一個工作表名稱 跟我說？
-我可以幫你把那段 SQL 的 Extended properties 精確改對，不然一直 0 筆就是卡在這裡。
+要不要我幫你把 BuildUserImportSql() 的 完整修正版 整理給你？這樣你就可以直接換掉，不會再 0 筆。
