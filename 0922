@@ -1,193 +1,100 @@
-好 👌
-我幫你整理一個 完整可跑的 .NET Framework 版本 ImportUsersFromExcel()，用 ExcelDataReader 來解析 Excel，不用 OLEDB，也不用 CodePagesEncodingProvider。
 
-⸻
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">批次新增</h5>
+                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="uploadFormSection">
+                    <div>
+                        <p class="mt-2">
+                            <button type="button" class="btn btn-sm btn-success" id="btnDownloadTemplate">
+                                <i class="fa fa-download"></i> 下載Excel資料範本
+                            </button>
+                        </p>
+                        <br />
+                    </div>
+                    <form id="uploadForm" method="post" enctype="multipart/form-data" action="@Url.Action("UpLoadCheckshow", "COLLSTAMP")">
+                        <input type="hidden" name="COND_NO" value="@Model.COND_NO" />
+                        <input type="hidden" name="CASE_NO" value="@Model.CASE_NO" />
+                        <input type="hidden" name="COND_TYPE" value="@Model.COND_TYPE" />
+                        <div class="mb-3">
+                            <input type="file" class="form-control" id="excelFile" name="File" accept=".xls, .xlsx" required />
+                        </div>
+                        <div>
+                            <button type="submit" class="btn btn-primary" id="btnUpload">匯入檔案</button>
+                        </div>
+                    </form>
 
-🔧 ImportUsersFromExcel (完整程式碼)
+                    <div id="uploadProgress" class="progress mt-3 d-none">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
 
-public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-{
-    ImportResult result = new ImportResult()
-    {
-        ErrorMessages = new List<ImportError>()
-    };
+                <!-- 錯誤顯示部分 -->
+                <div id="errorSection" class="mt-4 d-none">
+                    <div class="alert alert-danger">
+                        <strong>匯入失敗：</strong> <span id="errorMessage"></span>
+                    </div>
 
-    try
-    {
-        // 防呆檢查
-        if (string.IsNullOrWhiteSpace(sysId))
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "系統代號遺失 (SYS_ID)";
-            return result;
-        }
-        if (string.IsNullOrWhiteSpace(apgNo))
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "群組代號遺失 (APG_NO)";
-            return result;
-        }
+                    <!-- 錯誤區塊 -->
+                    <div id="structureErrorSection" class="mb-4 d-none">
+                        <div class="card border-danger">
+                            <div class="card-header bg-danger text-white">
+                                <i class="fas fa-exclamation-triangle"></i> Excel檔案錯誤
+                            </div>
+                            <div class="card-body">
+                                <h5 class="card-title">請檢查以下問題：</h5>
+                                <ul id="structureErrorList">
+                                    <!-- 動態填充錯誤 -->
+                                </ul>
+                                <div class="mt-3">
+                                    <strong>正確的Excel範本：</strong>
+                                    <ul>
+                                        <li>必須包含名為 <code>DATA</code> 的工作表</li>
+                                        <li id="requiredColumnsInfo">必須包含以下欄位：<span id="requiredColumns"></span></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-        var rows = new List<(int RowNumber, string EmpNo)>();
+                    <!-- 錯誤表格 -->
+                    <div id="dataErrorSection">
+                        <h5>資料錯誤詳情：</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-striped" id="errorTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>行號</th>
+                                        <th>欄位</th>
+                                        <th>錯誤訊息</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- 錯誤數據 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
 
-        // 讀 Excel
-        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
-        {
-            int rowIndex = 0;
-            while (reader.Read())
-            {
-                rowIndex++;
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning" id="btnRetryUpload">重新上傳</button>
+                    </div>
+                </div>
 
-                // 第一列當表頭 → 檢查是否正確
-                if (rowIndex == 1)
-                {
-                    string header = reader.GetString(0)?.Trim();
-                    if (string.IsNullOrEmpty(header) || header != "員工編號")
-                    {
-                        result.IsSuccess = false;
-                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                        return result;
-                    }
-                    continue;
-                }
-
-                // 讀取資料
-                string empNo = reader.GetValue(0)?.ToString().Trim();
-                if (!string.IsNullOrEmpty(empNo))
-                {
-                    rows.Add((rowIndex, empNo));
-                }
-            }
-        }
-
-        // 沒有資料
-        if (rows.Count == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "Excel 無任何員工資料";
-            return result;
-        }
-
-        int successCount = 0;
-
-        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
-        {
-            con.Open();
-
-            foreach (var row in rows)
-            {
-                try
-                {
-                    // 檢查員工是否存在
-                    string checkEmpSql = "SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
-                    string empName = null;
-                    using (var cmd = new SqlCommand(checkEmpSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-                        empName = cmd.ExecuteScalar() as string;
-                    }
-
-                    if (string.IsNullOrEmpty(empName))
-                    {
-                        result.ErrorMessages.Add(new ImportError
-                        {
-                            RowNumber = row.RowNumber,
-                            EmpNo = row.EmpNo,
-                            Message = "查無此員工"
-                        });
-                        continue;
-                    }
-
-                    // 檢查是否已存在於群組
-                    string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-                    using (var cmd = new SqlCommand(checkUserSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-
-                        int exists = (int)cmd.ExecuteScalar();
-                        if (exists > 0)
-                        {
-                            result.ErrorMessages.Add(new ImportError
-                            {
-                                RowNumber = row.RowNumber,
-                                EmpNo = row.EmpNo,
-                                Message = "此群組已存在該員工"
-                            });
-                            continue;
-                        }
-                    }
-
-                    // 寫入 AP_USER
-                    string insertSql = @"
-                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
-
-                    using (var cmd = new SqlCommand(insertSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        cmd.Parameters.AddWithValue("@U_NAME", empName);
-                        cmd.Parameters.AddWithValue("@CREATOR", creator);
-
-                        cmd.ExecuteNonQuery();
-                        successCount++;
-                    }
-                }
-                catch (Exception exRow)
-                {
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = row.RowNumber,
-                        EmpNo = row.EmpNo,
-                        Message = "寫入錯誤：" + exRow.Message
-                    });
-                }
-            }
-        }
-
-        result.SuccessCount = successCount;
-        result.IsSuccess = successCount > 0 && result.ErrorMessages.Count == 0;
-
-        if (successCount == 0 && result.ErrorMessages.Count > 0)
-        {
-            result.ErrorMessage = "匯入失敗，所有資料均有錯誤";
-        }
-        else if (result.ErrorMessages.Count > 0)
-        {
-            result.ErrorMessage = "部分資料匯入失敗，請檢查錯誤清單";
-        }
-        else
-        {
-            result.ErrorMessage = "";
-        }
-    }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-    }
-
-    return result;
-}
-
-
-⸻
-
-📌 流程說明
-	1.	用 ExcelDataReader 打開 Excel，第一列檢查表頭 =「員工編號」。
-	2.	從第二列開始，一筆一筆讀取員工編號。
-	3.	到 DB 檢查：
-	•	員工是否存在 (VW_M1EMP_MAST)
-	•	是否已存在群組 (AP_USER)
-	4.	如果都通過，INSERT 新的使用者記錄 (AP_USER)。
-	5.	錯誤（找不到員工/已存在/DB錯誤）會收集進 ErrorMessages，最後在前端 modal 顯示。
-
-⸻
-
-這樣完全不用 OLEDB，也不用 ACE Provider，單純在程式端用 ExcelDataReader 解析 Excel。
-
-要不要我也幫你把 View + 前端 modal 的錯誤訊息渲染，改成表格排版（RowNumber, EmpNo, Message 三欄）？這樣錯誤清單會更清楚。
+                <!-- 成功顯示 -->
+                <div id="successSection" class="mt-4 d-none">
+                    <div class="alert alert-success">
+                        <strong>匯入成功：</strong> <span id="successMessage"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
