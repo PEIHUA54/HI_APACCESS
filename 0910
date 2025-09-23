@@ -1,37 +1,105 @@
-   //2 取得群組人員清單
-   public string GetGroupAllUser(string requestJson)
-   {
-       var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+了解 👍
+你說的功能 7 是 GetAllUser (取得全部人員清單)，而不是 GetEmpNoByAD。
+那我幫你整理三個 Factory 完整改版的程式碼，全部符合你剛剛提的需求：
 
-       try
-       {
-           var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
-           FGetGroupAllUser func = new FGetGroupAllUser();
-           response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
-       }
-       catch (Exception ex)
-       {
-           response = new GetGroupAllUserModel.GetGroupAllUserResponse
-           {
-               Result_code = Common.Codes.SYSTEM_ERROR,
-               Msg = "系統錯誤：" + ex.Message
-           };
-       }
+⸻
 
-       return JsonConvert.SerializeObject(response);
-   }
-
- //7 GetAllUser(取得全部人員清單)
-       
---------
+🔹 1. FGetAllUser.cs (功能 7)
 
 using HI_APACCESS_DLL.Models;
 using System;
 using System.Collections.Generic;
 using Microsoft.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetAllUser
+    {
+        internal GetAllUserModel.GetAllUserResponse Execute(string sysId, string environment)
+        {
+            var response = new GetAllUserModel.GetAllUserResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var resultList = new List<GetAllUserModel.UserData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
+SELECT U_ID AS UserID, U_NAME AS UserName
+FROM [HI_TMMAIN].[dbo].[AP_USER]
+WHERE SYS_ID=@SysID
+ORDER BY U_ID";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetAllUserModel.UserData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+🔹 2. FGetGroupAllUser.cs (功能 2 改版)
+
+using HI_APACCESS_DLL.Models;
+using System;
+using System.Collections.Generic;
+using Microsoft.Data.SqlClient;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -60,23 +128,26 @@ namespace HI_APACCESS_DLL.Factory
                     return response;
                 }
 
-                var userList = new List<string>();
+                var resultList = new List<GetGroupAllUserModel.UserData>();
 
                 using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
                     conn.Open();
 
-                    // 3. 如果包含子群組，先把所有群組ID取出
+                    // 群組清單
                     var groupIds = new List<string> { groupId };
 
                     if (isIncludeChildGroups)
                     {
-                        string sqlChild = @"SELECT APG_NO FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+                        string sqlChild = @"SELECT APG_NO 
+                                            FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
                                             WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+
                         using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
                         {
                             cmd.Parameters.AddWithValue("@SysID", sysId);
                             cmd.Parameters.AddWithValue("@GroupID", groupId);
+
                             using (var reader = cmd.ExecuteReader())
                             {
                                 while (reader.Read())
@@ -87,18 +158,13 @@ namespace HI_APACCESS_DLL.Factory
                         }
                     }
 
-                    // 4. 查詢所有這些群組的使用者
-                    string sqlUser = @"SELECT DISTINCT U_ID 
-                                       FROM [HI_TMMAIN].[dbo].[AP_USER] 
-                                       WHERE SYS_ID=@SysID AND APG_NO IN ({0})";
-
-                    // 動態組 IN 子句
-                    var parameters = new List<string>();
-                    for (int i = 0; i < groupIds.Count; i++)
-                    {
-                        parameters.Add($"@Group{i}");
-                    }
-                    sqlUser = string.Format(sqlUser, string.Join(",", parameters));
+                    // 取使用者清單
+                    string sqlUser = $@"
+SELECT DISTINCT U_ID AS UserID, U_NAME AS UserName
+FROM [HI_TMMAIN].[dbo].[AP_USER]
+WHERE SYS_ID=@SysID 
+AND APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
+ORDER BY U_ID";
 
                     using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
                     {
@@ -112,26 +178,26 @@ namespace HI_APACCESS_DLL.Factory
                         {
                             while (reader.Read())
                             {
-                                userList.Add(reader["U_ID"].ToString());
+                                resultList.Add(new GetGroupAllUserModel.UserData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
                             }
                         }
                     }
                 }
 
-                // 5. 結果判斷
-                if (userList.Count == 0)
+                if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
+                    response.Msg = "查無人員";
                 }
                 else
                 {
                     response.Result_code = Common.Codes.SUCCESS;
                     response.Msg = "成功";
-                    response.Result = new GetGroupAllUserModel.ResultData
-                    {
-                        UserIDList = userList
-                    };
+                    response.Result = resultList;
                 }
             }
             catch (Exception ex)
@@ -146,13 +212,16 @@ namespace HI_APACCESS_DLL.Factory
 }
 
 
+⸻
+
+🔹 3. FGetTree.cs (功能 3 改版)
+
+多回傳 Memo 欄位，並且只抓 IS_SHOW = 'Y'
+
 using HI_APACCESS_DLL.Models;
 using System;
 using System.Collections.Generic;
 using Microsoft.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -187,7 +256,6 @@ namespace HI_APACCESS_DLL.Factory
                 {
                     conn.Open();
 
-                    // 3. 查詢功能清單
                     string sql = @"
 SELECT DISTINCT
     CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
@@ -198,16 +266,15 @@ SELECT DISTINCT
     a.VIEW_H AS CONTROLLER,
     a.VIEW_HB AS ACTION,
     a.SORT_NO,
-    a.PARENT_ID
+    a.PARENT_ID,
+    a.MEMO
 FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
 LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-    AND a.sys_id= b.sys_id 
+    ON a.FUNC_ID = b.FUNC_ID
 WHERE a.SYS_ID=@SysID 
   AND b.APG_NO=@GroupID
   AND a.IS_SHOW='Y'
-ORDER BY a.SORT_NO
-";
+ORDER BY a.SORT_NO";
 
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
@@ -226,18 +293,18 @@ ORDER BY a.SORT_NO
                                     Action = reader["ACTION"].ToString(),
                                     Sort = Convert.ToInt32(reader["SORT_NO"]),
                                     ParentID = reader["PARENT_ID"].ToString(),
-                                    Level = reader["LEVEL"].ToString()
+                                    Level = reader["LEVEL"].ToString(),
+                                    Memo = reader["MEMO"].ToString()
                                 });
                             }
                         }
                     }
                 }
 
-                // 4. 結果判斷
                 if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
+                    response.Msg = "查無功能";
                 }
                 else
                 {
@@ -256,3 +323,10 @@ ORDER BY a.SORT_NO
         }
     }
 }
+
+
+⸻
+
+這樣功能 2、3、7（也就是 GetGroupAllUser、GetTree、GetAllUser）都完整改版了 ✅
+
+要不要我連同 Models (GetAllUserModel / GetGroupAllUserModel / GetTreeModel) 也一起整理給你？這樣你不用自己再去配對 Response 結構。
