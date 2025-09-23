@@ -1,261 +1,1115 @@
-👌 好，我幫你整理成一份乾淨的、完整的程式碼，全部串起來（Controller / F_AP / View / JS / Model）。
-並且按照你的要求：
-	1.	SYS_ID：全部從 Session["SYS_ID"] 取，不再用 BaseController。
-	2.	批次匯入：檢查兩個條件
-	•	員編必須存在於 [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]。
-	•	員編不能已存在於該群組 (AP_USER)。
-	3.	下載範例檔：從 ~/File/批次匯入使用者範本.xlsx 抓現成檔案。
-	4.	View 已包含 批次匯入 Modal，結果以錯誤清單方式顯示。
+現在問題:System.InvalidOperationException: ''Microsoft.ACE.OLEDB.12.0' 提供者並未登錄於本機電腦上。'
 
-⸻
+ //匯入上傳檔案
+ [HttpPost]
+ public ActionResult UpLoadCheckshow(HttpPostedFileBase File, string CASE_NO, string COND_NO, string COND_TYPE)
+ {
+     if (File == null || File.ContentLength == 0)
+     {
+         return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+     }
 
-① Model
+     // 檢查檔案格式
+     string[] allowedExtensions = { ".xlsx", ".xls" };
+     string fileExtension = Path.GetExtension(File.FileName).ToLower();
 
-public class UserModel
-{
-    public string SYS_ID { get; set; }
-    public string APG_NO { get; set; }
-    public string U_ID { get; set; }
-    public string U_NAME { get; set; }
-    public string CREATOR { get; set; }
-    public DateTime CREATE_TIME { get; set; }
-}
-
-
-⸻
-
-② Controller (APController.cs)
-
-#region 使用者管理
-
-// 批次匯入使用者
-[HttpPost]
-public JsonResult ImportUsers(HttpPostedFileBase file, string apg_no)
-{
-    if (file == null || file.ContentLength == 0)
-        return Json(new { success = false, message = "請選擇 Excel 檔案" });
-
-    string sysId = Session["SYS_ID"]?.ToString();
-    if (string.IsNullOrEmpty(sysId))
-        return Json(new { success = false, message = "系統代號不存在，請重新進入群組管理" });
-
-    string uploadDir = Server.MapPath("~/File/Upload");
-    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
-
-    string filePath = Path.Combine(uploadDir, Path.GetFileName(file.FileName));
-    file.SaveAs(filePath);
-
-    try
-    {
-        var service = GetAPService();
-        var result = service.ImportUsers(filePath, sysId, apg_no, Emp_NO);
-        return Json(result);
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "匯入發生錯誤：" + ex.Message });
-    }
-    finally
-    {
-        if (System.IO.File.Exists(filePath))
-            System.IO.File.Delete(filePath);
-    }
-}
-
-// 下載匯入範本
-[HttpGet]
-public ActionResult DownloadImportTemplate()
-{
-    string fileName = "批次匯入使用者範本.xlsx";
-    string filePath = Server.MapPath("~/File/" + fileName);
-
-    if (!System.IO.File.Exists(filePath))
-    {
-        return Json(new { success = false, message = "找不到範本檔案" }, JsonRequestBehavior.AllowGet);
-    }
-
-    byte[] fileBytes = System.IO.File.ReadAllBytes(filePath);
-    return File(fileBytes,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        fileName);
-}
-
-#endregion
+     // 使用安全的副檔名驗證方法
+     if (!PathValidator.IsValidFileExtension(File.FileName, allowedExtensions))
+     {
+         return Json(new
+         {
+             success = false,
+             message = "請上傳Excel檔案(.xlsx或.xls)",
+             errors = new[] { new {
+         RowNumber = 0,
+         KeyValue = "檔案格式錯誤",
+         ErrorMessage = "請上傳Excel檔案(.xlsx或.xls)"
+     }}
+         });
+     }
 
 
-⸻
+     // 確保上傳檔案存在
+     string uploadDir = Service.SVS_Dictionary.uploadFilePath;
+     if (!Directory.Exists(uploadDir))
+     {
+         Directory.CreateDirectory(uploadDir);
+     }
 
-③ F_AP.cs (Service 層)
+     // 生成唯一檔案名並移除任何可能的路徑字元
+     string sanitizedCondNo = Path.GetFileNameWithoutExtension(COND_NO); // 防止COND_NO中包含路徑字元
+     string uniqueFileName = $"Import_{sanitizedCondNo}_{DateTime.Now.ToString("yyyyMMddHHmmss")}{fileExtension}";
+     // 使用安全的路徑合併方法
+     string uploadPath = PathValidator.GetSafePath(uploadDir, uniqueFileName);
 
-#region 批次匯入
+     try
+     {
+         // 保存上傳的檔案
+         File.SaveAs(uploadPath);
 
-public object ImportUsers(string filePath, string sysId, string apgNo, string creator)
-{
-    var errors = new List<string>();
-    int successCount = 0;
+         // Excel資料
+         var importResult = f_CollStamp_HB.ImportExcelDataWithResult(uploadPath, CASE_NO, COND_NO, COND_TYPE, this.Emp_NO);
 
-    string connStr = $@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={filePath};
-                        Extended Properties='Excel 12.0 Xml;HDR=YES;IMEX=1'";
+         //資料結果=>成功
+         if (importResult.IsSuccess)
+         {
+             return Json(new
+             {
+                 success = true,
+                 message = $"成功匯入 {importResult.ValidRows} 筆資料！"
+             });
+         }
+         else
+         {
+             //資料結果=>失敗(錯誤訊息)
+             string errorMessage = importResult.ErrorMessage;
+             if (string.IsNullOrEmpty(errorMessage) && importResult.Errors.Count > 0)
+             {
+                 errorMessage = $"匯入失敗，共有 {importResult.Errors.Count} 筆資料有錯誤";
+             }
 
-    using (var conn = new OleDbConnection(connStr))
-    {
-        conn.Open();
-        var cmd = new OleDbCommand("SELECT * FROM [Sheet1$]", conn);
-        using (var reader = cmd.ExecuteReader())
+             return Json(new
+             {
+                 success = false,
+                 message = errorMessage,
+                 errors = importResult.Errors
+             });
+         }
+     }
+     catch (Exception ex)
+     {
+         string errorMessage = ex.Message;
+
+         // 處理特定錯誤類型
+         if (ex.Message.Contains("Microsoft.ACE.OLEDB.12.0") || ex.Message.Contains("提供者"))
+         {
+             errorMessage = "Excel讀取錯誤: 系統缺少必要的Excel讀取元件。";
+         }
+         else if (ex.Message.Contains("DATA$") || ex.Message.Contains("工作表"))
+         {
+             //工作表:DATA
+             errorMessage = "Excel錯誤: 找不到名為 '資料' 的工作表。請確認Excel檔案包含正確的工作表名稱。";
+         }
+         else if (ex.Message.Contains("無法將類型") || ex.Message.Contains("轉換"))
+         {
+             errorMessage = "Excel欄位錯誤：Excel中的某些欄位資料不符合要求。請檢查欄位表頭是否正確。";
+         }
+
+         return Json(new
+         {
+             success = false,
+             message = errorMessage,
+             errors = new[] { new {
+             RowNumber = 0,
+             KeyValue = "檔案處理錯誤",
+             ErrorMessage = errorMessage
+             }}
+         });
+     }
+     finally
+     {
+         // 刪除臨時檔案
+         if (System.IO.File.Exists(uploadPath))
+         {
+             // 使用安全刪除檔案的方法替代直接刪除
+             // fortify漏洞修正：使用安全的檔案刪除方法
+             F_Common f_COMMON = new F_Common();
+             f_COMMON.SafeDeleteFile(uploadDir, uniqueFileName);
+         }
+     }
+ }
+
+ //匯入檔案1
+ public M_CollStamp_HB.ImportResult ImportExcelDataWithResult(string filePath, string CASE_NO, string COND_NO, string COND_TYPE, string EMP_NO)
+ {
+     M_CollStamp_HB.ImportResult result = new M_CollStamp_HB.ImportResult()
+     {
+         CASE_NO = CASE_NO,
+         COND_NO = COND_NO,
+         COND_TYPE = COND_TYPE,
+         Errors = new List<M_CollStamp_HB.ImportError>() // 確保初始化錯誤列表
+     };
+
+     try
+     {
+         // 簡單檢查Excel檔案結構 (只檢查檔案是否存在)
+         if (!CheckExcelStructure(filePath, COND_TYPE, result))
+         {
+             result.IsSuccess = false;
+             result.ErrorMessage = "Excel檔案結構有誤，請檢查檔案格式";
+             return result;
+         }
+
+         // 執行SQL導入操作
+         string sql = BuildImportSql(COND_TYPE, CASE_NO, COND_NO, EMP_NO, filePath);
+
+         // 準備參數 - 使用明確的資料類型
+         List<SqlParameter> parameters = new List<SqlParameter>
+         {
+         new SqlParameter("@filePath",filePath==null? DBNull.Value:(object)filePath),
+         new SqlParameter("@CASE_NO",CASE_NO==null? DBNull.Value:(object)CASE_NO),
+         new SqlParameter("@COND_NO",COND_NO==null? DBNull.Value:(object)COND_NO),
+         new SqlParameter("@EMP_NO",EMP_NO)
+         };
+
+         // 執行SQL並獲取結果
+         using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
+         {
+             con.Open();
+             using (SqlCommand cmd = new SqlCommand(sql, con))
+             {
+                 cmd.Parameters.AddRange(parameters.ToArray());
+
+                 using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                 {
+                     DataSet ds = new DataSet();
+                     adapter.Fill(ds);
+
+                     // 解析結果
+                     if (ds.Tables.Count > 0)
+                     {
+                         DataTable resultTable = ds.Tables[0];
+                         if (resultTable.Rows.Count > 0)
+                         {
+                             DataRow row = resultTable.Rows[0];
+                             result.TotalRows = Convert.ToInt32(row["TotalRows"]);
+                             result.ValidRows = Convert.ToInt32(row["ValidRows"]);
+                             result.IsSuccess = Convert.ToBoolean(row["IsSuccess"]);
+
+                             // 如果有錯誤信息
+                             if (!result.IsSuccess && ds.Tables.Count > 1)
+                             {
+                                 DataTable errorTable = ds.Tables[1];
+
+                                 foreach (DataRow errorRow in errorTable.Rows)
+                                 {
+                                     result.Errors.Add(new M_CollStamp_HB.ImportError
+                                     {
+                                         RowNumber = Convert.ToInt32(errorRow["ROW_ID"]),
+                                         KeyValue = errorRow["KeyValue"].ToString(),
+                                         ErrorMessage = errorRow["ERROR_MESSAGE"].ToString()
+                                     });
+                                 }
+                             }
+                         }
+                     }
+                 }
+             }
+         }
+     }
+     catch (Exception ex)
+     {
+         result.IsSuccess = false;
+         result.ErrorMessage = ex.Message;
+
+         // 處理特殊的錯誤類型
+         if (ex.Message.Contains("Microsoft.ACE.OLEDB.12.0") || ex.Message.Contains("提供者"))
+         {
+             result.ErrorMessage = "Excel讀取錯誤: 系統缺少必要的Excel讀取元件。請聯絡IT部門安裝 'Microsoft Access Database Engine'。";
+             result.Errors.Add(new M_CollStamp_HB.ImportError
+             {
+                 RowNumber = 0,
+                 KeyValue = "系統設定錯誤",
+                 ErrorMessage = result.ErrorMessage
+             });
+         }
+         else if (ex.Message.Contains("DATA$") || ex.Message.Contains("工作表"))
+         {
+             result.ErrorMessage = "Excel結構錯誤: 找不到名為 'DATA' 的工作表。請確認您的Excel檔案包含正確的工作表名稱。";
+             result.Errors.Add(new M_CollStamp_HB.ImportError
+             {
+                 RowNumber = 0,
+                 KeyValue = "工作表錯誤",
+                 ErrorMessage = result.ErrorMessage
+             });
+         }
+         else if (ex.Message.Contains("無法將類型") || ex.Message.Contains("轉換"))
+         {
+             result.ErrorMessage = "數據類型錯誤：Excel中的某些欄位資料類型不符合要求。請檢查數據格式是否正確。";
+             result.Errors.Add(new M_CollStamp_HB.ImportError
+             {
+                 RowNumber = 0,
+                 KeyValue = "數據類型錯誤",
+                 ErrorMessage = result.ErrorMessage
+             });
+         }
+     }
+
+     return result;
+ }
+
+   // 簡單檢查Excel檔案結構 (只檢查檔案是否存在)2
+   private bool CheckExcelStructure(string filePath, string COND_TYPE, M_CollStamp_HB.ImportResult result)
+   {
+       try
+       {
+           // 從filePath中獲取目錄和檔案名
+           string directory = Path.GetDirectoryName(filePath);
+           string fileName = Path.GetFileName(filePath);
+
+           // 使用安全的路徑驗證
+           string safeFilePath = PathValidator.GetSafePath(directory, fileName);
+
+
+           // 檢查文件是否存在
+           if (!System.IO.File.Exists(safeFilePath))
+           {
+               result.Errors.Add(new M_CollStamp_HB.ImportError
+               {
+                   RowNumber = 0,
+                   KeyValue = "檔案錯誤",
+                   ErrorMessage = "找不到上傳的Excel檔案，請重新上傳"
+               });
+               return false;
+           }
+
+           // 檢查文件副檔名
+           //string extension = Path.GetExtension(filePath).ToLower();
+           //if (extension != ".xlsx" && extension != ".xls")
+           //{
+           string[] allowedExtensions = { ".xlsx", ".xls" };
+           if (!PathValidator.IsValidFileExtension(fileName, allowedExtensions))
+           {
+               result.Errors.Add(new M_CollStamp_HB.ImportError
+               {
+                   RowNumber = 0,
+                   KeyValue = "檔案格式錯誤",
+                   ErrorMessage = "請上傳Excel檔案(.xlsx或.xls)"
+               });
+               return false;
+           }
+
+
+           //fortify漏洞
+           // 檢查檔案大小
+           //FileInfo fileInfo = new FileInfo(filePath);
+           FileInfo fileInfo = new FileInfo(safeFilePath);
+
+           if (fileInfo.Length == 0)
+           {
+               result.Errors.Add(new M_CollStamp_HB.ImportError
+               {
+                   RowNumber = 0,
+                   KeyValue = "檔案錯誤",
+                   ErrorMessage = "Excel檔案為空，請確認檔案內容"
+               });
+               return false;
+           }
+
+           // 檢查檔案是否被其他程式開啟
+           try
+           {
+
+               //fortify漏洞
+               //using (FileStream fs = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+               //{
+               //    // 檔案可以獨占開啟，代表沒有被其他程式佔用
+               //}
+               using (FileStream fs = File.Open(safeFilePath, FileMode.Open, FileAccess.Read, FileShare.None))
+               {
+                   // 檔案可以獨占開啟，代表沒有被其他程式佔用
+               }
+           }
+           catch (IOException)
+           {
+               result.Errors.Add(new M_CollStamp_HB.ImportError
+               {
+                   RowNumber = 0,
+                   KeyValue = "檔案被佔用",
+                   ErrorMessage = "Excel檔案正被其他程式開啟，請關閉後重試"
+               });
+               return false;
+           }
+
+           // 通過基本檢查，詳細的表結構檢查留給SQL處理
+           return true;
+       }
+       catch (Exception ex)
+       {
+           result.Errors.Add(new M_CollStamp_HB.ImportError
+           {
+               RowNumber = 0,
+               KeyValue = "檔案檢查錯誤",
+               ErrorMessage = ex.Message
+           });
+           return false;
+       }
+   }
+
+        //匯入檔案處理3             
+        private string BuildImportSql(string COND_TYPE, string CASE_NO, string COND_NO, string EMP_NO, string filePath)
         {
-            int row = 1;
-            while (reader.Read())
+            StringBuilder sql = new StringBuilder();
+
+            // 1. 創建臨時表來檢查結構
+            sql.Append(@"
+-- 結構檢查部分
+BEGIN TRY
+-- 先創建一個臨時表來導入Excel數據
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+");
+
+            // 2. 根據條件類型創建表結構
+            switch (COND_TYPE)
             {
-                row++;
-                string empNo = reader["員編"].ToString().Trim();
-                if (string.IsNullOrEmpty(empNo)) continue;
+                case "1": // 特定商品(銷售)
+                    sql.Append(@"
+CREATE TABLE #TEMP_IMPORT (
+ROW_ID INT IDENTITY(1,1),
+PRD_ID VARCHAR(50) NULL,
+SHELF_A VARCHAR(50) NULL,
+SHELF_B VARCHAR(50) NULL,
+SHELF_C VARCHAR(50) NULL,
+SHELF_D VARCHAR(50) NULL,
+ROUND_NO VARCHAR(50) NULL,
+IS_VALID BIT DEFAULT 1,
+ERROR_MESSAGE NVARCHAR(500) NULL
+);
+");
+                    break;
 
-                // 1) 檢查員編是否存在 M1EMP_MAST
-                if (!CheckEmployeeExists(empNo))
-                {
-                    errors.Add($"第 {row} 行 {empNo} 不存在於員工資料表");
-                    continue;
-                }
+                case "2": // 特定商品(兌換)
+                    sql.Append(@"
+CREATE TABLE #TEMP_IMPORT (
+ROW_ID INT IDENTITY(1,1),
+PRD_ID VARCHAR(50) NULL,
+SHELF_A VARCHAR(50) NULL,
+SHELF_B VARCHAR(50) NULL,
+SHELF_C VARCHAR(50) NULL,
+SHELF_D VARCHAR(50) NULL,
+IS_VALID BIT DEFAULT 1,
+ERROR_MESSAGE NVARCHAR(500) NULL
+);
+");
+                    break;
 
-                // 2) 檢查是否已存在於群組
-                if (CheckUserInGroup(sysId, apgNo, empNo))
-                {
-                    errors.Add($"第 {row} 行 {empNo} 已存在此群組");
-                    continue;
-                }
+                case "3": // 代收業務
+                    sql.Append(@"
+CREATE TABLE #TEMP_IMPORT (
+ROW_ID INT IDENTITY(1,1),
+EXPR_NO VARCHAR(50) NULL,
+IS_VALID BIT DEFAULT 1,
+ERROR_MESSAGE NVARCHAR(500) NULL
+);
+");
+                    break;
 
-                // 3) 寫入
-                var emp = GetEmployeeInfo(empNo);
-                var model = new UserModel
-                {
-                    SYS_ID = sysId,
-                    APG_NO = apgNo,
-                    U_ID = emp.EMP_NO,
-                    U_NAME = emp.EMP_NAME,
-                    CREATOR = creator
-                };
-                InsertUser(model, creator);
-                successCount++;
+                case "4": // 支付事件代號
+                    sql.Append(@"
+CREATE TABLE #TEMP_IMPORT (
+ROW_ID INT IDENTITY(1,1),
+PAY_EVENT_ID VARCHAR(50) NULL,
+IS_VALID BIT DEFAULT 1,
+ERROR_MESSAGE NVARCHAR(500) NULL
+);
+");
+                    break;
+
+                case "5": // MMK代號
+                    sql.Append(@"
+CREATE TABLE #TEMP_IMPORT (
+ROW_ID INT IDENTITY(1,1),
+MMK_NO VARCHAR(50) NULL,
+IS_VALID BIT DEFAULT 1,
+ERROR_MESSAGE NVARCHAR(500) NULL
+);
+");
+                    break;
             }
-        }
-    }
 
-    if (errors.Any())
-        return new { success = false, message = "匯入完成，但有錯誤", successCount, errors };
-    else
-        return new { success = true, message = $"成功匯入 {successCount} 筆" };
-}
+            // 3. 嘗試導入Excel數據
+            switch (COND_TYPE)
+            {
+                case "1": // 特定商品(銷售)
+                    sql.Append(@"
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (PRD_ID, SHELF_A, SHELF_B, SHELF_C, SHELF_D, ROUND_NO)
+SELECT
+CAST(t.[商品代號] AS VARCHAR(50)),
+CAST(t.[貨架] AS VARCHAR(50)),
+CAST(t.[描一] AS VARCHAR(50)),
+CAST(t.[描二] AS VARCHAR(50)),
+CAST(t.[描三] AS VARCHAR(50)),
+CAST(t.[促銷案號] AS VARCHAR(50))
+FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')...[DATA$] AS t
+WHERE (t.[商品代號] IS NOT NULL AND t.[商品代號] <> '''')
+   OR (t.[貨架] IS NOT NULL AND t.[貨架] <> '''') 
+   OR (t.[描一] IS NOT NULL AND t.[描一] <> '''') 
+   OR (t.[描二] IS NOT NULL AND t.[描二] <> '''') 
+   OR (t.[描三] IS NOT NULL AND t.[描三] <> '''') 
+   OR (t.[促銷案號] IS NOT NULL AND t.[促銷案號] <> '''')
+';
+EXEC sp_executesql @Query;
+");
+                    break;
 
-// 檢查員編是否存在 M1EMP_MAST
-private bool CheckEmployeeExists(string empNo)
-{
-    string sql = @"SELECT EMP_NO FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
-    var dt = SVS_DBmanager.QueryBySQL(sql, new List<SqlParameter> { new SqlParameter("@EMP_NO", empNo) });
-    return dt.Rows.Count > 0;
-}
+                case "2": // 特定商品(兌換)
+                    sql.Append(@"
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (PRD_ID, SHELF_A, SHELF_B, SHELF_C, SHELF_D)
+SELECT
+CAST(t.[商品代號] AS VARCHAR(50)),
+CAST(t.[貨架] AS VARCHAR(50)),
+CAST(t.[描一] AS VARCHAR(50)),
+CAST(t.[描二] AS VARCHAR(50)),
+CAST(t.[描三] AS VARCHAR(50))
+FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')...[DATA$] AS t
+WHERE (t.[商品代號] IS NOT NULL AND t.[商品代號] <> '''')
+   OR (t.[貨架] IS NOT NULL AND t.[貨架] <> '''') 
+   OR (t.[描一] IS NOT NULL AND t.[描一] <> '''') 
+   OR (t.[描二] IS NOT NULL AND t.[描二] <> '''') 
+   OR (t.[描三] IS NOT NULL AND t.[描三] <> '''') 
+';
+EXEC sp_executesql @Query;
+");
+                    break;
 
-// 檢查是否已存在於群組
-private bool CheckUserInGroup(string sysId, string apgNo, string empNo)
-{
-    string sql = @"SELECT U_ID FROM [HI_TMMAIN].[dbo].[AP_USER]
-                   WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-    var dt = SVS_DBmanager.QueryBySQL(sql, new List<SqlParameter> {
-        new SqlParameter("@SYS_ID", sysId),
-        new SqlParameter("@APG_NO", apgNo),
-        new SqlParameter("@U_ID", empNo)
-    });
-    return dt.Rows.Count > 0;
-}
+                case "3": // 代收業務
+                    sql.Append(@"
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (EXPR_NO)
+SELECT CAST(t.[代收代號] AS VARCHAR(50))
+FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')...[DATA$] AS t
+WHERE t.[代收代號] IS NOT NULL AND t.[代收代號] <> ''''
+';
+EXEC sp_executesql @Query;
+");
+                    break;
 
-#endregion
+                case "4": // 支付事件代號
+                    sql.Append(@"
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (PAY_EVENT_ID)
+SELECT CAST(t.[支付事件代號] AS VARCHAR(50))
+FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')...[DATA$] AS t
+WHERE t.[支付事件代號] IS NOT NULL AND t.[支付事件代號] <> ''''
+';
+EXEC sp_executesql @Query;
+");
+                    break;
 
-
-⸻
-
-④ View (cshtml 片段)
-
-在「管理使用者」區塊的 header 裡補一個 批次匯入按鈕：
-
-<button type="button" class="btn btn-primary" onclick="openImportModal()" id="importUserBtn" disabled>
-    <i class="fas fa-file-import"></i> 批次匯入使用者
-</button>
-
-新增 Modal：
-
-<div class="modal fade" id="importModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">批次匯入使用者</h5>
-        <button type="button" class="close" data-dismiss="modal">&times;</button>
-      </div>
-      <div class="modal-body">
-        <form id="importForm" enctype="multipart/form-data" method="post">
-          <input type="hidden" name="apg_no" id="importGroupNo" />
-          <input type="file" class="form-control mb-2" name="file" accept=".xls,.xlsx" required />
-          <div class="d-flex justify-content-between">
-              <button type="submit" class="btn btn-primary">匯入</button>
-              <button type="button" class="btn btn-success" onclick="downloadTemplate()">
-                  <i class="fas fa-download"></i> 下載範本
-              </button>
-          </div>
-        </form>
-        <div id="importResult" class="mt-3"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-
-⸻
-
-⑤ JS
-
-function openImportModal() {
-    $("#importGroupNo").val($("#groupSelect").val()); // 帶目前選的群組
-    $("#importModal").modal("show");
-}
-
-function downloadTemplate() {
-    window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
-}
-
-$("#importForm").submit(function(e){
-    e.preventDefault();
-    var formData = new FormData(this);
-    $.ajax({
-        url: '@Url.Action("ImportUsers", "AP")',
-        type: 'POST',
-        data: formData,
-        contentType: false,
-        processData: false,
-        success: function(res){
-            if(res.success){
-                $("#importResult").html('<div class="alert alert-success">'+res.message+'</div>');
-                loadUsers();
-            }else{
-                let html = '<div class="alert alert-danger">'+res.message+'</div>';
-                if(res.errors){
-                    html += '<ul>';
-                    res.errors.forEach(err => { html += `<li>${err}</li>`; });
-                    html += '</ul>';
-                }
-                $("#importResult").html(html);
+                case "5": // MMK代號
+                    sql.Append(@"
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (MMK_NO)
+SELECT CAST(t.[MMK代號] AS VARCHAR(50))
+FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')...[DATA$] AS t
+WHERE t.[MMK代號] IS NOT NULL AND t.[MMK代號] <> ''''
+';
+EXEC sp_executesql @Query;
+");
+                    break;
             }
+
+            // 4. 獲取總行數和有效行數的變數
+            sql.Append(@"
+-- 檢查是否有匯入的資料
+DECLARE @RowCount INT = (SELECT COUNT(*) FROM #TEMP_IMPORT);
+
+IF @RowCount = 0
+BEGIN
+-- 沒有資料被導入，可能是 Excel 中欄位名稱不符合或工作表名稱不正確
+SELECT 0 AS TotalRows, 0 AS ValidRows, 0 AS IsSuccess;
+SELECT 0 AS ROW_ID, '資料錯誤' AS KeyValue, '匯入失敗：Excel 檔案中沒有符合條件的資料，請檢查工作表名稱是否為 DATA，以及必要欄位是否存在' AS ERROR_MESSAGE;
+
+-- 清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END
+
+-- 檢查是否已經有錯誤記錄
+IF EXISTS (SELECT 1 FROM #TEMP_IMPORT WHERE IS_VALID = 0)
+BEGIN
+SELECT 0 AS TotalRows, 0 AS ValidRows, 0 AS IsSuccess;
+SELECT ROW_ID, PRD_ID AS KeyValue, ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+
+-- 清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END
+END TRY
+BEGIN CATCH
+-- 捕獲並處理錯誤
+DECLARE @ErrorMessage NVARCHAR(MAX) = ERROR_MESSAGE();
+
+-- 返回錯誤信息
+SELECT 0 AS TotalRows, 0 AS ValidRows, 0 AS IsSuccess;
+
+-- 處理常見錯誤
+IF @ErrorMessage LIKE '%DATA$%'
+    SELECT 0 AS ROW_ID, '工作表錯誤' AS KeyValue, '找不到名為 ''DATA'' 的工作表' AS ERROR_MESSAGE;
+ELSE IF @ErrorMessage LIKE '%商品代號%' OR @ErrorMessage LIKE '%代收代號%' OR @ErrorMessage LIKE '%支付事件代號%' OR @ErrorMessage LIKE '%MMK代號%'
+    SELECT 0 AS ROW_ID, '欄位錯誤' AS KeyValue, '找不到必要的欄位，請檢查Excel的表頭欄位名稱是否正確' AS ERROR_MESSAGE;
+ELSE
+    SELECT 0 AS ROW_ID, '讀取錯誤' AS KeyValue, @ErrorMessage AS ERROR_MESSAGE;
+
+-- 清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END CATCH;
+
+-- 如果結構檢查通過，繼續處理
+DECLARE @TotalRows INT, @ValidRows INT, @IsSuccess BIT;
+SELECT @TotalRows = COUNT(*) FROM #TEMP_IMPORT;
+");
+
+            // 5. 驗證數據 - 使用參數化
+            switch (COND_TYPE)
+            {
+                case "1": // 特定商品(銷售)
+                    sql.Append(@"
+-- 檢查商品代號格式是否為八碼數字
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE 
+    WHEN t.ERROR_MESSAGE IS NULL THEN N'商品代號 ' + t.PRD_ID + N' 格式不正確，必須是八碼數字' 
+    ELSE t.ERROR_MESSAGE + N'; 商品代號 ' + t.PRD_ID + N' 格式不正確，必須是八碼數字' 
+END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.PRD_ID IS NOT NULL AND t.PRD_ID <> ''
+AND (LEN(t.PRD_ID) <> 8 OR ISNUMERIC(t.PRD_ID) = 0 OR t.PRD_ID LIKE '%.%');
+
+-- 檢查商品代號是否存在於商品主檔
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE 
+    WHEN t.ERROR_MESSAGE IS NULL THEN N'商品代號 ' + t.PRD_ID + N' 不存在於商品主檔中' 
+    ELSE t.ERROR_MESSAGE + N'; 商品代號 ' + t.PRD_ID + N' 不存在於商品主檔中' 
+END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.PRD_ID IS NOT NULL AND t.PRD_ID <> ''
+AND NOT EXISTS (
+    SELECT 1 FROM [HI_TMMAIN].[dbo].[商品主檔] 
+    WHERE [PRD_ID] = t.PRD_ID
+);
+
+-- 檢查重複的商品代號
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'商品代號 ' + t.PRD_ID + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND PRD_ID = t.PRD_ID
+);
+
+-- 檢查貨架代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'貨架代號 ' + t.SHELF_A + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 貨架代號 ' + t.SHELF_A + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_A IS NOT NULL AND t.SHELF_A <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFRAME_A WHERE LTRIM(RTRIM(FRAMEA_ID)) = LTRIM(RTRIM(t.SHELF_A)));
+
+-- 檢查貨架代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'貨架代號 ' + t.SHELF_A + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 貨架代號 ' + t.SHELF_A + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_A IS NOT NULL AND t.SHELF_A <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_A = t.SHELF_A
+);
+
+-- 檢查描一代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描一代號 ' + t.SHELF_B + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描一代號 ' + t.SHELF_B + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_B IS NOT NULL AND t.SHELF_B <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_A WHERE LTRIM(RTRIM(FORM1)) = LTRIM(RTRIM(t.SHELF_B)));
+
+-- 檢查描一代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描一代號 ' + t.SHELF_B + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描一代號 ' + t.SHELF_B + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_B IS NOT NULL AND t.SHELF_B <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_B = t.SHELF_B
+);
+
+-- 檢查描二代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描二代號 ' + t.SHELF_C + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描二代號 ' + t.SHELF_C + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_C IS NOT NULL AND t.SHELF_C <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_B WHERE LTRIM(RTRIM(FORM2)) = LTRIM(RTRIM(t.SHELF_C)));
+
+-- 檢查描二代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描二代號 ' + t.SHELF_C + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描二代號 ' + t.SHELF_C + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_C IS NOT NULL AND t.SHELF_C <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_C = t.SHELF_C
+);
+
+-- 檢查描三代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描三代號 ' + t.SHELF_D + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描三代號 ' + t.SHELF_D + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_D IS NOT NULL AND t.SHELF_D <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_C WHERE LTRIM(RTRIM(FORM3)) = LTRIM(RTRIM(t.SHELF_D)));
+
+-- 檢查描三代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描三代號 ' + t.SHELF_D + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描三代號 ' + t.SHELF_D + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_D IS NOT NULL AND t.SHELF_D <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_D = t.SHELF_D
+);
+
+-- 檢查促銷案號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'促銷案號 ' + t.ROUND_NO + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND ROUND_NO = t.ROUND_NO
+);
+
+-- 檢查促銷案號格式是否符合規則 (N開頭，後接7碼數字，共8碼)
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE 
+    WHEN t.ERROR_MESSAGE IS NULL THEN N'促銷案號 ' + t.ROUND_NO + N' 格式不正確，應為N開頭後接7碼數字，共8碼' 
+    ELSE t.ERROR_MESSAGE + N'; 促銷案號 ' + t.ROUND_NO + N' 格式不正確，應為N開頭後接7碼數字，共8碼' 
+END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.ROUND_NO IS NOT NULL AND t.ROUND_NO <> ''
+AND (LEN(t.ROUND_NO) <> 8 OR LEFT(t.ROUND_NO, 1) <> 'N' OR ISNUMERIC(SUBSTRING(t.ROUND_NO, 2, 7)) = 0);
+
+");
+                    break;
+
+                case "2": // 特定商品(兌換)
+                    sql.Append(@"
+-- 檢查商品代號格式是否為八碼數字
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE 
+    WHEN t.ERROR_MESSAGE IS NULL THEN N'商品代號 ' + t.PRD_ID + N' 格式不正確，必須是八碼數字' 
+    ELSE t.ERROR_MESSAGE + N'; 商品代號 ' + t.PRD_ID + N' 格式不正確，必須是八碼數字' 
+END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.PRD_ID IS NOT NULL AND t.PRD_ID <> ''
+AND (LEN(t.PRD_ID) <> 8 OR ISNUMERIC(t.PRD_ID) = 0 OR t.PRD_ID LIKE '%.%');
+
+-- 檢查商品代號是否存在於商品主檔
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE 
+    WHEN t.ERROR_MESSAGE IS NULL THEN N'商品代號 ' + t.PRD_ID + N' 不存在於商品主檔中' 
+    ELSE t.ERROR_MESSAGE + N'; 商品代號 ' + t.PRD_ID + N' 不存在於商品主檔中' 
+END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.PRD_ID IS NOT NULL AND t.PRD_ID <> ''
+AND NOT EXISTS (
+    SELECT 1 FROM [HI_TMMAIN].[dbo].[商品主檔] 
+    WHERE [PRD_ID] = t.PRD_ID
+);
+
+-- 檢查重複的商品代號
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'商品代號 ' + t.PRD_ID + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND PRD_ID = t.PRD_ID
+);
+
+-- 檢查貨架代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'貨架代號 ' + t.SHELF_A + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 貨架代號 ' + t.SHELF_A + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_A IS NOT NULL AND t.SHELF_A <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFRAME_A WHERE LTRIM(RTRIM(FRAMEA_ID)) = LTRIM(RTRIM(t.SHELF_A)));
+
+-- 檢查貨架代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'貨架代號 ' + t.SHELF_A + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 貨架代號 ' + t.SHELF_A + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_A IS NOT NULL AND t.SHELF_A <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_A = t.SHELF_A
+);
+
+-- 檢查描一代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描一代號 ' + t.SHELF_B + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描一代號 ' + t.SHELF_B + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_B IS NOT NULL AND t.SHELF_B <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_A WHERE LTRIM(RTRIM(FORM1)) = LTRIM(RTRIM(t.SHELF_B)));
+
+-- 檢查描一代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描一代號 ' + t.SHELF_B + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描一代號 ' + t.SHELF_B + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_B IS NOT NULL AND t.SHELF_B <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_B = t.SHELF_B
+);
+
+-- 檢查描二代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描二代號 ' + t.SHELF_C + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描二代號 ' + t.SHELF_C + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_C IS NOT NULL AND t.SHELF_C <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_B WHERE LTRIM(RTRIM(FORM2)) = LTRIM(RTRIM(t.SHELF_C)));
+
+-- 檢查描二代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描二代號 ' + t.SHELF_C + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描二代號 ' + t.SHELF_C + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_C IS NOT NULL AND t.SHELF_C <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_C = t.SHELF_C
+);
+
+-- 檢查描三代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描三代號 ' + t.SHELF_D + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 描三代號 ' + t.SHELF_D + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_D IS NOT NULL AND t.SHELF_D <> ''
+AND NOT EXISTS (SELECT 1 FROM MRFORM_C WHERE LTRIM(RTRIM(FORM3)) = LTRIM(RTRIM(t.SHELF_D)));
+
+-- 檢查描三代號是否重複
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'描三代號 ' + t.SHELF_D + N' 已存在於此條件編號中' ELSE t.ERROR_MESSAGE + N'; 描三代號 ' + t.SHELF_D + N' 已存在於此條件編號中' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND t.SHELF_D IS NOT NULL AND t.SHELF_D <> ''
+AND EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND SHELF_D = t.SHELF_D
+);
+");
+                    break;
+
+                case "3": // 代收業務
+                    sql.Append(@"
+-- 檢查重複的代收代號
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'代收代號 ' + t.EXPR_NO + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+    SELECT 1 FROM COLL_STAMP_COND_HB
+    WHERE COND_NO = @COND_NO AND EXPR_NO = t.EXPR_NO
+);
+
+-- 檢查代收代號長度 (不得超過6碼)
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'代收代號 ' + t.EXPR_NO + N' 長度不得超過6碼'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND LEN(t.EXPR_NO) > 6;
+
+-- 檢查代收代號長度 (至少3碼)
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'代收代號 ' + t.EXPR_NO + N' 長度至少需要3碼'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 AND LEN(t.EXPR_NO) < 3;
+
+-- 對於3碼代收代號，檢查是否已有以後3碼為的代收代號 (防止如有002001不能再加入001)
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'已存在以 ' + t.EXPR_NO + N' 為後綴的手key代收代號，不能再新增此標準代收代號'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 
+AND LEN(t.EXPR_NO) = 3
+AND EXISTS (
+    SELECT 1 FROM COLL_STAMP_COND_HB
+    WHERE COND_NO = @COND_NO 
+    AND EXPR_NO LIKE '%' + t.EXPR_NO
+    AND LEN(EXPR_NO) > 3
+);
+
+
+-- 對於3碼代收代號，檢查是否存在於H4EXPR_NAME表中
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'代收代號 ' + t.EXPR_NO + N' 不存在'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 
+AND LEN(t.EXPR_NO) = 3
+AND NOT EXISTS (
+    SELECT 1 FROM H4EXPR_NAME 
+    WHERE LTRIM(RTRIM(EXPR_NO)) = LTRIM(RTRIM(t.EXPR_NO))
+);
+
+-- 對於超過3碼的代收代號 (手key輸入)，檢查是否與該條件編號下已存在的代收代號衝突 (防止如有001不能再加入002001)
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'已存在代收代號 ' + RIGHT(t.EXPR_NO, 3) + N'，不能再新增以其為後綴的手key代收代號'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 
+AND LEN(t.EXPR_NO) > 3
+AND EXISTS (
+    SELECT 1 FROM COLL_STAMP_COND_HB
+    WHERE COND_NO = @COND_NO 
+    AND EXPR_NO = LEFT(t.EXPR_NO, 3)
+);
+
+-- 對於超過3碼的代收代號 (手key輸入)，檢查後三碼是否存在於H4EXPR_NAME表中
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'手動輸入代收代號 ' + t.EXPR_NO + N' 的後三碼 ' + RIGHT(t.EXPR_NO, 3) + N' 不存在於代收代號資料表'
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1 
+AND LEN(t.EXPR_NO) > 3
+AND NOT EXISTS (
+    SELECT 1 FROM H4EXPR_NAME 
+    WHERE EXPR_NO LIKE '%' + RIGHT(t.EXPR_NO, 3)
+);
+
+
+-- 檢查Excel內部的3碼與超過3碼的代收代號衝突
+UPDATE t1 SET
+t1.IS_VALID = 0,
+t1.ERROR_MESSAGE = N'Excel中已包含標準代收代號 ' + t1.EXPR_NO + N'，不能同時包含以其為後綴的手key代收代號'
+FROM #TEMP_IMPORT t1
+WHERE t1.IS_VALID = 1 
+AND LEN(t1.EXPR_NO) = 3
+AND EXISTS (
+    SELECT 1 FROM #TEMP_IMPORT t2
+    WHERE t2.IS_VALID = 1
+    AND LEN(t2.EXPR_NO) > 3
+    AND t2.EXPR_NO LIKE '%' + t1.EXPR_NO
+);
+
+-- 檢查Excel內部的超過3碼與3碼的代收代號衝突（後三碼）
+UPDATE t1 SET
+t1.IS_VALID = 0,
+t1.ERROR_MESSAGE = N'Excel中已包含以 ' + RIGHT(t1.EXPR_NO, 3) + N' 為後綴的手key代收代號，不能同時包含此代收代號'
+FROM #TEMP_IMPORT t1
+WHERE t1.IS_VALID = 1 
+AND LEN(t1.EXPR_NO) > 3
+AND EXISTS (
+    SELECT 1 FROM #TEMP_IMPORT t2
+    WHERE t2.IS_VALID = 1
+    AND LEN(t2.EXPR_NO) = 3
+    AND t2.EXPR_NO = RIGHT(t1.EXPR_NO, 3)
+);
+");
+
+                    break;
+
+                case "4": // 支付事件代號
+                    sql.Append(@"
+-- 檢查重複的支付事件代號
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'支付事件代號 ' + t.PAY_EVENT_ID + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND PAY_EVENT_ID = t.PAY_EVENT_ID
+);
+
+-- 檢查支付事件代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'支付事件代號 ' + t.PAY_EVENT_ID + N' 不存在' ELSE t.ERROR_MESSAGE + N'; 支付事件代號 ' + t.PAY_EVENT_ID + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1
+AND NOT EXISTS (SELECT 1 FROM EVENT_CODE WHERE LTRIM(RTRIM(EVENT_CODE_ID)) = LTRIM(RTRIM(t.PAY_EVENT_ID)));
+");
+                    break;
+
+                case "5": // MMK代號
+                    sql.Append(@"
+-- 檢查重複的MMK代號
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = N'MMK代號 ' + t.MMK_NO + N' 已存在於此條件編號中'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM COLL_STAMP_COND_HB
+WHERE COND_NO = @COND_NO AND MMK_NO = t.MMK_NO
+);
+
+-- 檢查MMK代號是否存在
+UPDATE t SET
+t.IS_VALID = 0,
+t.ERROR_MESSAGE = CASE WHEN t.ERROR_MESSAGE IS NULL THEN N'MMK代號 ' + t.MMK_NO + N' 不存在' ELSE t.ERROR_MESSAGE + N'; MMK代號 ' + t.MMK_NO + N' 不存在' END
+FROM #TEMP_IMPORT t
+WHERE t.IS_VALID = 1
+AND NOT EXISTS (SELECT 1 FROM H4MMK_NAME WHERE LTRIM(RTRIM(MMK_NO)) = LTRIM(RTRIM(t.MMK_NO)));
+");
+                    break;
+            }
+
+            // 6. 取有效比數
+            sql.Append(@"
+SELECT @ValidRows = COUNT(*) FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+
+            // 7. 檢查是否所有數據都有效才進行insert
+            sql.Append(@"
+IF (@ValidRows = @TotalRows AND @TotalRows > 0)
+BEGIN
+-- 全部數據有效，插入到正式表
+");
+
+            switch (COND_TYPE)
+            {
+
+                case "1": // 特定商品(銷售)
+                    sql.Append(@"
+
+INSERT INTO COLL_STAMP_COND_HB
+(CASE_NO, COND_NO, PRD_ID, SHELF_A, SHELF_B, SHELF_C, SHELF_D, ROUND_NO, CREATOR, CREATE_TIME)
+SELECT @CASE_NO, @COND_NO, UPPER(PRD_ID), UPPER(SHELF_A), UPPER(SHELF_B), UPPER(SHELF_C), UPPER(SHELF_D), UPPER(ROUND_NO), @EMP_NO, GETDATE()
+FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+                    break;
+
+                case "2": // 特定商品(兌換)
+                    sql.Append(@"
+INSERT INTO COLL_STAMP_COND_HB
+(CASE_NO, COND_NO, PRD_ID, SHELF_A, SHELF_B, SHELF_C, SHELF_D, CREATOR, CREATE_TIME)
+SELECT @CASE_NO, @COND_NO, UPPER(PRD_ID), UPPER(SHELF_A), UPPER(SHELF_B), UPPER(SHELF_C), UPPER(SHELF_D), @EMP_NO, GETDATE()
+FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+                    break;
+
+                case "3": // 代收業務
+                    sql.Append(@"
+INSERT INTO COLL_STAMP_COND_HB
+(CASE_NO, COND_NO, EXPR_NO, CREATOR, CREATE_TIME)
+SELECT @CASE_NO, @COND_NO, UPPER(EXPR_NO), @EMP_NO, GETDATE()
+FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+                    break;
+
+                case "4": // 支付事件代號
+                    sql.Append(@"
+INSERT INTO COLL_STAMP_COND_HB
+(CASE_NO, COND_NO, PAY_EVENT_ID, CREATOR, CREATE_TIME)
+SELECT @CASE_NO, @COND_NO, UPPER(PAY_EVENT_ID), @EMP_NO, GETDATE()
+FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+                    break;
+
+                case "5": // MMK代號
+                    sql.Append(@"
+INSERT INTO COLL_STAMP_COND_HB
+(CASE_NO, COND_NO, MMK_NO, CREATOR, CREATE_TIME)
+SELECT @CASE_NO, @COND_NO, UPPER(MMK_NO), @EMP_NO, GETDATE()
+FROM #TEMP_IMPORT WHERE IS_VALID = 1;
+");
+                    break;
+            }
+
+            // 成功信息和錯誤信息
+            sql.Append(@"
+-- 返回成功信息
+SELECT @TotalRows AS TotalRows, @ValidRows AS ValidRows, 1 AS IsSuccess;
+SELECT 'NO_ERRORS' AS Message;
+END
+ELSE
+BEGIN
+-- 有錯誤的數據，返回錯誤信息
+SELECT @TotalRows AS TotalRows, @ValidRows AS ValidRows, 0 AS IsSuccess;
+
+-- 返回錯誤詳情
+");
+
+            switch (COND_TYPE)
+            {
+                case "1": // 特定商品(銷售)
+                    sql.Append(@"
+SELECT
+ROW_ID,
+CASE
+WHEN ERROR_MESSAGE LIKE '%描一代號%' THEN SHELF_B
+WHEN ERROR_MESSAGE LIKE '%描二代號%' THEN SHELF_C
+WHEN ERROR_MESSAGE LIKE '%描三代號%' THEN SHELF_D
+WHEN ERROR_MESSAGE LIKE '%貨架代號%' THEN SHELF_A
+WHEN ERROR_MESSAGE LIKE '%促銷案號%' THEN ROUND_NO
+ELSE PRD_ID
+END AS KeyValue,
+ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+");
+                    break;
+                case "2": // 特定商品(兌換)
+                    sql.Append(@"
+SELECT
+ROW_ID,
+CASE
+WHEN ERROR_MESSAGE LIKE '%描一代號%' THEN SHELF_B
+WHEN ERROR_MESSAGE LIKE '%描二代號%' THEN SHELF_C
+WHEN ERROR_MESSAGE LIKE '%描三代號%' THEN SHELF_D
+WHEN ERROR_MESSAGE LIKE '%貨架代號%' THEN SHELF_A
+ELSE PRD_ID
+END AS KeyValue,
+ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+");
+                    break;
+                case "3": // 代收業務
+                    sql.Append(@"
+SELECT ROW_ID, EXPR_NO AS KeyValue, ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+");
+                    break;
+                case "4": // 支付事件代號
+                    sql.Append(@"
+SELECT ROW_ID, PAY_EVENT_ID AS KeyValue, ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+");
+                    break;
+                case "5": // MMK代號
+                    sql.Append(@"
+SELECT ROW_ID, MMK_NO AS KeyValue, ERROR_MESSAGE
+FROM #TEMP_IMPORT
+WHERE IS_VALID = 0;
+");
+                    break;
+            }
+
+            sql.Append(@"
+END
+
+-- 清理臨時表
+DROP TABLE #TEMP_IMPORT
+");
+
+            return sql.ToString();
         }
-    });
-});
-
-
-⸻
-
-✅ 這樣整理完：
-	•	Model：UserModel
-	•	Controller：ImportUsers / DownloadImportTemplate
-	•	F_AP：ImportUsers + CheckEmployeeExists + CheckUserInGroup
-	•	View：批次匯入 Modal + 按鈕
-	•	JS：Ajax 上傳、結果顯示
-
-⸻
-
-要不要我幫你在 批次匯入錯誤清單 裡加「表格格式」(行號 / 員編 / 錯誤原因)，而不是單純 <ul>？這樣看起來更整齊。
