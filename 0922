@@ -1,27 +1,33 @@
-      <!-- 左邊：管理使用者 -->
-      <div class="col-md-4">
-          <div class="management-section">
-              <div class="section-header">
-                  <i class="fas fa-users"></i> 管理使用者
-                  <button type="button" class="btn btn-primary" onclick="openUserModal()" id="addUserBtn" disabled>
-                      <i class="fas fa-plus"></i>
-                      新增使用者
-                  </button>
-                  <button type="button" class="btn btn-info" onclick="openImportModal()" id="importUserBtn" disabled>
-                      <i class="fas fa-file-import"></i> 批次匯入使用者
-                  </button>
-              </div>
-              <div id="userList">
-                  <div class="no-data">請先選擇群組</div>
-              </div>
-          </div>
-      </div>
+👌 我幫你調整成符合你現在的 View 架構，保留你原本的 左邊管理使用者 + 批次匯入 Modal，只是把「錯誤清單」改成表格顯示在 Modal 裡，而不是 <ul>。
+
+⸻
+
+🟦 修改後的 View (重點在 Modal 與 JS)
+
+<!-- 左邊：管理使用者 -->
+<div class="col-md-4">
+    <div class="management-section">
+        <div class="section-header">
+            <i class="fas fa-users"></i> 管理使用者
+            <button type="button" class="btn btn-primary" onclick="openUserModal()" id="addUserBtn" disabled>
+                <i class="fas fa-plus"></i>
+                新增使用者
+            </button>
+            <button type="button" class="btn btn-info" onclick="openImportModal()" id="importUserBtn" disabled>
+                <i class="fas fa-file-import"></i> 批次匯入使用者
+            </button>
+        </div>
+        <div id="userList">
+            <div class="no-data">請先選擇群組</div>
+        </div>
+    </div>
+</div>
 
 <!-- 匯入 Modal -->
 <div class="modal fade" id="importModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <div class="modal-header">
+            <div class="modal-header bg-info text-white">
                 <h5 class="modal-title">批次匯入使用者</h5>
                 <button type="button" class="close" data-dismiss="modal">&times;</button>
             </div>
@@ -36,44 +42,91 @@
                         </button>
                     </div>
                 </form>
+                <!-- 匯入結果 -->
                 <div id="importResult" class="mt-3"></div>
+
+                <!-- 錯誤清單表格 -->
+                <div id="errorTableWrapper" class="mt-3" style="display:none;">
+                    <h6 class="text-danger">匯入錯誤清單</h6>
+                    <table class="table table-bordered table-sm">
+                        <thead>
+                            <tr>
+                                <th style="width:10%">列號</th>
+                                <th style="width:20%">員編</th>
+                                <th style="width:70%">錯誤訊息</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errorTableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-        // 批次匯入使用者
-        function openImportModal() {
-            $("#importGroupNo").val($("#groupSelect").val()); // 帶目前選的群組
-            $("#importModal").modal("show");
-        }
+@section scripts {
+<script>
+    // 打開匯入 Modal
+    function openImportModal() {
+        $("#importGroupNo").val($("#groupSelect").val()); // 帶目前選的群組
+        $("#importModal").modal("show");
+    }
 
-        function downloadTemplate() {
-            window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
-        }
+    function downloadTemplate() {
+        window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
+    }
 
-        $("#importForm").submit(function (e) {
-            e.preventDefault();
-            var formData = new FormData(this);
-            $.ajax({
-                url: '@Url.Action("ImportUsers", "AP")',
-                type: 'POST',
-                data: formData,
-                contentType: false,
-                processData: false,
-                success: function (res) {
-                    if (res.success) {
-                        $("#importResult").html('<div class="alert alert-success">' + res.message + '</div>');
-                        loadUsers();
+    // 提交匯入表單
+    $("#importForm").submit(function (e) {
+        e.preventDefault();
+        var formData = new FormData(this);
+        $.ajax({
+            url: '@Url.Action("ImportUsers", "AP")',
+            type: 'POST',
+            data: formData,
+            contentType: false,
+            processData: false,
+            success: function (res) {
+                if (res.success) {
+                    $("#importResult").html('<div class="alert alert-success">' + res.message + '</div>');
+                    $("#errorTableWrapper").hide();
+                    loadUsers(); // 重新載入使用者清單
+                } else {
+                    $("#importResult").html('<div class="alert alert-danger">' + res.message + '</div>');
+                    if (res.errors && res.errors.length > 0) {
+                        var tbody = $("#errorTableBody");
+                        tbody.empty();
+                        res.errors.forEach(function (err) {
+                            tbody.append("<tr>" +
+                                "<td>" + err.RowNumber + "</td>" +
+                                "<td>" + (err.EmpNo || '-') + "</td>" +
+                                "<td>" + err.Message + "</td>" +
+                                "</tr>");
+                        });
+                        $("#errorTableWrapper").show();
                     } else {
-                        let html = '<div class="alert alert-danger">' + res.message + '</div>';
-                        if (res.errors) {
-                            html += '<ul>';
-                            res.errors.forEach(err => { html += `<li>${err}</li>`; });
-                            html += '</ul>';
-                        }
-                        $("#importResult").html(html);
+                        $("#errorTableWrapper").hide();
                     }
                 }
-            });
+            },
+            error: function () {
+                $("#importResult").html('<div class="alert alert-danger">匯入過程發生錯誤</div>');
+            }
         });
+    });
+</script>
+}
+
+
+⸻
+
+🟦 改動重點
+	1.	Modal 改成 modal-lg → 容納錯誤表格。
+	2.	新增 #errorTableWrapper + #errorTableBody → 用表格顯示錯誤訊息。
+	3.	成功 (res.success=true) → 顯示綠色 success alert，隱藏錯誤表格。
+	4.	失敗 → 顯示紅色 danger alert，若 res.errors 有值，就用表格列出 列號 / 員編 / 錯誤訊息。
+
+⸻
+
+這樣一來，你的匯入流程就跟前端 UI 整合了。
+要不要我幫你把 後端回傳的錯誤格式 (errors) 也定義清楚？這樣前端表格才一定能吃到正確格式。
