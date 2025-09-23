@@ -1,81 +1,60 @@
+太好了 👌 你這個 view 範例的結構設計得比原本漂亮很多，配合 Bootstrap 的 alert、card、progress bar、table-dark，還加了 重新上傳按鈕。
+我幫你改造一下目前「批次匯入使用者」的 錯誤清單顯示區塊，直接套用類似這種風格：
 
-<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+⸻
+
+🔧 改造後的 importModal（View）
+
+<!-- 匯入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="importModalLabel">批次新增</h5>
+                <h5 class="modal-title">批次匯入使用者</h5>
                 <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+
+                <!-- 上傳區 -->
                 <div id="uploadFormSection">
-                    <div>
-                        <p class="mt-2">
-                            <button type="button" class="btn btn-sm btn-success" id="btnDownloadTemplate">
-                                <i class="fa fa-download"></i> 下載Excel資料範本
-                            </button>
-                        </p>
-                        <br />
-                    </div>
-                    <form id="uploadForm" method="post" enctype="multipart/form-data" action="@Url.Action("UpLoadCheckshow", "COLLSTAMP")">
-                        <input type="hidden" name="COND_NO" value="@Model.COND_NO" />
-                        <input type="hidden" name="CASE_NO" value="@Model.CASE_NO" />
-                        <input type="hidden" name="COND_TYPE" value="@Model.COND_TYPE" />
+                    <form id="importForm" enctype="multipart/form-data" method="post">
+                        <input type="hidden" name="apg_no" id="importGroupNo" />
                         <div class="mb-3">
-                            <input type="file" class="form-control" id="excelFile" name="File" accept=".xls, .xlsx" required />
+                            <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
                         </div>
-                        <div>
-                            <button type="submit" class="btn btn-primary" id="btnUpload">匯入檔案</button>
+                        <div class="d-flex justify-content-between">
+                            <button type="submit" class="btn btn-primary">匯入</button>
+                            <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                                <i class="fas fa-download"></i> 下載範本
+                            </button>
                         </div>
                     </form>
 
+                    <!-- 匯入進度 -->
                     <div id="uploadProgress" class="progress mt-3 d-none">
                         <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
                     </div>
                 </div>
 
-                <!-- 錯誤顯示部分 -->
+                <!-- 錯誤顯示區 -->
                 <div id="errorSection" class="mt-4 d-none">
                     <div class="alert alert-danger">
                         <strong>匯入失敗：</strong> <span id="errorMessage"></span>
                     </div>
 
-                    <!-- 錯誤區塊 -->
-                    <div id="structureErrorSection" class="mb-4 d-none">
-                        <div class="card border-danger">
-                            <div class="card-header bg-danger text-white">
-                                <i class="fas fa-exclamation-triangle"></i> Excel檔案錯誤
-                            </div>
-                            <div class="card-body">
-                                <h5 class="card-title">請檢查以下問題：</h5>
-                                <ul id="structureErrorList">
-                                    <!-- 動態填充錯誤 -->
-                                </ul>
-                                <div class="mt-3">
-                                    <strong>正確的Excel範本：</strong>
-                                    <ul>
-                                        <li>必須包含名為 <code>DATA</code> 的工作表</li>
-                                        <li id="requiredColumnsInfo">必須包含以下欄位：<span id="requiredColumns"></span></li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- 錯誤表格 -->
                     <div id="dataErrorSection">
-                        <h5>資料錯誤詳情：</h5>
+                        <h5>錯誤清單：</h5>
                         <div class="table-responsive">
                             <table class="table table-bordered table-striped" id="errorTable">
-                                <thead class="table-dark">
+                                <thead class="table-danger">
                                     <tr>
                                         <th>行號</th>
-                                        <th>欄位</th>
+                                        <th>員工編號</th>
                                         <th>錯誤訊息</th>
                                     </tr>
                                 </thead>
-                                <tbody>
-                                    <!-- 錯誤數據 -->
-                                </tbody>
+                                <tbody></tbody>
                             </table>
                         </div>
                     </div>
@@ -91,6 +70,7 @@
                         <strong>匯入成功：</strong> <span id="successMessage"></span>
                     </div>
                 </div>
+
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
@@ -98,3 +78,81 @@
         </div>
     </div>
 </div>
+
+
+⸻
+
+🔧 前端 JS 處理（加上動畫 & 錯誤顏色）
+
+$("#importForm").submit(function (e) {
+    e.preventDefault();
+    var formData = new FormData(this);
+
+    // 顯示進度條動畫
+    $("#uploadProgress").removeClass("d-none");
+    $(".progress-bar").css("width", "30%");
+
+    $.ajax({
+        url: '@Url.Action("ImportUsers", "AP")',
+        type: 'POST',
+        data: formData,
+        contentType: false,
+        processData: false,
+        success: function (res) {
+            $("#uploadProgress").addClass("d-none");
+            $(".progress-bar").css("width", "0%");
+
+            if (res.success) {
+                $("#successMessage").text(res.message);
+                $("#successSection").removeClass("d-none");
+                $("#errorSection").addClass("d-none");
+                loadUsers();
+            } else {
+                $("#errorMessage").text(res.message);
+                $("#errorSection").removeClass("d-none");
+                $("#successSection").addClass("d-none");
+
+                // 清空舊的錯誤表格
+                $("#errorTable tbody").empty();
+
+                if (res.errors && res.errors.length > 0) {
+                    res.errors.forEach(err => {
+                        $("#errorTable tbody").append(
+                            `<tr>
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${err.Message}</td>
+                            </tr>`
+                        );
+                    });
+                }
+            }
+        },
+        error: function () {
+            $("#uploadProgress").addClass("d-none");
+            $(".progress-bar").css("width", "0%");
+            alert("伺服器發生錯誤，請稍後再試。");
+        }
+    });
+});
+
+// 重新上傳按鈕
+$("#btnRetryUpload").click(function () {
+    $("#errorSection").addClass("d-none");
+    $("#successSection").addClass("d-none");
+    $("#importForm")[0].reset();
+});
+
+
+⸻
+
+✅ 改造後效果
+	•	錯誤清單用紅色表格 (table-danger)，比黑色文字更清楚。
+	•	有 重新上傳 按鈕，可以清掉上一次的錯誤，回到乾淨狀態。
+	•	匯入過程有 progress bar 動畫，避免使用者誤以為沒反應。
+	•	成功時顯示綠色 success 區塊。
+
+⸻
+
+要不要我再幫你加一個功能：重新上傳時自動刪掉後端剛剛存的失敗檔案？
+這樣可以避免伺服器的 Upload 資料夾塞滿壞掉的 Excel。
