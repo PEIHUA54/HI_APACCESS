@@ -1,339 +1,69 @@
-      // 批次匯入使用者
-      [HttpPost]
-      public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
-      {
-          if (file == null || file.ContentLength == 0)
-          {
-              return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
-          }
+了解 👍 既然你已經把表頭確定改成 員工編號，那現在仍然匯入 0 筆，代表 SQL 執行到這段的 OpenDataSource 根本沒有讀到任何資料：
 
-          // 檢查檔案格式
-          string[] allowedExtensions = { ".xlsx", ".xls" };
-          string fileExtension = Path.GetExtension(file.FileName).ToLower();
+INSERT INTO #TEMP_IMPORT (EMP_NO)
+SELECT CAST(t.[員工編號] AS VARCHAR(20))
+FROM OpenDataSource(
+    'Microsoft.ACE.OLEDB.12.0',
+    'Data Source=...;User ID=Admin;Password=;Extended properties=Excel 12.0'
+)...[DATA$] AS t
+WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''
 
 
-          // 確保上傳檔案存在
-          string uploadDir = Server.MapPath("~/Upload");
-          if (!Directory.Exists(uploadDir))
-          {
-              Directory.CreateDirectory(uploadDir);
-          }
+⸻
 
-          // 生成唯一檔案名並移除任何可能的路徑字元
-          string sanitizedApgNo = Path.GetFileNameWithoutExtension(apgNo);
-          string uniqueFileName = $"Import_{sanitizedApgNo}_{DateTime.Now.ToString("yyyyMMddHHmmss")}{fileExtension}";
-          string uploadPath = PathValidator.GetSafePath(uploadDir, uniqueFileName);
+🔎 為什麼還是 0 筆？
 
-          try
-          {
-              // 保存上傳的檔案
-              file.SaveAs(uploadPath);
+我幫你列幾個最常見的情況：
+	1.	工作表名稱不是 DATA
+	•	這裡一定要是 DATA$，而且大小寫要對。
+	•	如果你的 Excel 第一個工作表叫「Sheet1」或「員工名單」，就會直接沒資料。
+	2.	Excel 版本不符合
+	•	你 SQL 用的是：Extended properties=Excel 12.0 → 這代表 .xls (舊格式)。
+	•	如果你上傳的是 .xlsx (新格式)，應該用：
 
-              // Excel資料
-              var service = GetAPService();
-              var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId, apgNo, this.Emp_NO);
-
-              //資料結果=>成功
-              if (importResult.IsSuccess)
-              {
-                  return Json(new
-                  {
-                      success = true,
-                      message = $"成功匯入 {importResult.SuccessCount} 筆資料！"
-                  });
-              }
-              else
-              {
-                  //資料結果=>失敗(錯誤訊息)
-                  string errorMessage = importResult.ErrorMessage;
-                  if (string.IsNullOrEmpty(errorMessage) && importResult.ErrorMessages.Count > 0)
-                  {
-                      errorMessage = $"匯入失敗，共有 {importResult.ErrorMessages.Count} 筆資料有錯誤";
-                  }
-
-                  return Json(new
-                  {
-                      success = false,
-                      message = errorMessage,
-                      errors = importResult.ErrorMessages
-                  });
-              }
-          }
-          catch (Exception ex)
-          {
-              string errorMessage = ex.Message;
-
-              // 處理特定錯誤類型
-              if (ex.Message.Contains("Microsoft.ACE.OLEDB.12.0") || ex.Message.Contains("提供者"))
-              {
-                  errorMessage = "Excel讀取錯誤: 系統缺少必要的Excel讀取元件。";
-              }
-              else if (ex.Message.Contains("DATA$") || ex.Message.Contains("工作表"))
-              {
-                  errorMessage = "Excel錯誤: 找不到名為 'DATA' 的工作表。請確認Excel檔案包含正確的工作表名稱。";
-              }
-              else if (ex.Message.Contains("無法將類型") || ex.Message.Contains("轉換"))
-              {
-                  errorMessage = "Excel欄位錯誤：Excel中的某些欄位資料不符合要求。請檢查欄位表頭是否正確。";
-              }
-
-              return Json(new
-              {
-                  success = false,
-                  message = errorMessage,
-                  errors = new[] { new {
-          RowNumber = 0,
-          EmpNo = "檔案處理錯誤",
-          Message = errorMessage
-      }}
-              });
-          }
-          finally
-          {
-              // 刪除臨時檔案
-              if (System.IO.File.Exists(uploadPath))
-              {
-                  F_Common f_COMMON = new F_Common();
-                  f_COMMON.SafeDeleteFile(uploadDir, uniqueFileName);
-              }
-          }
-
-      }
+Extended properties="Excel 12.0 Xml;HDR=YES";
 
 
-        // 批次匯入人員
-        public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-        {
-            ImportResult result = new ImportResult()
-            {
-                ErrorMessages = new List<ImportError>() // 確保初始化錯誤列表
-            };
+	•	少了 Xml 的話，ACE 會讀不到。
 
-            try
-            {
-                // 執行SQL導入操作
-                string sql = BuildUserImportSql();
+	3.	HDR 沒設
+	•	預設 HDR=NO，SQL Server 會把第一列當成資料，不會當欄位名稱。
+	•	這樣你查 t.[員工編號] 就會找不到。
+	•	正確應該是：
 
-                // 準備參數 - 使用明確的資料類型
-                List<SqlParameter> parameters = new List<SqlParameter>
-                {
-                    new SqlParameter("@filePath", filePath == null ? DBNull.Value : (object)filePath),
-                    new SqlParameter("@SYS_ID", sysId == null ? DBNull.Value : (object)sysId),
-                    new SqlParameter("@APG_NO", apgNo == null ? DBNull.Value : (object)apgNo),
-                    new SqlParameter("@CREATOR", creator)
-                };
+Extended properties="Excel 12.0 Xml;HDR=YES";
 
-                // 執行SQL並獲取結果
-                using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
-                {
-                    con.Open();
-                    using (SqlCommand cmd = new SqlCommand(sql, con))
-                    {
-                        cmd.Parameters.AddRange(parameters.ToArray());
 
-                        using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                        {
-                            DataSet ds = new DataSet();
-                            adapter.Fill(ds);
 
-                            // 解析結果
-                            if (ds.Tables.Count > 0)
-                            {
-                                DataTable resultTable = ds.Tables[0];
-                                if (resultTable.Rows.Count > 0)
-                                {
-                                    DataRow row = resultTable.Rows[0];
-                                    result.SuccessCount = Convert.ToInt32(row["SuccessCount"]);
-                                    result.IsSuccess = result.SuccessCount >= 0;
+⸻
 
-                                    // 如果有錯誤信息
-                                    if (!result.IsSuccess && ds.Tables.Count > 1)
-                                    {
-                                        DataTable errorTable = ds.Tables[1];
+✅ 建議修正
 
-                                        foreach (DataRow errorRow in errorTable.Rows)
-                                        {
-                                            result.ErrorMessages.Add(new ImportError
-                                            {
-                                                RowNumber = Convert.ToInt32(errorRow["RowNumber"]),
-                                                EmpNo = errorRow["EmpNo"].ToString(),
-                                                Message = errorRow["ErrorMessage"].ToString()
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccess = false;
-                result.ErrorMessage = ex.Message;
+把 SQL 那段改成這樣：
 
-                // 處理特殊的錯誤類型
-                if (ex.Message.Contains("Microsoft.ACE.OLEDB.12.0") || ex.Message.Contains("提供者"))
-                {
-                    result.ErrorMessage = "Excel讀取錯誤: 系統缺少必要的Excel讀取元件。請聯絡IT部門安裝 'Microsoft Access Database Engine'。";
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = 0,
-                        EmpNo = "系統設定錯誤",
-                        Message = result.ErrorMessage
-                    });
-                }
-                else if (ex.Message.Contains("DATA$") || ex.Message.Contains("工作表"))
-                {
-                    result.ErrorMessage = "Excel結構錯誤: 找不到名為 'DATA' 的工作表。請確認您的Excel檔案包含正確的工作表名稱。";
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = 0,
-                        EmpNo = "工作表錯誤",
-                        Message = result.ErrorMessage
-                    });
-                }
-                else if (ex.Message.Contains("無法將類型") || ex.Message.Contains("轉換"))
-                {
-                    result.ErrorMessage = "數據類型錯誤：Excel中的某些欄位資料類型不符合要求。請檢查數據格式是否正確。";
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = 0,
-                        EmpNo = "數據類型錯誤",
-                        Message = result.ErrorMessage
-                    });
-                }
-            }
-
-            return result;
-
-        }
-
-        // 建構員工匯入的SQL
-        private string BuildUserImportSql()
-        {
-            StringBuilder sql = new StringBuilder();
-
-            // 1. 創建臨時表來檢查結構
-            sql.Append(@"
---結構檢查部分
-BEGIN TRY
--- 先創建一個臨時表來導入Excel數據
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-
-CREATE TABLE #TEMP_IMPORT (
-RowNum INT IDENTITY(1,1),
-EMP_NO VARCHAR(20),
-IsValid BIT DEFAULT 1,
-ErrorMsg NVARCHAR(200)
-);
-
---嘗試導入Excel數據
-DECLARE @Query NVARCHAR(MAX);
 SET @Query = N'
 INSERT INTO #TEMP_IMPORT (EMP_NO)
-SELECT
-CAST(t.[員工編號] AS VARCHAR(20))
-FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'', ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';User ID=Admin;Password=;Extended properties=Excel 12.0'')…[DATA$] AS t
+SELECT CAST(t.[員工編號] AS VARCHAR(20))
+FROM OpenDataSource(
+    ''Microsoft.ACE.OLEDB.12.0'',
+    ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';
+    Extended properties="Excel 12.0 Xml;HDR=YES"''
+)...[DATA$] AS t
 WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''''
 ';
-EXEC sp_executesql @Query;
 
--- 檢查是否有匯入的資料
-DECLARE @RowCount INT = (SELECT COUNT(*) FROM #TEMP_IMPORT);
+⚠️ 重點：
+	•	Excel 12.0 Xml → 對應 .xlsx
+	•	HDR=YES → 讓第一列當欄位名稱（你才抓得到 員工編號）
 
-IF @RowCount = 0
-BEGIN
---沒有資料被導入，可能是 Excel 中欄位名稱不符合或工作表名稱不正確
-SELECT 0 AS SuccessCount;
-SELECT 0 AS RowNumber, '資料錯誤' AS EmpNo,'匯入失敗：Excel 檔案中沒有符合條件的資料，請檢查工作表名稱是否為 DATA，以及必要欄位[員工編號]是否存在' AS ErrorMessage;
+⸻
 
---清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END
+📌 如果你上傳的 Excel 其實是 .xls 舊格式，那就改回：
 
---檢查是否已經有錯誤記錄
-IF EXISTS (SELECT 1 FROM #TEMP_IMPORT WHERE IsValid = 0)
-BEGIN
-SELECT 0 AS SuccessCount;
-SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage
-FROM #TEMP_IMPORT
-WHERE IsValid = 0;
-
---清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END
-END TRY
-BEGIN CATCH
---捕獲並處理錯誤
-DECLARE @ErrorMessage NVARCHAR(MAX) = ERROR_MESSAGE();
-
---返回錯誤信息
-SELECT 0 AS SuccessCount;
-
--- 處理常見錯誤
-IF @ErrorMessage LIKE '%DATA$%'
-SELECT 0 AS RowNumber,'工作表錯誤' AS EmpNo, '找不到名為 ''DATA'' 的工作表' AS ErrorMessage;
-ELSE IF @ErrorMessage LIKE '%員工編號%'
-SELECT 0 AS RowNumber, '欄位錯誤' AS EmpNo, '找不到必要的欄位[員工編號]，請檢查Excel的表頭欄位名稱是否正確' AS ErrorMessage;
-ELSE
-SELECT 0 AS RowNumber, '讀取錯誤' AS EmpNo, @ErrorMessage AS ErrorMessage;
-
--- 清理並退出
-IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-RETURN;
-END CATCH;
-
--- 如果結構檢查通過，繼續處理
--- 員工不存在檢查
-UPDATE t SET IsValid=0, ErrorMsg=N'員工不存在'
-FROM #TEMP_IMPORT t
-WHERE NOT EXISTS (
-SELECT 1 FROM VW_M1EMP_MAST e WHERE e.EMP_NO = t.EMP_NO
-);
-
---已存在於群組檢查
-UPDATE t SET IsValid=0, ErrorMsg=N'群組已存在此員工'
-FROM #TEMP_IMPORT t
-WHERE EXISTS (
-SELECT 1 FROM AP_USER u
-WHERE u.SYS_ID=@SYS_ID AND u.APG_NO=@APG_NO AND u.U_ID=t.EMP_NO
-);
-
---寫入正式表
-INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
-SELECT @SYS_ID, @APG_NO, e.EMP_NO, e.EMP_NAME, @CREATOR, GETDATE()
-FROM #TEMP_IMPORT t
-JOIN VW_M1EMP_MAST e ON e.EMP_NO=t.EMP_NO
-WHERE t.IsValid=1;
-
---回傳結果
-SELECT COUNT(*) AS SuccessCount FROM #TEMP_IMPORT WHERE IsValid=1;
-SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage FROM #TEMP_IMPORT WHERE IsValid=0;
-
---清理臨時表
-DROP TABLE #TEMP_IMPORT
-");
-
-            return sql.ToString();
-
-        }
+Extended properties="Excel 8.0;HDR=YES";
 
 
- // 匯入
- public class ImportResult
- {
-     public bool IsSuccess { get; set; }
-     public int SuccessCount { get; set; }
-     public string ErrorMessage { get; set; }
-     public List<ImportError> ErrorMessages { get; set; } = new List<ImportError>();
- }
+⸻
 
- public class ImportError
- {
-     public int RowNumber { get; set; }
-     public string EmpNo { get; set; }
-     public string Message { get; set; }
- }
+👉 你要不要把你現在上傳的 Excel 實際檔名 + 副檔名 + 第一個工作表名稱 跟我說？
+我可以幫你把那段 SQL 的 Extended properties 精確改對，不然一直 0 筆就是卡在這裡。
