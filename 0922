@@ -1,321 +1,79 @@
-👌 理解你的狀況了。
-你不想引入 ExcelDataReader / NPOI 這些額外套件，而是想比照你傳的專案做法，靠 SQL 的 OpenDataSource(OLEDB) 方式把 Excel 暫存導進來，再做檢核。
+      <!-- 左邊：管理使用者 -->
+      <div class="col-md-4">
+          <div class="management-section">
+              <div class="section-header">
+                  <i class="fas fa-users"></i> 管理使用者
+                  <button type="button" class="btn btn-primary" onclick="openUserModal()" id="addUserBtn" disabled>
+                      <i class="fas fa-plus"></i>
+                      新增使用者
+                  </button>
+                  <button type="button" class="btn btn-info" onclick="openImportModal()" id="importUserBtn" disabled>
+                      <i class="fas fa-file-import"></i> 批次匯入使用者
+                  </button>
+              </div>
+              <div id="userList">
+                  <div class="no-data">請先選擇群組</div>
+              </div>
+          </div>
+      </div>
 
-這樣就不用在 Controller 裡解析 Excel，也不用多建一堆 Model，只要一個簡單的 ImportResult 就能承接成功筆數與錯誤清單。
-
-⸻
-
-🟦 核心概念
-	1.	Controller：接收上傳檔案 → 存到伺服器 → 呼叫 f_ap 進行 SQL 導入。
-	2.	f_ap：組 SQL，建立 #TEMP_IMPORT，用 OpenDataSource('Microsoft.ACE.OLEDB.12.0') 讀 Excel，檢查員工是否存在、群組是否重複，錯誤就塞到錯誤清單，最後回傳 ImportResult。
-	3.	Model：只要 ImportResult + ImportError 就好。
-
-⸻
-
-🟦 Model (Models/ImportResult.cs)
-
-using System.Collections.Generic;
-
-namespace YourProject.Models
-{
-    public class ImportResult
-    {
-        public bool IsSuccess { get; set; }
-        public int SuccessCount { get; set; }
-        public List<ImportError> Errors { get; set; } = new List<ImportError>();
-    }
-
-    public class ImportError
-    {
-        public int RowNumber { get; set; }
-        public string EmpNo { get; set; }
-        public string Message { get; set; }
-    }
-}
-
-
-⸻
-
-🟦 Controller (UserController.cs)
-
-using System;
-using System.IO;
-using System.Web;
-using System.Web.Mvc;
-using YourProject.Services;
-using YourProject.Models;
-
-public class UserController : Controller
-{
-    private readonly f_AP _fap = new f_AP();
-
-    [HttpPost]
-    public ActionResult Import(HttpPostedFileBase file, string apgNo)
-    {
-        if (file == null || file.ContentLength == 0)
-            return Json(new { success = false, message = "請選擇檔案" });
-
-        // 上傳路徑
-        string uploadDir = Server.MapPath("~/Upload");
-        if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
-
-        string filePath = Path.Combine(uploadDir, Path.GetFileName(file.FileName));
-        file.SaveAs(filePath);
-
-        string sysId = Session["SYS_ID"]?.ToString();
-        string creator = User.Identity.Name;
-
-        ImportResult result = _fap.ImportUsers(filePath, sysId, apgNo, creator);
-
-        if (result.IsSuccess)
-            return Json(new { success = true, message = $"成功匯入 {result.SuccessCount} 筆" });
-
-        return Json(new { success = false, message = "匯入完成，有錯誤", errors = result.Errors });
-    }
-}
-
-
-⸻
-
-🟦 f_ap (Services/f_AP.cs)
-
-using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Data.SqlClient;
-using YourProject.Models;
-
-namespace YourProject.Services
-{
-    public class f_AP
-    {
-        private string _conn = ConfigurationManager.ConnectionStrings["ConnDB"].ConnectionString;
-
-        public ImportResult ImportUsers(string filePath, string sysId, string apgNo, string creator)
-        {
-            ImportResult result = new ImportResult();
-
-            string sql = $@"
-            BEGIN TRY
-                IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
-                CREATE TABLE #TEMP_IMPORT (
-                    RowNum INT IDENTITY(1,1),
-                    EMP_NO VARCHAR(20),
-                    IsValid BIT DEFAULT 1,
-                    ErrorMsg NVARCHAR(200)
-                );
-
-                DECLARE @sql NVARCHAR(MAX) = '
-                    INSERT INTO #TEMP_IMPORT(EMP_NO)
-                    SELECT LTRIM(RTRIM([員編]))
-                    FROM OpenDataSource(''Microsoft.ACE.OLEDB.12.0'',
-                        ''Data Source={filePath};Extended properties=Excel 12.0'')...[DATA$]
-                    WHERE [員編] IS NOT NULL ';
-                EXEC(@sql);
-
-                -- 員工不存在
-                UPDATE t SET IsValid=0, ErrorMsg=N'員工不存在'
-                FROM #TEMP_IMPORT t
-                WHERE NOT EXISTS (SELECT 1 FROM VW_M1EMP_MAST e WHERE e.EMP_NO=t.EMP_NO);
-
-                -- 該群組已存在
-                UPDATE t SET IsValid=0, ErrorMsg=N'群組已存在此員工'
-                FROM #TEMP_IMPORT t
-                WHERE EXISTS (SELECT 1 FROM AP_USER u WHERE u.SYS_ID=@SYS_ID AND u.APG_NO=@APG_NO AND u.U_ID=t.EMP_NO);
-
-                -- 成功匯入
-                INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
-                SELECT @SYS_ID,@APG_NO,e.EMP_NO,e.EMP_NAME,@CREATOR,GETDATE()
-                FROM #TEMP_IMPORT t
-                JOIN VW_M1EMP_MAST e ON e.EMP_NO=t.EMP_NO
-                WHERE t.IsValid=1;
-
-                SELECT COUNT(*) AS SuccessCount FROM #TEMP_IMPORT WHERE IsValid=1;
-                SELECT RowNum AS RowNumber, EMP_NO, ErrorMsg FROM #TEMP_IMPORT WHERE IsValid=0;
-            END TRY
-            BEGIN CATCH
-                SELECT -1 AS SuccessCount;
-                SELECT 0 AS RowNumber, '' AS EMP_NO, ERROR_MESSAGE() AS ErrorMsg;
-            END CATCH;
-            ";
-
-            using (var con = new SqlConnection(_conn))
-            using (var cmd = new SqlCommand(sql, con))
-            {
-                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                cmd.Parameters.AddWithValue("@CREATOR", creator);
-
-                using (var adapter = new SqlDataAdapter(cmd))
-                {
-                    DataSet ds = new DataSet();
-                    adapter.Fill(ds);
-
-                    int successCount = Convert.ToInt32(ds.Tables[0].Rows[0]["SuccessCount"]);
-                    result.IsSuccess = successCount >= 0;
-                    result.SuccessCount = successCount;
-
-                    if (ds.Tables.Count > 1)
-                    {
-                        foreach (DataRow row in ds.Tables[1].Rows)
-                        {
-                            result.Errors.Add(new ImportError
-                            {
-                                RowNumber = Convert.ToInt32(row["RowNumber"]),
-                                EmpNo = row["EMP_NO"].ToString(),
-                                Message = row["ErrorMsg"].ToString()
-                            });
-                        }
-                    }
-                }
-            }
-
-            return result;
-        }
-    }
-}
-
-
-⸻
-
-🟦 說明
-	•	你不需要 NPOI / ExcelDataReader
-	•	直接靠 SQL OpenDataSource 把 Excel [DATA$] 導進 #TEMP_IMPORT
-	•	SQL 內就能檢查 員工是否存在、群組是否重複
-	•	回傳成功數 + 錯誤清單給 Controller
-
-⸻
-
-要不要我幫你把 View (Modal) 也整理一份？包括錯誤清單表格輸出。
-
-
-好 👌 我幫你補 View (含 Modal + 匯入表單)
-搭配我前面給的 Controller + f_ap + Model。
-
-⸻
-
-🟦 View (Razor, 例如 Views/User/Import.cshtml)
-
-@{
-    ViewBag.Title = "批次匯入使用者";
-    Layout = "~/Views/Shared/_Layout.cshtml";
-}
-
-<h2>批次匯入使用者</h2>
-
-<div class="row">
-    <div class="col-md-6">
-        <form id="importForm" enctype="multipart/form-data">
-            <div class="form-group">
-                <label>選擇群組</label>
-                <input type="text" id="apgNo" name="apgNo" class="form-control" placeholder="輸入群組代號" />
-            </div>
-            <div class="form-group">
-                <label>上傳 Excel (必須有一個表頭「員編」，工作表名稱為 DATA)</label>
-                <input type="file" name="file" id="file" class="form-control" accept=".xls,.xlsx" />
-            </div>
-            <button type="submit" class="btn btn-primary">批次匯入</button>
-            <a href="~/File/ImportTemplate.xlsx" class="btn btn-link">下載範例檔</a>
-        </form>
-    </div>
-</div>
-
-<hr />
-
-<!-- 匯入錯誤結果 Modal -->
-<div class="modal fade" id="errorModal" tabindex="-1" role="dialog" aria-labelledby="errorModalLabel">
-    <div class="modal-dialog modal-lg" role="document">
+<!-- 匯入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog">
         <div class="modal-content">
-            <div class="modal-header bg-danger text-white">
-                <h4 class="modal-title" id="errorModalLabel">匯入錯誤清單</h4>
+            <div class="modal-header">
+                <h5 class="modal-title">批次匯入使用者</h5>
                 <button type="button" class="close" data-dismiss="modal">&times;</button>
             </div>
             <div class="modal-body">
-                <p class="text-danger">部分資料匯入失敗，請檢查以下錯誤：</p>
-                <table class="table table-bordered table-striped">
-                    <thead>
-                        <tr>
-                            <th style="width: 10%">列號</th>
-                            <th style="width: 20%">員編</th>
-                            <th style="width: 70%">錯誤訊息</th>
-                        </tr>
-                    </thead>
-                    <tbody id="errorTableBody">
-                        <!-- JS 填入 -->
-                    </tbody>
-                </table>
+                <form id="importForm" enctype="multipart/form-data" method="post">
+                    <input type="hidden" name="apg_no" id="importGroupNo" />
+                    <input type="file" class="form-control mb-2" name="file" accept=".xls,.xlsx" required />
+                    <div class="d-flex justify-content-between">
+                        <button type="submit" class="btn btn-primary">匯入</button>
+                        <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                            <i class="fas fa-download"></i> 下載範本
+                        </button>
+                    </div>
+                </form>
+                <div id="importResult" class="mt-3"></div>
             </div>
         </div>
     </div>
 </div>
 
-@section scripts {
-<script>
-    $(function () {
+        // 批次匯入使用者
+        function openImportModal() {
+            $("#importGroupNo").val($("#groupSelect").val()); // 帶目前選的群組
+            $("#importModal").modal("show");
+        }
+
+        function downloadTemplate() {
+            window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
+        }
+
         $("#importForm").submit(function (e) {
             e.preventDefault();
-
             var formData = new FormData(this);
             $.ajax({
-                url: '@Url.Action("Import", "User")',
+                url: '@Url.Action("ImportUsers", "AP")',
                 type: 'POST',
                 data: formData,
                 contentType: false,
                 processData: false,
                 success: function (res) {
                     if (res.success) {
-                        alert(res.message);
-                        if (res.errors && res.errors.length > 0) {
-                            showErrors(res.errors);
-                        }
+                        $("#importResult").html('<div class="alert alert-success">' + res.message + '</div>');
+                        loadUsers();
                     } else {
-                        alert(res.message);
-                        if (res.errors && res.errors.length > 0) {
-                            showErrors(res.errors);
+                        let html = '<div class="alert alert-danger">' + res.message + '</div>';
+                        if (res.errors) {
+                            html += '<ul>';
+                            res.errors.forEach(err => { html += `<li>${err}</li>`; });
+                            html += '</ul>';
                         }
+                        $("#importResult").html(html);
                     }
-                },
-                error: function () {
-                    alert("匯入過程發生錯誤");
                 }
             });
         });
-
-        function showErrors(errors) {
-            var tbody = $("#errorTableBody");
-            tbody.empty();
-            $.each(errors, function (i, err) {
-                tbody.append("<tr>" +
-                    "<td>" + err.RowNumber + "</td>" +
-                    "<td>" + err.EmpNo + "</td>" +
-                    "<td>" + err.Message + "</td>" +
-                    "</tr>");
-            });
-            $("#errorModal").modal("show");
-        }
-    });
-</script>
-}
-
-
-⸻
-
-🟦 流程說明
-	1.	使用者在頁面選群組 (apgNo) → 上傳 Excel (員編 一欄)。
-	2.	Controller.Import 會存檔 + 呼叫 f_AP.ImportUsers。
-	3.	成功 → alert("成功匯入 X 筆")
-	•	如果有錯誤，會帶 errors → 在 Modal 表格 顯示。
-	4.	錯誤清單格式化輸出：列號 / 員編 / 錯誤訊息。
-
-⸻
-
-這樣整個流程就完整了：
-✅ Model → ImportResult
-✅ f_ap → SQL 驗證 + Insert
-✅ Controller → 接檔案、回傳 JSON
-✅ View → 上傳表單 + Modal 顯示錯誤
-
-⸻
-
-要不要我幫你再加一個 「匯入成功清單」 的 Modal？現在只有錯誤表格。
