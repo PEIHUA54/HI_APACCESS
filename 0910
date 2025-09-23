@@ -1,48 +1,511 @@
-1. 新增GetAllUser(取得全部人員清單)
-Request：SysID、Environment
-Response:Result_code 、Msg、Result
-Result: UserID、UserName
-回傳範例
+好👌 我幫你把 功能 1、2、3 的完整 Models / Factory / SQL 全部都整理好，照抄就能跑。
+
+⸻
+
+🔹 功能 1：GetAllUser (取得全部人員清單)
+
+Request Model
+
+namespace HI_APACCESS_DLL.Models
 {
-"Result_code": "0000",
-"Msg": "成功",
-"Result": [
+    public class GetAllUserModel
     {
-      "UserID": "12345",
-      "UserName": "王小明"
-    },
-    {
-      "UserID": "54321",
-      "UserName": "陳小明"
+        public class GetAllUserRequest
+        {
+            public string SysID { get; set; }
+            public string Environment { get; set; }
+        }
+
+        public class ResultData
+        {
+            public string UserID { get; set; }
+            public string UserName { get; set; }
+        }
+
+        public class GetAllUserResponse
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public List<ResultData> Result { get; set; }
+        }
     }
-  ]
 }
 
-2. 修改GetGroupAllUser 回傳使用者名稱
-Request：SysID、GroupID、IsIncludeChildGroups、Environment
-Response:Result_code 、Msg、Result
-改成 result: UserID、UserName
-範例
-成功
+Factory
+
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+
+namespace HI_APACCESS_DLL.Factory
 {
-"Result_code": "0000",
-"Msg": "成功",
-"Result": [
+    internal class FGetAllUser
     {
-      "UserID": "12345",
-      "UserName": "王小明"
-    },
-    {
-      "UserID": "54321",
-      "UserName": "陳小明"
+        internal GetAllUserModel.GetAllUserResponse Execute(string sysId, string environment)
+        {
+            var response = new GetAllUserModel.GetAllUserResponse();
+
+            try
+            {
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                var resultList = new List<GetAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
+SELECT EMP_ID AS UserID,
+       EMP_NAME AS UserName
+FROM [HI_TMMAIN].[dbo].[AP_USER]
+WHERE SYS_ID=@SysID
+ORDER BY EMP_ID";
+
+                    using (var cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
     }
-  ]
-}
-錯誤
-{
-  "Result_code": "0001",
-  "Msg": "查無權限"
 }
 
-3.修改GetTree(取得樹狀功能清單)
-多回傳一個欄位Memo(備註)(string)
+
+⸻
+
+🔹 功能 2：修改 GetGroupAllUser (回傳 UserName)
+
+Request Model
+
+namespace HI_APACCESS_DLL.Models
+{
+    public class GetGroupAllUserModel
+    {
+        public class GetGroupAllUserRequest
+        {
+            public string SysID { get; set; }
+            public string GroupID { get; set; }
+            public bool IsIncludeChildGroups { get; set; }
+            public string Environment { get; set; }
+        }
+
+        public class ResultData
+        {
+            public string UserID { get; set; }
+            public string UserName { get; set; }
+        }
+
+        public class GetGroupAllUserResponse
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public List<ResultData> Result { get; set; }
+        }
+    }
+}
+
+Factory
+
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetGroupAllUser
+    {
+        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                var resultList = new List<GetGroupAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
+SELECT u.EMP_ID AS UserID,
+       u.EMP_NAME AS UserName
+FROM [HI_TMMAIN].[dbo].[AP_USER_GROUP] g
+INNER JOIN [HI_TMMAIN].[dbo].[AP_USER] u 
+    ON g.EMP_ID = u.EMP_ID AND g.SYS_ID = u.SYS_ID
+WHERE g.SYS_ID = @SysID
+  AND g.APG_NO = @GroupID";
+
+                    if (isIncludeChildGroups)
+                    {
+                        sql += @" OR g.APG_NO IN (
+                                    SELECT ChildGroupID 
+                                    FROM [HI_TMMAIN].[dbo].[AP_GROUP_RELATION] 
+                                    WHERE ParentGroupID = @GroupID
+                                 )";
+                    }
+
+                    using (var cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetGroupAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+🔹 功能 3：修改 GetTree (增加 Memo)
+
+Request Model
+
+namespace HI_APACCESS_DLL.Models
+{
+    public class GetTreeModel
+    {
+        public class GetTreeRequest
+        {
+            public string SysID { get; set; }
+            public string GroupID { get; set; }
+            public string Environment { get; set; }
+        }
+
+        public class ResultData
+        {
+            public string FuncID { get; set; }
+            public string FuncName { get; set; }
+            public string ParentID { get; set; }
+            public string Controller { get; set; }
+            public string Action { get; set; }
+            public int Sort { get; set; }
+            public string Level { get; set; }
+            public string Memo { get; set; } // 新增
+        }
+
+        public class GetTreeResponse
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public List<ResultData> Result { get; set; }
+        }
+    }
+}
+
+Factory
+
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetTree
+    {
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
+
+            try
+            {
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                var resultList = new List<GetTreeModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID,
+    a.MEMO
+FROM [HI_TMMAIN].[dbo].[AP_FUNC] a
+LEFT JOIN [HI_TMMAIN].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID
+WHERE a.SYS_ID=@SysID 
+  AND b.APG_NO=@GroupID
+  AND a.IS_SHOW = 'Y'
+ORDER BY a.SORT_NO";
+
+                    using (var cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString(),
+                                    Memo = reader["MEMO"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
+
+⸻
+
+要不要我再幫你把這三個 APACCESS 外層呼叫方法 (APACCESS.cs) 也補上？
+像 GetAllUser(json)、GetGroupAllUser(json)、GetTree(json)，這樣你在 SVS 呼叫就不用再自己組 Factory。
+好👌 那我幫你把 APACCESS 外層呼叫方法（APACCESS.cs）也補上，讓你在 SVS_員工基本資料 或 SVS_客製化元件 直接呼叫 new APACCESS().XXX(json) 就好，不用自己管 Factory。
+
+⸻
+
+🔹 APACCESS.cs（外層呼叫）
+
+using HI_APACCESS_DLL.Factory;
+using HI_APACCESS_DLL.Models;
+using Newtonsoft.Json;
+using System;
+
+namespace HI_APACCESS_DLL
+{
+    public class APACCESS
+    {
+        /// <summary>
+        /// 功能1 - 取得全部人員清單
+        /// </summary>
+        public string GetAllUser(string json)
+        {
+            try
+            {
+                var req = JsonConvert.DeserializeObject<GetAllUserModel.GetAllUserRequest>(json);
+                var res = new FGetAllUser().Execute(req.SysID, req.Environment);
+                return JsonConvert.SerializeObject(res);
+            }
+            catch (Exception ex)
+            {
+                return JsonConvert.SerializeObject(new GetAllUserModel.GetAllUserResponse
+                {
+                    Result_code = Common.Codes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// 功能2 - 取得群組人員清單 (可含子群組)
+        /// </summary>
+        public string GetGroupAllUser(string json)
+        {
+            try
+            {
+                var req = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(json);
+                var res = new FGetGroupAllUser().Execute(req.SysID, req.GroupID, req.IsIncludeChildGroups, req.Environment);
+                return JsonConvert.SerializeObject(res);
+            }
+            catch (Exception ex)
+            {
+                return JsonConvert.SerializeObject(new GetGroupAllUserModel.GetGroupAllUserResponse
+                {
+                    Result_code = Common.Codes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// 功能3 - 取得樹狀功能清單
+        /// </summary>
+        public string GetTree(string json)
+        {
+            try
+            {
+                var req = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(json);
+                var res = new FGetTree().Execute(req.SysID, req.GroupID, req.Environment);
+                return JsonConvert.SerializeObject(res);
+            }
+            catch (Exception ex)
+            {
+                return JsonConvert.SerializeObject(new GetTreeModel.GetTreeResponse
+                {
+                    Result_code = Common.Codes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                });
+            }
+        }
+    }
+}
+
+
+⸻
+
+🔹 使用範例
+
+呼叫功能 1：GetAllUser
+
+var req = new GetAllUserModel.GetAllUserRequest
+{
+    SysID = "HI_POSIMG",
+    Environment = "TEST"
+};
+string json_input = JsonConvert.SerializeObject(req);
+string response = new APACCESS().GetAllUser(json_input);
+var res = JsonConvert.DeserializeObject<GetAllUserModel.GetAllUserResponse>(response);
+
+
+⸻
+
+呼叫功能 2：GetGroupAllUser
+
+var req = new GetGroupAllUserModel.GetGroupAllUserRequest
+{
+    SysID = "HI_POSIMG",
+    GroupID = "001",
+    IsIncludeChildGroups = true,
+    Environment = "TEST"
+};
+string json_input = JsonConvert.SerializeObject(req);
+string response = new APACCESS().GetGroupAllUser(json_input);
+var res = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserResponse>(response);
+
+
+⸻
+
+呼叫功能 3：GetTree
+
+var req = new GetTreeModel.GetTreeRequest
+{
+    SysID = "HI_POSIMG",
+    GroupID = "001",
+    Environment = "TEST"
+};
+string json_input = JsonConvert.SerializeObject(req);
+string response = new APACCESS().GetTree(json_input);
+var res = JsonConvert.DeserializeObject<GetTreeModel.GetTreeResponse>(response);
+
+
+⸻
+
+👉 這樣你外層呼叫的方式跟之前功能 5 / 功能 6 是一致的，
+SVS_員工基本資料 就可以乾乾淨淨呼叫，不用再動 Factory。
+
+要不要我順便幫你把 SVS_員工基本資料 裡面 呼叫功能 1、2、3 的新版寫法也整理給你？
