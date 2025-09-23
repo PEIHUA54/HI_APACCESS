@@ -1,141 +1,60 @@
-收到，我把「下載範本是固定檔案、只有一個表頭＝員編」這點全面改好了，也移除 OLEDB，改用 NPOI 直接讀 Excel（不用安裝 Access provider，不會再出現 Microsoft.ACE.OLEDB.12.0 的錯誤）。
-檢核規則依你的要求：
-	1.	EMP_NO 必須存在於 [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]，否則該列失敗。
-	2.	同一 SYS_ID + APG_NO 群組中，若 U_ID 已存在，該列失敗。
-	3.	成功者逐筆 INSERT 到 [HI_TMMAIN].[dbo].[AP_USER]，並把 員工姓名 寫入 U_NAME。
-	4.	失敗清單排成 Modal 表格顯示（列號／員編／錯誤訊息）。
-
-另外：SYS_ID 由 GroupManagement action 寫到 Session["SYS_ID"] 後，其他任一 action 只要
-string sysId = Session["SYS_ID"]?.ToString(); 就可取到。
+了解 👍
+我幫你把 Controller 和 f_ap 分得更乾淨、簡單，讓 Controller 只負責「接收請求 → 呼叫 f_ap → 回傳結果」，資料處理全部丟去 f_ap。
 
 ⸻
 
-Controller（範例：APController.cs）
+🔹 Controller (UserManagementController.cs)
 
 using System;
 using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Data.SqlClient;
-using System.IO;
 using System.Web;
 using System.Web.Mvc;
-using NPOI.SS.UserModel;
-using NPOI.XSSF.UserModel; // .xlsx
-using NPOI.HSSF.UserModel; // .xls
-using YourApp.Models;       // ImportResult, ImportError
-using YourApp.Service;      // PathValidator（你現有的）
-using YourApp.FAps;         // F_AP
+using YourProject.Services;
+using YourProject.Models;
 
-public class APController : Controller
+namespace YourProject.Controllers
 {
-    // 這個 Action（或你的 GroupManagement）在進場時設定 SYS_ID
-    // 你已在 GroupManagement action 寫入 Session["SYS_ID"] = xxx;
-    // 其他 action 就用 Session 取值
-    public ActionResult GroupManagement(string sysId)
+    public class UserManagementController : Controller
     {
-        // 這裡照你原本的作法，進場設進 Session（示範）
-        if (!string.IsNullOrWhiteSpace(sysId))
-            Session["SYS_ID"] = sysId;
+        private readonly f_AP _fap = new f_AP();
 
-        ViewBag.SystemId = sysId;
-        return View();
-    }
-
-    // 下載固定放在 /File 的 Excel 範本（只有一個表頭：員編）
-    [HttpGet]
-    public ActionResult DownloadUserTemplate()
-    {
-        try
+        // 匯入 Excel
+        [HttpPost]
+        public ActionResult ImportUsers(HttpPostedFileBase File, string apgNo)
         {
-            // 你的專案是 ~/File/...（若你是 ~/File/File/... 請自己調整）
-            var templatePath = Server.MapPath("~/File/UserImportTemplate.xlsx");
-            if (!System.IO.File.Exists(templatePath))
+            if (File == null || File.ContentLength == 0)
+                return Json(new { success = false, message = "請選擇要匯入的 Excel 檔案" });
+
+            try
             {
-                return Json(new { success = false, message = "找不到匯入範本檔" }, JsonRequestBehavior.AllowGet);
+                string sysId = Session["SYS_ID"]?.ToString();
+                string creator = User.Identity.Name;
+
+                ImportResult result = _fap.ImportUsersFromExcel(File.InputStream, sysId, apgNo, creator);
+
+                if (result.Errors.Count > 0)
+                    return Json(new { success = false, message = $"匯入完成，有 {result.Errors.Count} 筆錯誤", errors = result.Errors });
+
+                return Json(new { success = true, message = $"匯入成功，共新增 {result.SuccessCount} 筆" });
             }
-            var fileBytes = System.IO.File.ReadAllBytes(templatePath);
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "匯入發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 下載範本
+        [HttpGet]
+        public ActionResult DownloadTemplate()
+        {
+            string path = Server.MapPath("~/File/UserImportTemplate.xlsx");
+            if (!System.IO.File.Exists(path))
+                return Content("找不到範本檔案");
+
+            byte[] fileBytes = System.IO.File.ReadAllBytes(path);
             return File(fileBytes,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "UserImportTemplate.xlsx");
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "下載範本失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
-
-    // 批次匯入（只讀第一欄「員編」）
-    [HttpPost]
-    public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
-    {
-        if (file == null || file.ContentLength == 0)
-            return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
-
-        var sysId = Session["SYS_ID"]?.ToString();
-        if (string.IsNullOrWhiteSpace(sysId))
-            return Json(new { success = false, message = "系統代號遺失，請先從群組管理頁進入再操作。" });
-
-        if (string.IsNullOrWhiteSpace(apgNo))
-            return Json(new { success = false, message = "請先選擇群組再匯入" });
-
-        string[] allowed = { ".xlsx", ".xls" };
-        if (!PathValidator.IsValidFileExtension(file.FileName, allowed))
-        {
-            return Json(new
-            {
-                success = false,
-                message = "檔案格式錯誤，僅支援 .xlsx / .xls"
-            });
-        }
-
-        try
-        {
-            var fap = new F_AP();
-            // 直接用檔案串流，不落地（Fortify 友善）
-            var result = fap.ImportUserExcel(file.InputStream, creatorEmpNo: Emp_NO, sysId: sysId, apgNo: apgNo);
-
-            if (result.IsSuccess)
-            {
-                return Json(new
-                {
-                    success = true,
-                    message = $"成功匯入 {result.ValidRows} 筆資料！"
-                });
-            }
-            else
-            {
-                var msg = string.IsNullOrWhiteSpace(result.ErrorMessage)
-                          ? $"匯入失敗，共有 {result.Errors.Count} 筆資料有錯誤"
-                          : result.ErrorMessage;
-
-                return Json(new
-                {
-                    success = false,
-                    message = msg,
-                    errors = result.Errors
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            return Json(new
-            {
-                success = false,
-                message = "匯入處理失敗：" + ex.Message,
-                errors = new[] {
-                    new { RowNumber = 0, KeyValue = "", ErrorMessage = ex.Message }
-                }
-            });
-        }
-    }
-
-    // 假設你在 BaseController 已有 Emp_NO；沒有就自行改成從 Session/其他來源取
-    protected string Emp_NO
-    {
-        get
-        {
-            return (Session["EMP_NO"] ?? "").ToString();
         }
     }
 }
@@ -143,175 +62,114 @@ public class APController : Controller
 
 ⸻
 
-F_AP（資料層，NPOI 解析 + DB 檢核 + 逐筆 INSERT）
+🔹 f_ap (Services/f_AP.cs)
 
 using System;
 using System.Collections.Generic;
 using System.Configuration;
-using System.Data;
 using System.Data.SqlClient;
 using System.IO;
-using NPOI.SS.UserModel;
-using NPOI.XSSF.UserModel;
-using NPOI.HSSF.UserModel;
-using YourApp.Models;
+using ExcelDataReader;
+using YourProject.Models;
 
-namespace YourApp.FAps
+namespace YourProject.Services
 {
-    public class F_AP
+    public class f_AP
     {
-        // 只讀第一欄「員編」，逐筆檢核與新增
-        public ImportResult ImportUserExcel(Stream excelStream, string creatorEmpNo, string sysId, string apgNo)
+        private string _conn = ConfigurationManager.ConnectionStrings["ConnDB"].ConnectionString;
+
+        // 匯入 Excel → 檢查 → 一筆筆新增
+        public ImportResult ImportUsersFromExcel(Stream fileStream, string sysId, string apgNo, string creator)
         {
-            var result = new ImportResult
+            var result = new ImportResult();
+
+            using (var reader = ExcelReaderFactory.CreateReader(fileStream))
             {
-                Errors = new List<ImportError>(),
-                TotalRows = 0,
-                ValidRows = 0,
-                IsSuccess = false
-            };
+                var ds = reader.AsDataSet();
+                var table = ds.Tables[0]; // 第一個工作表
 
-            try
-            {
-                // 建立 NPOI Workbook（同時支援 .xlsx/.xls）
-                IWorkbook workbook;
-                // 無副檔名時以 XSSFWorkbook 嘗試，或你也可用 try/catch 雙試
-                try { workbook = new XSSFWorkbook(excelStream); }
-                catch { excelStream.Position = 0; workbook = new HSSFWorkbook(excelStream); }
-
-                var sheet = workbook.NumberOfSheets > 0 ? workbook.GetSheetAt(0) : null;
-                if (sheet == null)
+                for (int i = 1; i < table.Rows.Count; i++) // 從第2列開始 (跳過表頭)
                 {
-                    result.ErrorMessage = "找不到 Excel 工作表";
-                    return result;
-                }
+                    string empNo = table.Rows[i][0]?.ToString().Trim();
+                    if (string.IsNullOrEmpty(empNo)) continue;
 
-                using (var con = new SqlConnection(ConfigurationManager
-                    .ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
-                {
-                    con.Open();
-
-                    // 從第 2 列開始（第 1 列為表頭：員編）
-                    for (int i = 1; i <= sheet.LastRowNum; i++)
+                    // 查員工
+                    var emp = GetEmployeeByNo(empNo);
+                    if (emp == null)
                     {
-                        var row = sheet.GetRow(i);
-                        if (row == null) continue;
-
-                        var empNo = GetCellString(row.GetCell(0));
-                        if (string.IsNullOrWhiteSpace(empNo)) continue;
-
-                        result.TotalRows++;
-
-                        try
-                        {
-                            // 1) 檢查員工是否存在（取員工姓名）
-                            string empName = null;
-                            using (var cmd = new SqlCommand(
-                                @"SELECT TOP 1 EMP_NAME
-                                  FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-                                  WHERE EMP_NO = @EMP_NO", con))
-                            {
-                                cmd.Parameters.Add("@EMP_NO", SqlDbType.VarChar, 20).Value = empNo;
-                                var obj = cmd.ExecuteScalar();
-                                if (obj != null && obj != DBNull.Value)
-                                    empName = obj.ToString();
-                            }
-
-                            if (string.IsNullOrWhiteSpace(empName))
-                            {
-                                result.Errors.Add(new ImportError
-                                {
-                                    RowNumber = i + 1,
-                                    KeyValue = empNo,
-                                    ErrorMessage = "找不到此員工（員編不在 M1EMP_MAST）"
-                                });
-                                continue;
-                            }
-
-                            // 2) 檢查同群組是否已存在
-                            int exists = 0;
-                            using (var cmd = new SqlCommand(
-                                @"SELECT COUNT(1)
-                                  FROM [HI_TMMAIN].[dbo].[AP_USER]
-                                  WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID", con))
-                            {
-                                cmd.Parameters.Add("@SYS_ID", SqlDbType.VarChar, 50).Value = sysId;
-                                cmd.Parameters.Add("@APG_NO", SqlDbType.VarChar, 50).Value = apgNo;
-                                cmd.Parameters.Add("@U_ID", SqlDbType.VarChar, 50).Value = empNo;
-
-                                exists = Convert.ToInt32(cmd.ExecuteScalar());
-                            }
-
-                            if (exists > 0)
-                            {
-                                result.Errors.Add(new ImportError
-                                {
-                                    RowNumber = i + 1,
-                                    KeyValue = empNo,
-                                    ErrorMessage = "員編已存在此群組"
-                                });
-                                continue;
-                            }
-
-                            // 3) 逐筆新增（把員工姓名寫入 U_NAME）
-                            using (var cmdIns = new SqlCommand(
-                                @"INSERT INTO [HI_TMMAIN].[dbo].[AP_USER]
-                                  (SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                                  VALUES (@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())", con))
-                            {
-                                cmdIns.Parameters.Add("@SYS_ID", SqlDbType.VarChar, 50).Value = sysId;
-                                cmdIns.Parameters.Add("@APG_NO", SqlDbType.VarChar, 50).Value = apgNo;
-                                cmdIns.Parameters.Add("@U_ID", SqlDbType.VarChar, 50).Value = empNo;
-                                cmdIns.Parameters.Add("@U_NAME", SqlDbType.NVarChar, 100).Value = empName;
-                                cmdIns.Parameters.Add("@CREATOR", SqlDbType.VarChar, 50).Value = creatorEmpNo ?? "";
-
-                                cmdIns.ExecuteNonQuery();
-                            }
-
-                            result.ValidRows++;
-                        }
-                        catch (Exception exRow)
-                        {
-                            result.Errors.Add(new ImportError
-                            {
-                                RowNumber = i + 1,
-                                KeyValue = empNo,
-                                ErrorMessage = exRow.Message
-                            });
-                        }
+                        result.Errors.Add(new ImportError { Row = i + 1, EmpNo = empNo, Message = "員工不存在" });
+                        continue;
                     }
-                }
 
-                result.IsSuccess = (result.TotalRows > 0 && result.Errors.Count == 0);
-                if (!result.IsSuccess)
-                {
-                    result.ErrorMessage = result.TotalRows == 0
-                        ? "Excel 無可匯入資料，請確認表頭為『員編』且資料列不為空"
-                        : $"匯入失敗，共有 {result.Errors.Count} 筆資料有錯誤";
+                    // 檢查是否已存在
+                    if (CheckUserExists(sysId, apgNo, emp.EMP_NO))
+                    {
+                        result.Errors.Add(new ImportError { Row = i + 1, EmpNo = empNo, Message = "該群組已存在此員工" });
+                        continue;
+                    }
+
+                    // 新增
+                    if (InsertUser(sysId, apgNo, emp.EMP_NO, emp.EMP_NAME, creator))
+                        result.SuccessCount++;
+                    else
+                        result.Errors.Add(new ImportError { Row = i + 1, EmpNo = empNo, Message = "寫入失敗" });
                 }
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccess = false;
-                result.ErrorMessage = "Excel 解析或匯入過程發生錯誤：" + ex.Message;
             }
 
             return result;
         }
 
-        private static string GetCellString(ICell cell)
+        public EmployeeModel GetEmployeeByNo(string empNo)
         {
-            if (cell == null) return string.Empty;
-            switch (cell.CellType)
+            string sql = "SELECT EMP_NO, EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
+            using (var con = new SqlConnection(_conn))
+            using (var cmd = new SqlCommand(sql, con))
             {
-                case CellType.String: return cell.StringCellValue?.Trim() ?? "";
-                case CellType.Numeric:
-                    return NPOI.SS.UserModel.DateUtil.IsCellDateFormatted(cell)
-                        ? cell.DateCellValue.ToString("yyyyMMdd")
-                        : cell.NumericCellValue.ToString("0").Trim();
-                case CellType.Boolean: return cell.BooleanCellValue ? "1" : "0";
-                case CellType.Formula: return cell.ToString().Trim();
-                default: return cell.ToString().Trim();
+                cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                con.Open();
+                using (var reader = cmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        return new EmployeeModel
+                        {
+                            EMP_NO = reader["EMP_NO"].ToString(),
+                            EMP_NAME = reader["EMP_NAME"].ToString()
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        public bool CheckUserExists(string sysId, string apgNo, string empNo)
+        {
+            string sql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+            using (var con = new SqlConnection(_conn))
+            using (var cmd = new SqlCommand(sql, con))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                cmd.Parameters.AddWithValue("@U_ID", empNo);
+                con.Open();
+                return (int)cmd.ExecuteScalar() > 0;
+            }
+        }
+
+        public bool InsertUser(string sysId, string apgNo, string empNo, string empName, string creator)
+        {
+            string sql = @"INSERT INTO AP_USER (SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+                           VALUES (@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
+            using (var con = new SqlConnection(_conn))
+            using (var cmd = new SqlCommand(sql, con))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                cmd.Parameters.AddWithValue("@U_ID", empNo);
+                cmd.Parameters.AddWithValue("@U_NAME", empName);
+                cmd.Parameters.AddWithValue("@CREATOR", creator);
+                con.Open();
+                return cmd.ExecuteNonQuery() > 0;
             }
         }
     }
@@ -320,177 +178,107 @@ namespace YourApp.FAps
 
 ⸻
 
-Models（ImportResult.cs）
+🔹 Model (Models/ImportResult.cs)
 
-namespace YourApp.Models
+using System.Collections.Generic;
+
+namespace YourProject.Models
 {
     public class ImportResult
     {
-        public int TotalRows { get; set; }
-        public int ValidRows { get; set; }
-        public bool IsSuccess { get; set; }
-        public string ErrorMessage { get; set; }
-        public System.Collections.Generic.List<ImportError> Errors { get; set; }
+        public int SuccessCount { get; set; } = 0;
+        public List<ImportError> Errors { get; set; } = new List<ImportError>();
     }
 
     public class ImportError
     {
-        public int RowNumber { get; set; }   // Excel 列號（從 1 開始）
-        public string KeyValue { get; set; } // 員編
-        public string ErrorMessage { get; set; }
+        public int Row { get; set; }
+        public string EmpNo { get; set; }
+        public string Message { get; set; }
+    }
+
+    public class EmployeeModel
+    {
+        public string EMP_NO { get; set; }
+        public string EMP_NAME { get; set; }
     }
 }
 
 
 ⸻
 
-View（你現有的群組頁面上，加入「下載範本／批次匯入」區塊與 JS）
+🔹 View (Index.cshtml) — 匯入 Modal
 
-下面只放跟「匯入」相關的部分，群組下拉請沿用你現有的 #groupSelect。
+<button class="btn btn-primary" id="btnShowImport">批次匯入</button>
+<button class="btn btn-success" onclick="window.location.href='@Url.Action("DownloadTemplate")'">下載範本</button>
 
-<div class="mb-2">
-    <button type="button" id="btnDownloadTemplate" class="btn btn-sm btn-success">
-        <i class="fa fa-download"></i> 下載匯入範本（員編）
-    </button>
-
-    <label class="btn btn-sm btn-primary mb-0">
-        <i class="fa fa-file-import"></i> 選擇Excel
-        <input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none;">
-    </label>
-
-    <button type="button" id="btnImportUsers" class="btn btn-sm btn-primary" disabled>
-        上傳並匯入
-    </button>
-</div>
-
-<!-- 匯入錯誤 Modal -->
-<div class="modal fade" id="importErrorModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="importModal">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">匯入錯誤清單</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">&times;</button>
+        <h5 class="modal-title">批次匯入使用者</h5>
+        <button class="btn-close" data-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="alert alert-danger mb-2" id="importErrorMsg" style="display:none;"></div>
-        <div class="table-responsive">
-          <table class="table table-bordered table-striped" id="errorTable">
-            <thead class="thead-dark">
-              <tr>
-                <th style="width:80px;">列號</th>
-                <th style="width:160px;">員編</th>
-                <th>錯誤訊息</th>
-              </tr>
-            </thead>
-            <tbody><!-- 動態填入 --></tbody>
+        <form id="importForm" enctype="multipart/form-data">
+          <input type="hidden" name="apgNo" value="@ViewBag.APG_NO" />
+          <input type="file" name="File" id="excelFile" class="form-control" accept=".xls,.xlsx" />
+          <br />
+          <button type="submit" class="btn btn-primary">匯入</button>
+        </form>
+
+        <div id="errorSection" class="mt-3 d-none">
+          <h5>錯誤清單</h5>
+          <table class="table table-bordered">
+            <thead><tr><th>行號</th><th>員編</th><th>錯誤訊息</th></tr></thead>
+            <tbody></tbody>
           </table>
         </div>
+
+        <div id="successSection" class="alert alert-success d-none mt-3"></div>
       </div>
     </div>
   </div>
 </div>
 
 <script>
-(function () {
-    const $group = $('#groupSelect');
-    const $file  = $('#excelFile');
-    const $btnImport = $('#btnImportUsers');
+$("#btnShowImport").click(() => $("#importModal").modal("show"));
 
-    // 下載範本（固定檔案，後端直接讀 ~/File/UserImportTemplate.xlsx）
-    $('#btnDownloadTemplate').on('click', function () {
-        window.location.href = '@Url.Action("DownloadUserTemplate", "AP")';
-    });
-
-    // 群組選擇後才允許上傳
-    function updateImportButtonState() {
-        const hasGroup = !!$group.val();
-        const hasFile = $file[0].files.length > 0;
-        $btnImport.prop('disabled', !(hasGroup && hasFile));
-    }
-
-    $group.on('change', updateImportButtonState);
-    $file.on('change', function () {
-        // 前端副檔名檢查
-        const f = $file[0].files[0];
-        if (!f) { updateImportButtonState(); return; }
-        const ok = /\.(xlsx|xls)$/i.test(f.name);
-        if (!ok) {
-            alert('請選擇 Excel 檔（.xlsx / .xls）');
-            $file.val('');
-        }
-        updateImportButtonState();
-    });
-
-    // 上傳並匯入
-    $btnImport.on('click', function () {
-        if ($btnImport.prop('disabled')) return;
-
-        const formData = new FormData();
-        formData.append('file', $file[0].files[0]);
-        formData.append('apgNo', $group.val());
-
-        $.ajax({
-            url: '@Url.Action("ImportUsers", "AP")',
-            type: 'POST',
-            data: formData,
-            contentType: false,
-            processData: false,
-            success: function (res) {
-                if (res.success) {
-                    alert(res.message || '匯入成功');
-                    // 依需求刷新人員清單
-                    if (typeof loadUsers === 'function') loadUsers();
-                    // 重置
-                    $file.val('');
-                    updateImportButtonState();
-                } else {
-                    // 顯示錯誤 Modal
-                    $('#importErrorMsg')
-                        .text(res.message || '匯入失敗')
-                        .show();
-
-                    const $tbody = $('#errorTable tbody');
-                    $tbody.empty();
-
-                    if (res.errors && res.errors.length > 0) {
-                        res.errors.forEach(function (e) {
-                            $tbody.append(
-                                '<tr>' +
-                                  '<td class="text-right">' + (e.RowNumber || '') + '</td>' +
-                                  '<td>' + (e.KeyValue || '') + '</td>' +
-                                  '<td>' + (e.ErrorMessage || '') + '</td>' +
-                                '</tr>'
-                            );
-                        });
-                    } else {
-                        $tbody.append('<tr><td colspan="3" class="text-center text-muted">沒有可顯示的錯誤明細</td></tr>');
-                    }
-
-                    $('#importErrorModal').modal('show');
-                }
-            },
-            error: function (xhr) {
-                alert('匯入失敗：' + (xhr.responseText || '系統錯誤'));
-            }
+$("#importForm").submit(function (e) {
+  e.preventDefault();
+  var formData = new FormData(this);
+  $.ajax({
+    url: '@Url.Action("ImportUsers")',
+    type: 'POST',
+    data: formData,
+    contentType: false,
+    processData: false,
+    success: function (res) {
+      if (res.success) {
+        $("#successSection").removeClass("d-none").text(res.message);
+        $("#errorSection").addClass("d-none");
+      } else {
+        $("#errorSection").removeClass("d-none");
+        $("#errorSection tbody").empty();
+        $.each(res.errors, function (i, err) {
+          $("#errorSection tbody").append(`<tr><td>${err.Row}</td><td>${err.EmpNo}</td><td>${err.Message}</td></tr>`);
         });
-    });
-
-    // 初始狀態
-    updateImportButtonState();
-})();
+      }
+    }
+  });
+});
 </script>
 
 
 ⸻
 
-重點說明
-	•	SYS_ID 來源：你已在 GroupManagement（或同名 action）寫入 Session["SYS_ID"]。之後任何 action 直接 string sysId = Session["SYS_ID"]?.ToString(); 就能取到。上面 ImportUsers 就是這樣拿的。
-	•	不再使用 OLEDB：以 NPOI 讀 Excel，避開 Microsoft.ACE.OLEDB.12.0 的安裝問題。
-	•	只讀第一欄『員編』：工作表第一列是表頭，從第二列開始讀取員編。
-	•	檢核與寫入：
-	•	查 [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 取 EMP_NAME；沒有就報錯。
-	•	查 [HI_TMMAIN].[dbo].[AP_USER] 是否已存在同群組；存在就報錯。
-	•	逐筆 INSERT 時寫入 U_NAME = EMP_NAME、CREATOR = Emp_NO、CREATE_TIME = GETDATE()。
-	•	錯誤呈現：以 Modal 表格整齊顯示（列號／員編／錯誤訊息），和你之前的錯誤格式一樣。
+這樣 Controller 超簡潔：
+	•	ImportUsers → 只接檔案，丟給 f_ap
+	•	DownloadTemplate → 固定回傳一個範本
 
-如果你的範本實際路徑是 ~/File/File/UserImportTemplate.xlsx 或檔名不同，請把 DownloadUserTemplate() 的路徑改一下就好。
+而 f_ap 負責：
+	•	讀 Excel → 一筆筆檢查員工 → 新增/錯誤回報
+
+⸻
+
+要不要我再幫你把 錯誤訊息表格 改成有顏色區分 (比如「員工不存在」紅色、「群組已存在」橘色)，看起來更清楚？
