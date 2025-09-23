@@ -1,35 +1,194 @@
-1.
-  //2 取得群組人員清單
-  public string GetGroupAllUser(string requestJson)
-  {
-      var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+👌 我幫你檢查了，你的程式有兩個主要問題：
 
-      try
-      {
-          var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
-          FGetGroupAllUser func = new FGetGroupAllUser();
-          response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
-      }
-      catch (Exception ex)
-      {
-          response = new GetGroupAllUserModel.GetGroupAllUserResponse
-          {
-              Result_code = Common.Codes.SYSTEM_ERROR,
-              Msg = "系統錯誤：" + ex.Message
-          };
-      }
+⸻
 
-      return JsonConvert.SerializeObject(response);
-  }
+問題 1：回傳結構不一致
+	•	你的 GetGroupAllUserResponse 和 GetAllUserResponse 的 Result 定義是 單筆物件 (ResultData)，
+但實際 SQL 會抓出 多筆清單，所以應該改成 List。
+	•	否則序列化的時候只會留一筆，或是出現序列化錯誤。
 
---
+⸻
+
+問題 2：Model 屬性修飾詞
+	•	你用了 internal → 在外部專案或呼叫序列化時可能會被忽略，建議改成 public。
+
+⸻
+
+✅ 修改後的程式碼
+
+⸻
+
+1. GetGroupAllUser
+
+// 主類別呼叫
+public string GetGroupAllUser(string requestJson)
+{
+    var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+    try
+    {
+        var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
+        FGetGroupAllUser func = new FGetGroupAllUser();
+        response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
+    }
+    catch (Exception ex)
+    {
+        response = new GetGroupAllUserModel.GetGroupAllUserResponse
+        {
+            Result_code = Common.Codes.SYSTEM_ERROR,
+            Msg = "系統錯誤：" + ex.Message
+        };
+    }
+
+    return JsonConvert.SerializeObject(response);
+}
+
+// Models/GetGroupAllUserModel.cs
+using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.ComponentModel;
+
+namespace HI_APACCESS_DLL.Models
+{
+    public class GetGroupAllUserModel
+    {
+        public class GetGroupAllUserRequest
+        {
+            [JsonProperty]
+            [DisplayName("系統ID")]
+            public string SysID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("群組代號")]
+            public string GroupID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("是否要取子群組人員名單")]
+            public bool IsIncludeChildGroups { get; set; }
+
+            [JsonProperty]
+            [DisplayName("環境")]
+            public string Environment { get; set; }
+        }
+
+        public class GetGroupAllUserResponse
+        {
+            [JsonProperty]
+            public string Result_code { get; set; }
+
+            [JsonProperty]
+            public string Msg { get; set; }
+
+            [JsonProperty("Result")]
+            public List<ResultData> Result { get; set; }
+        }
+
+        public class ResultData
+        {
+            [JsonProperty]
+            public string UserID { get; set; }
+
+            [JsonProperty]
+            public string UserName { get; set; }
+        }
+    }
+}
+
+
+⸻
+
+2. GetAllUser
+
+// 主類別呼叫
+public string GetAllUser(string requestJson)
+{
+    var response = new GetAllUserModel.GetAllUserResponse();
+
+    try
+    {
+        var request = JsonConvert.DeserializeObject<GetAllUserModel.GetAllUserRequest>(requestJson);
+        FGetAllUser func = new FGetAllUser();
+        response = func.Execute(request.SysID, request.Environment);
+    }
+    catch (Exception ex)
+    {
+        response = new GetAllUserModel.GetAllUserResponse
+        {
+            Result_code = Common.Codes.SYSTEM_ERROR,
+            Msg = "系統錯誤：" + ex.Message
+        };
+    }
+
+    return JsonConvert.SerializeObject(response);
+}
+
+// Models/GetAllUserModel.cs
+using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.ComponentModel;
+
+namespace HI_APACCESS_DLL.Models
+{
+    public class GetAllUserModel
+    {
+        public class GetAllUserRequest
+        {
+            [JsonProperty]
+            [DisplayName("系統ID")]
+            public string SysID { get; set; }
+
+            [JsonProperty]
+            [DisplayName("環境")]
+            public string Environment { get; set; }
+        }
+
+        public class GetAllUserResponse
+        {
+            [JsonProperty]
+            public string Result_code { get; set; }
+
+            [JsonProperty]
+            public string Msg { get; set; }
+
+            [JsonProperty("Result")]
+            public List<ResultData> Result { get; set; }
+        }
+
+        public class ResultData
+        {
+            [JsonProperty]
+            public string UserID { get; set; }
+
+            [JsonProperty]
+            public string UserName { get; set; }
+        }
+    }
+}
+
+
+⸻
+
+🔑 修改重點
+	1.	Result → List ✅
+→ 因為 SQL 查詢會有多筆，不能用單筆物件。
+	2.	internal → public ✅
+→ 讓 DLL 對外序列化可用。
+
+⸻
+
+要不要我幫你把 FGetGroupAllUser 和 FGetAllUser 的 SQL 改成支援 using 參數化 + List<ResultData> 的完整版本？這樣你 copy 下去就能直接跑。
+
+好 👍 我幫你整理完整的 Factory 實作，修正成符合 List<ResultData> 的版本，SQL 也全部參數化。你可以直接貼進去用。
+
+⸻
+
+1. FGetGroupAllUser
+
 using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -69,9 +228,10 @@ namespace HI_APACCESS_DLL.Factory
 
                     if (isIncludeChildGroups)
                     {
-                        string sqlChild = @"SELECT APG_NO 
-                                            FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
-                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+                        string sqlChild = @"
+SELECT APG_NO 
+FROM [HI_TMMAIN].[dbo].[AP_GROUP] 
+WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
 
                         using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
                         {
@@ -99,6 +259,7 @@ ORDER BY U_ID";
                     using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
                     {
                         cmd.Parameters.AddWithValue("@SysID", sysId);
+
                         for (int i = 0; i < groupIds.Count; i++)
                         {
                             cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
@@ -118,6 +279,7 @@ ORDER BY U_ID";
                     }
                 }
 
+                // 回傳結果
                 if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
@@ -141,78 +303,15 @@ ORDER BY U_ID";
     }
 }
 
---
-using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace HI_APACCESS_DLL.Models
-{
-    internal class GetGroupAllUserModel
-    {
-        // 請求參數 
-        internal class GetGroupAllUserRequest
-        {
-            [JsonProperty]
-            [DisplayName("系統ID")]
-            internal string SysID { get; set; }
+⸻
 
-            [JsonProperty]
-            [DisplayName("群組代號")]
-            internal string GroupID { get; set; }
+2. FGetAllUser
 
-            [JsonProperty]
-            [DisplayName("是否要取子群組人員名單")]
-            internal bool IsIncludeChildGroups { get; set; }
-
-            [JsonProperty]
-            [DisplayName("環境")]
-            internal string Environment { get; set; }
-        }
-
-        // 回應結果
-        internal class GetGroupAllUserResponse
-        {
-            [JsonProperty]
-            [DisplayName("回覆代碼")]
-            internal string Result_code { get; set; }
-
-            [JsonProperty]
-            [DisplayName("訊息")]
-            internal string Msg { get; set; }
-
-            [JsonProperty("Result")]
-            [DisplayName("回覆結果")]
-            internal ResultData Result { get; set; }
-        }
-
-        public class ResultData
-        {
-            [JsonProperty]
-            public string UserID { get; set; }
-
-            [JsonProperty]
-            public string UserName { get; set; }
-        }
-
-    }
-}
-
-
-2.
-   //7 GetAllUser(取得全部人員清單)
-?? 幫我生
-
---
 using HI_APACCESS_DLL.Models;
 using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
-using System.Text;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -271,6 +370,7 @@ ORDER BY U_ID";
                     }
                 }
 
+                // 回傳結果
                 if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
@@ -294,51 +394,14 @@ ORDER BY U_ID";
     }
 }
 
---
-using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Text;
 
-namespace HI_APACCESS_DLL.Models
-{
-    internal class GetAllUserModel
-    {
-        public class GetAllUserRequest
-        {
-            [JsonProperty]
-            [DisplayName("系統ID")]
-            internal string SysID { get; set; }
+⸻
 
-            [JsonProperty]
-            [DisplayName("環境")]
-            internal string Environment { get; set; }
-        }
+✅ 這樣一來：
+	•	GetGroupAllUser → 會依照群組（含子群組選項）正確抓人員清單。
+	•	GetAllUser → 直接抓整個系統的使用者清單。
+	•	Result 都是 List，符合你 JSON 回傳的需求。
 
-        // 回應結果
-        internal class GetAllUserResponse
-        {
-            [JsonProperty]
-            [DisplayName("回覆代碼")]
-            internal string Result_code { get; set; }
+⸻
 
-            [JsonProperty]
-            [DisplayName("訊息")]
-            internal string Msg { get; set; }
-
-            [JsonProperty("Result")]
-            [DisplayName("回覆結果")]
-            internal ResultData Result { get; set; }
-        }
-
-        public class ResultData
-        {
-            [JsonProperty]
-            public string UserID { get; set; }
-
-            [JsonProperty]
-            public string UserName { get; set; }
-        }
-    }
-}
+要不要我幫你把 主類別 APACCESS.cs 裡的 功能 7 (GetAllUser) 也補好範例，讓你測試 JSON request 時能直接跑？
