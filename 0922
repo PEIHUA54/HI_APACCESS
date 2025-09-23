@@ -1,53 +1,102 @@
-好，謝謝你提供細節 👌
-	•	檔案副檔名：批次匯入使用者範本.xlsx → 這是新版 Excel (.xlsx) 格式
-	•	第一個工作表名稱：DATA → 你 SQL 寫 ...[DATA$] 是對的
+--結構檢查部分
+BEGIN TRY
+-- 先創建一個臨時表來導入Excel數據
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
 
-⸻
+CREATE TABLE #TEMP_IMPORT (
+RowNum INT IDENTITY(1,1),
+EMP_NO VARCHAR(20),
+IsValid BIT DEFAULT 1,
+ErrorMsg NVARCHAR(200)
+);
 
-🔎 問題出在 Extended Properties
-
-你的 SQL 用的是這個：
-
-Extended properties=Excel 12.0
-
-這其實是給舊的 .xls 用的。
-對 .xlsx 必須用這個：
-
-Extended properties="Excel 12.0 Xml;HDR=YES";
-
-
-⸻
-
-✅ 修正後完整 SQL 片段
-
+--嘗試導入Excel數據
+DECLARE @Query NVARCHAR(MAX);
 SET @Query = N'
 INSERT INTO #TEMP_IMPORT (EMP_NO)
 SELECT CAST(t.[員工編號] AS VARCHAR(20))
 FROM OpenDataSource(
     ''Microsoft.ACE.OLEDB.12.0'',
     ''Data Source=' + REPLACE(@filePath, '''', '''''') + ';
-    Extended properties="Excel 12.0 Xml;HDR=YES"''
+    Extended properties=""Excel 12.0 Xml;HDR=YES""''
 )...[DATA$] AS t
 WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''''
 ';
+EXEC sp_executesql @Query;
 
+-- 檢查是否有匯入的資料
+DECLARE @RowCount INT = (SELECT COUNT(*) FROM #TEMP_IMPORT);
 
-⸻
+IF @RowCount = 0
+BEGIN
+--沒有資料被導入，可能是 Excel 中欄位名稱不符合或工作表名稱不正確
+SELECT 0 AS SuccessCount;
+SELECT 0 AS RowNumber, '資料錯誤' AS EmpNo,'匯入失敗：Excel 檔案中沒有符合條件的資料，請檢查工作表名稱是否為 DATA，以及必要欄位[員工編號]是否存在' AS ErrorMessage;
 
-🚀 這樣改的效果
-	1.	Xml → 對應 .xlsx 格式，不會再抓不到。
-	2.	HDR=YES → 第一列會當欄位名稱，你才能正確用 t.[員工編號]。
+--清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END
 
-⸻
+--檢查是否已經有錯誤記錄
+IF EXISTS (SELECT 1 FROM #TEMP_IMPORT WHERE IsValid = 0)
+BEGIN
+SELECT 0 AS SuccessCount;
+SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage
+FROM #TEMP_IMPORT
+WHERE IsValid = 0;
 
-再提醒一次 ⚠️
-	•	如果有一天你要支援 .xls 舊格式，就要用：
+--清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END
+END TRY
+BEGIN CATCH
+--捕獲並處理錯誤
+DECLARE @ErrorMessage NVARCHAR(MAX) = ERROR_MESSAGE();
 
-Extended properties="Excel 8.0;HDR=YES";
+--返回錯誤信息
+SELECT 0 AS SuccessCount;
 
+-- 處理常見錯誤
+IF @ErrorMessage LIKE '%DATA$%'
+SELECT 0 AS RowNumber,'工作表錯誤' AS EmpNo, '找不到名為 ''DATA'' 的工作表' AS ErrorMessage;
+ELSE IF @ErrorMessage LIKE '%員工編號%'
+SELECT 0 AS RowNumber, '欄位錯誤' AS EmpNo, '找不到必要的欄位[員工編號]，請檢查Excel的表頭欄位名稱是否正確' AS ErrorMessage;
+ELSE
+SELECT 0 AS RowNumber, '讀取錯誤' AS EmpNo, @ErrorMessage AS ErrorMessage;
 
-	•	現在你的範本是 .xlsx，所以必須用 Excel 12.0 Xml;HDR=YES。
+-- 清理並退出
+IF OBJECT_ID('tempdb..#TEMP_IMPORT') IS NOT NULL DROP TABLE #TEMP_IMPORT;
+RETURN;
+END CATCH;
 
-⸻
+-- 如果結構檢查通過，繼續處理
+-- 員工不存在檢查
+UPDATE t SET IsValid=0, ErrorMsg=N'員工不存在'
+FROM #TEMP_IMPORT t
+WHERE NOT EXISTS (
+SELECT 1 FROM VW_M1EMP_MAST e WHERE e.EMP_NO = t.EMP_NO
+);
 
-要不要我幫你把 BuildUserImportSql() 的 完整修正版 整理給你？這樣你就可以直接換掉，不會再 0 筆。
+--已存在於群組檢查
+UPDATE t SET IsValid=0, ErrorMsg=N'群組已存在此員工'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+SELECT 1 FROM AP_USER u
+WHERE u.SYS_ID=@SYS_ID AND u.APG_NO=@APG_NO AND u.U_ID=t.EMP_NO
+);
+
+--寫入正式表
+INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
+SELECT @SYS_ID, @APG_NO, e.EMP_NO, e.EMP_NAME, @CREATOR, GETDATE()
+FROM #TEMP_IMPORT t
+JOIN VW_M1EMP_MAST e ON e.EMP_NO=t.EMP_NO
+WHERE t.IsValid=1;
+
+--回傳結果
+SELECT COUNT(*) AS SuccessCount FROM #TEMP_IMPORT WHERE IsValid=1;
+SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage FROM #TEMP_IMPORT WHERE IsValid=0;
+
+--清理臨時表
+DROP TABLE #TEMP_IMPORT
