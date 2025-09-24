@@ -1,229 +1,69 @@
-    // 批次匯入使用者
-    [HttpPost]
-    public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
-    {
-        if (file == null || file.ContentLength == 0)
-            return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+  // 批次匯入使用者
+  function openImportModal() {
+      $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
+      $('#importResult').empty();
+      $('#importModal').modal('show');
+  }
 
-        if (string.IsNullOrWhiteSpace(apgNo))
-            return Json(new { success = false, message = "請先選擇群組" });
+  function downloadTemplate() {
+      window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
+  }
 
-        // 副檔名限制
-        var ext = Path.GetExtension(file.FileName).ToLower();
-        if (ext != ".xls" && ext != ".xlsx")
-            return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+  $("#importForm").submit(function (e) {
+      e.preventDefault();
+      var formData = new FormData(this);
 
-        // 上傳暫存
-        var uploadDir = Server.MapPath("~/Upload");
-        if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+      // 顯示進度條動畫
+      $("#uploadProgress").removeClass("d-none");
+      $(".progress-bar").css("width", "30%");
 
-        var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
-        var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+      $.ajax({
+          url: '@Url.Action("ImportUsers", "AP")',
+          type: 'POST',
+          data: formData,
+          contentType: false,
+          processData: false,
+          success: function (res) {
+              $("#uploadProgress").addClass("d-none");
+              $(".progress-bar").css("width", "0%");
 
-        try
-        {
-            file.SaveAs(uploadPath);
+              if (res.success) {
+                  $("#successMessage").text(res.message);
+                  $("#successSection").removeClass("d-none");
+                  $("#errorSection").addClass("d-none");
+                  loadUsers();
+              } else {
+                  $("#errorMessage").text(res.message);
+                  $("#errorSection").removeClass("d-none");
+                  $("#successSection").addClass("d-none");
 
-            var service = GetAPService();
-            var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+                  // 清空舊的錯誤表格
+                  $("#errorTable tbody").empty();
 
-            if (importResult.IsSuccess)
-            {
-                return Json(new
-                {
-                    success = true,
-                    message = $"成功匯入 {importResult.SuccessCount} 筆資料！"
-                });
-            }
-            else
-            {
-                // 回傳錯誤清單（給前端 modal 表格顯示）
-                return Json(new
-                {
-                    success = false,
-                    message = importResult.ErrorMessage,
-                    errors = importResult.ErrorMessages.Select(e => new
-                    {
-                        RowNumber = e.RowNumber,
-                        EmpNo = e.EmpNo,
-                        Message = e.Message
-                    })
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            return Json(new
-            {
-                success = false,
-                message = "匯入過程發生錯誤：" + ex.Message
-            });
-        }
-        finally
-        {
-            if (System.IO.File.Exists(uploadPath))
-            {
-                var fc = new F_Common();
-                fc.SafeDeleteFile(uploadDir, safeName);
-            }
-        }
-    }
-
---
-  // 批次匯入人員
-  public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-  {
-      ImportResult result = new ImportResult()
-      {
-          ErrorMessages = new List<ImportError>()
-      };
-
-      try
-      {
-          var rows = new List<(int RowNumber, string EmpNo)>();
-
-          // 讀 Excel
-          using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-          using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
-          {
-              int rowIndex = 0;
-              while (reader.Read())
-              {
-                  rowIndex++;
-
-                  // 第一列當表頭 → 檢查是否正確
-                  if (rowIndex == 1)
-                  {
-                      string header = reader.GetString(0)?.Trim();
-                      if (string.IsNullOrEmpty(header) || header != "員工編號")
-                      {
-                          result.IsSuccess = false;
-                          result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                          return result;
-                      }
-                      continue;
-                  }
-
-                  // 讀取資料
-                  string empNo = reader.GetValue(0)?.ToString().Trim();
-                  if (!string.IsNullOrEmpty(empNo))
-                  {
-                      rows.Add((rowIndex, empNo));
-                  }
-              }
-          }
-
-          // 沒有資料
-          if (rows.Count == 0)
-          {
-              result.IsSuccess = false;
-              result.ErrorMessage = "Excel 無任何員工資料";
-              return result;
-          }
-
-          int successCount = 0;
-
-          using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
-          {
-              con.Open();
-
-              foreach (var row in rows)
-              {
-                  try
-                  {
-                      // 檢查員工是否存在
-                      string checkEmpSql = "SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
-                      string empName = null;
-                      using (var cmd = new SqlCommand(checkEmpSql, con))
-                      {
-                          cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-                          empName = cmd.ExecuteScalar() as string;
-                      }
-
-                      if (string.IsNullOrEmpty(empName))
-                      {
-                          result.ErrorMessages.Add(new ImportError
-                          {
-                              RowNumber = row.RowNumber,
-                              EmpNo = row.EmpNo,
-                              Message = "查無此員工"
-                          });
-                          continue;
-                      }
-
-                      // 檢查是否已存在於群組
-                      string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-                      using (var cmd = new SqlCommand(checkUserSql, con))
-                      {
-                          cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                          cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                          cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-
-                          int exists = (int)cmd.ExecuteScalar();
-                          if (exists > 0)
-                          {
-                              result.ErrorMessages.Add(new ImportError
-                              {
-                                  RowNumber = row.RowNumber,
-                                  EmpNo = row.EmpNo,
-                                  Message = "此群組已存在該員工"
-                              });
-                              continue;
-                          }
-                      }
-
-
-
-                      // 寫入 AP_USER
-                      string insertSql = @"
-                  INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                  VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
-
-                      using (var cmd = new SqlCommand(insertSql, con))
-                      {
-                          cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                          cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                          cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                          cmd.Parameters.AddWithValue("@U_NAME", empName);
-                          cmd.Parameters.AddWithValue("@CREATOR", creator);
-
-                          cmd.ExecuteNonQuery();
-                          successCount++;
-                      }
-                  }
-                  catch (Exception exRow)
-                  {
-                      result.ErrorMessages.Add(new ImportError
-                      {
-                          RowNumber = row.RowNumber,
-                          EmpNo = row.EmpNo,
-                          Message = "寫入錯誤：" + exRow.Message
+                  if (res.errors && res.errors.length > 0) {
+                      res.errors.forEach(err => {
+                          $("#errorTable tbody").append(
+                              `<tr>
+                          <td>${err.RowNumber}</td>
+                          <td>${err.EmpNo}</td>
+                          <td>${err.Message}</td>
+                      </tr>`
+                          );
                       });
                   }
               }
+          },
+          error: function () {
+              $("#uploadProgress").addClass("d-none");
+              $(".progress-bar").css("width", "0%");
+              alert("伺服器發生錯誤，請稍後再試。");
           }
+      });
+  });
 
-          result.SuccessCount = successCount;
-          result.IsSuccess = successCount > 0 && result.ErrorMessages.Count == 0;
-
-          if (successCount == 0 && result.ErrorMessages.Count > 0)
-          {
-              result.ErrorMessage = "匯入失敗，所有資料均有錯誤";
-          }
-          else if (result.ErrorMessages.Count > 0)
-          {
-              result.ErrorMessage = "部分資料匯入失敗，請檢查錯誤清單";
-          }
-          else
-          {
-              result.ErrorMessage = "";
-          }
-      }
-      catch (Exception ex)
-      {
-          result.IsSuccess = false;
-          result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-      }
-
-      return result;
-  }
+  // 重新上傳按鈕
+  $("#btnRetryUpload").click(function () {
+      $("#errorSection").addClass("d-none");
+      $("#successSection").addClass("d-none");
+      $("#importForm")[0].reset();
+  });
