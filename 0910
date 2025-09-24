@@ -1,7 +1,311 @@
-Newtonsoft.Json.JsonSerializationException:
- 'Cannot deserialize the current JSON array (e.g. [1,2,3]) into type 'POSFILE_APPLY.Models.M_AP+GetGroupAllUserResponseModel+ResultData' 
-because the type requires a JSON object (e.g. {"name":"value"}) to deserialize correctly.
-To fix this error either change the JSON to a JSON object (e.g. {"name":"value"}) or change the deserialized type to
- an array or a type that implements a collection interface (e.g. ICollection, IList) like List<T> that can be deserialized 
-from a JSON array. JsonArrayAttribute can also be added to the type to force it to deserialize from a JSON array.
-Path 'Result', line 1, position 43.'
+好的 ✅ 我幫你整理成一份完整的 全有全無版本，包含：
+	1.	Controller
+	2.	F_AP 方法
+	3.	SQL（全部 rollback 檢查）
+	4.	Model
+	5.	View + JS
+
+⸻
+
+1. Controller：APController.cs
+
+// 批次匯入使用者
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
+{
+    if (file == null || file.ContentLength == 0)
+    {
+        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+    }
+
+    string[] allowedExtensions = { ".xlsx", ".xls" };
+    string fileExtension = Path.GetExtension(file.FileName).ToLower();
+
+    // 檢查副檔名
+    if (!allowedExtensions.Contains(fileExtension))
+    {
+        return Json(new { success = false, message = "請上傳Excel檔案(.xlsx或.xls)" });
+    }
+
+    // 準備目錄
+    string uploadDir = Server.MapPath("~/Upload");
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+    string uniqueFileName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{fileExtension}";
+    string uploadPath = Path.Combine(uploadDir, uniqueFileName);
+
+    try
+    {
+        file.SaveAs(uploadPath);
+
+        var service = GetAPService();
+        var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId, apgNo, this.Emp_NO);
+
+        if (importResult.IsSuccess)
+        {
+            return Json(new
+            {
+                success = true,
+                message = $"成功匯入 {importResult.SuccessCount} 筆資料！"
+            });
+        }
+        else
+        {
+            return Json(new
+            {
+                success = false,
+                message = "匯入失敗，請檢查錯誤清單",
+                errors = importResult.ErrorMessages
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new
+        {
+            success = false,
+            message = "處理過程發生錯誤：" + ex.Message
+        });
+    }
+    finally
+    {
+        if (System.IO.File.Exists(uploadPath)) System.IO.File.Delete(uploadPath);
+    }
+}
+
+
+⸻
+
+2. F_AP 方法：F_AP.cs
+
+public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
+{
+    ImportResult result = new ImportResult();
+
+    try
+    {
+        string sql = BuildUserImportSql();
+        List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@filePath", filePath),
+            new SqlParameter("@SYS_ID", sysId),
+            new SqlParameter("@APG_NO", apgNo),
+            new SqlParameter("@CREATOR", creator)
+        };
+
+        using (SqlConnection con = new SqlConnection(
+            ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
+        {
+            con.Open();
+            using (SqlCommand cmd = new SqlCommand(sql, con))
+            {
+                cmd.Parameters.AddRange(parameters.ToArray());
+
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                {
+                    DataSet ds = new DataSet();
+                    adapter.Fill(ds);
+
+                    if (ds.Tables.Count > 0)
+                    {
+                        DataTable resultTable = ds.Tables[0];
+                        if (resultTable.Rows.Count > 0)
+                        {
+                            DataRow row = resultTable.Rows[0];
+                            result.SuccessCount = Convert.ToInt32(row["SuccessCount"]);
+                            result.IsSuccess = result.SuccessCount > 0;
+                        }
+                    }
+
+                    if (ds.Tables.Count > 1)
+                    {
+                        DataTable errorTable = ds.Tables[1];
+                        foreach (DataRow errorRow in errorTable.Rows)
+                        {
+                            result.ErrorMessages.Add(new ImportError
+                            {
+                                RowNumber = Convert.ToInt32(errorRow["RowNumber"]),
+                                EmpNo = errorRow["EmpNo"].ToString(),
+                                Message = errorRow["ErrorMessage"].ToString()
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        result.IsSuccess = false;
+        result.ErrorMessage = ex.Message;
+    }
+
+    return result;
+}
+
+
+⸻
+
+3. SQL（全有全無版本）
+
+CREATE TABLE #TEMP_IMPORT (
+    RowNum INT IDENTITY(1,1),
+    EMP_NO VARCHAR(20),
+    IsValid BIT DEFAULT 1,
+    ErrorMsg NVARCHAR(200)
+);
+
+-- 匯入 Excel (假設工作表 DATA, 欄位 [員工編號])
+DECLARE @Query NVARCHAR(MAX);
+SET @Query = N'
+INSERT INTO #TEMP_IMPORT (EMP_NO)
+SELECT CAST(t.[員工編號] AS VARCHAR(20))
+FROM OPENROWSET(''Microsoft.ACE.OLEDB.12.0'', 
+    ''Excel 12.0;Database=' + @filePath + ';HDR=YES'',[DATA$]) t
+WHERE t.[員工編號] IS NOT NULL AND t.[員工編號] <> ''''
+';
+EXEC sp_executesql @Query;
+
+-- 員工不存在
+UPDATE t SET IsValid=0, ErrorMsg=N'員工不存在'
+FROM #TEMP_IMPORT t
+WHERE NOT EXISTS (
+    SELECT 1 FROM VW_M1EMP_MAST e WHERE e.EMP_NO = t.EMP_NO
+);
+
+-- 同群組已存在
+UPDATE t SET IsValid=0, ErrorMsg=N'群組已存在此員工'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+    SELECT 1 FROM AP_USER u
+    WHERE u.SYS_ID=@SYS_ID AND u.APG_NO=@APG_NO AND u.U_ID=t.EMP_NO
+);
+
+-- 同系統其他群組已存在
+UPDATE t SET IsValid=0, ErrorMsg=N'該系統其他群組已存在此員工'
+FROM #TEMP_IMPORT t
+WHERE EXISTS (
+    SELECT 1 FROM AP_USER u
+    WHERE u.SYS_ID=@SYS_ID AND u.APG_NO<>@APG_NO AND u.U_ID=t.EMP_NO
+);
+
+-- 檢查是否有錯誤
+IF EXISTS (SELECT 1 FROM #TEMP_IMPORT WHERE IsValid=0)
+BEGIN
+    SELECT 0 AS SuccessCount;
+    SELECT RowNum AS RowNumber, EMP_NO AS EmpNo, ErrorMsg AS ErrorMessage
+    FROM #TEMP_IMPORT WHERE IsValid=0;
+    DROP TABLE #TEMP_IMPORT;
+    RETURN;
+END
+
+-- 全部合法 → 寫入正式表
+INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
+SELECT @SYS_ID,@APG_NO,e.EMP_NO,e.EMP_NAME,@CREATOR,GETDATE()
+FROM #TEMP_IMPORT t
+JOIN VW_M1EMP_MAST e ON e.EMP_NO=t.EMP_NO;
+
+-- 回傳成功數
+SELECT COUNT(*) AS SuccessCount FROM #TEMP_IMPORT;
+SELECT 0 AS RowNumber,'' AS EmpNo,'' AS ErrorMessage WHERE 1=0; -- 空錯誤表
+DROP TABLE #TEMP_IMPORT;
+
+
+⸻
+
+4. Model
+
+public class ImportResult
+{
+    public bool IsSuccess { get; set; }
+    public int SuccessCount { get; set; }
+    public string ErrorMessage { get; set; }
+    public List<ImportError> ErrorMessages { get; set; } = new List<ImportError>();
+}
+
+public class ImportError
+{
+    public int RowNumber { get; set; }
+    public string EmpNo { get; set; }
+    public string Message { get; set; }
+}
+
+
+⸻
+
+5. View + JS
+
+<!-- 批次匯入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title">批次匯入使用者</h5>
+                <button type="button" class="btn-close" data-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="importForm" enctype="multipart/form-data">
+                    <input type="hidden" name="apgNo" id="importGroupNo" />
+                    <input type="file" name="file" class="form-control mb-2" accept=".xls,.xlsx" required />
+                    <div class="d-flex justify-content-between">
+                        <button type="submit" class="btn btn-primary">匯入</button>
+                        <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                            <i class="fas fa-download"></i> 下載範本
+                        </button>
+                    </div>
+                </form>
+                <div id="importResult" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openImportModal() {
+    $("#importGroupNo").val($("#groupSelect").val());
+    $("#importModal").modal("show");
+}
+
+function downloadTemplate() {
+    window.location.href = '@Url.Action("DownloadImportTemplate", "AP")';
+}
+
+$("#importForm").submit(function (e) {
+    e.preventDefault();
+    var formData = new FormData(this);
+
+    $.ajax({
+        url: '@Url.Action("ImportUsers", "AP")',
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function (res) {
+            if (res.success) {
+                $("#importResult").html('<div class="alert alert-success">'+res.message+'</div>');
+                loadUsers(); // 刷新管理使用者區塊
+            } else {
+                let html = '<div class="alert alert-danger"><b>'+res.message+'</b></div>';
+                if (res.errors && res.errors.length > 0) {
+                    html += '<table class="table table-bordered mt-2"><thead><tr><th>行號</th><th>員編</th><th>錯誤訊息</th></tr></thead><tbody>';
+                    res.errors.forEach(err => {
+                        html += `<tr><td>${err.RowNumber}</td><td>${err.EmpNo}</td><td>${err.Message}</td></tr>`;
+                    });
+                    html += '</tbody></table>';
+                }
+                $("#importResult").html(html);
+            }
+        }
+    });
+});
+</script>
+
+
+⸻
+
+✅ 這樣你就有完整流程：
+	•	匯入檔案 → 檢查是否有問題 → 全部成功 or 全部失敗
+	•	成功 → 顯示綠色訊息並 loadUsers() 刷新
+	•	失敗 → 顯示紅色表格錯誤清單
+
+要不要我幫你把 下載範本 (DownloadImportTemplate) 的 Controller Action 也寫進去？
