@@ -1,17 +1,17 @@
-很好 👍 你現在的程式已經可以做基本的 Excel 匯入了。
-我幫你加上 兩個新的需求：
-	1.	同個群組不能重複 ✅（你已經有了，我保留）
-	2.	該系統的其他群組也不能重複 ✅（新增檢查條件）
-
-並且我保留了你原本 一筆筆插入 的寫法（因為你說數量不大，不用 BulkInsert）。
+👌 明白了，你現在要改成 部分成功、部分失敗 的模式：
+	1.	允許成功的筆數先寫入
+	2.	失敗的筆數收集起來，顯示錯誤清單
+	3.	最後顯示：成功 X 筆，失敗 Y 筆
+	4.	成功的筆數要寫入資料庫，並刷新使用者清單
 
 ⸻
 
-修改後程式碼
+1. Controller
 
-Controller (不用動，保持你現在的)
+改動重點：
+	•	message 改成「成功/失敗筆數」
+	•	保留 errors 給前端顯示
 
-// 批次匯入使用者
 [HttpPost]
 public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
 {
@@ -38,24 +38,19 @@ public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
         var service = GetAPService();
         var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId, apgNo, this.Emp_NO);
 
-        if (importResult.IsSuccess)
+        string msg = $"成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆";
+
+        return Json(new
         {
-            return Json(new { success = true, message = $"成功匯入 {importResult.SuccessCount} 筆資料！" });
-        }
-        else
-        {
-            return Json(new
+            success = true, // ✅ 不管有錯誤還是成功都回 true，前端判斷用錯誤清單
+            message = msg,
+            errors = importResult.ErrorMessages.Select(e => new
             {
-                success = false,
-                message = importResult.ErrorMessage,
-                errors = importResult.ErrorMessages.Select(e => new
-                {
-                    RowNumber = e.RowNumber,
-                    EmpNo = e.EmpNo,
-                    Message = e.Message
-                })
-            });
-        }
+                RowNumber = e.RowNumber,
+                EmpNo = e.EmpNo,
+                Message = e.Message
+            })
+        });
     }
     catch (Exception ex)
     {
@@ -74,12 +69,16 @@ public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
 
 ⸻
 
-F_AP (ImportUsersFromExcel 方法修改重點：增加「其他群組檢查」)
+2. F_AP 方法
 
-// 批次匯入人員
+改動重點：
+	•	不要在「有錯誤」時直接 return
+	•	成功筆數累加
+	•	失敗筆數收集到 ErrorMessages
+
 public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
 {
-    ImportResult result = new ImportResult() { ErrorMessages = new List<ImportError>() };
+    ImportResult result = new ImportResult { ErrorMessages = new List<ImportError>() };
 
     try
     {
@@ -128,10 +127,9 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
             {
                 try
                 {
-                    // 🔹 1. 檢查員工是否存在
-                    string checkEmpSql = "SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
+                    // 檢查員工是否存在
                     string empName = null;
-                    using (var cmd = new SqlCommand(checkEmpSql, con))
+                    using (var cmd = new SqlCommand("SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO", con))
                     {
                         cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
                         empName = cmd.ExecuteScalar() as string;
@@ -139,59 +137,40 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
 
                     if (string.IsNullOrEmpty(empName))
                     {
-                        result.ErrorMessages.Add(new ImportError
-                        {
-                            RowNumber = row.RowNumber,
-                            EmpNo = row.EmpNo,
-                            Message = "查無此員工"
-                        });
+                        result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "查無此員工" });
                         continue;
                     }
 
-                    // 🔹 2. 檢查是否已存在於「同一個群組」
-                    string checkGroupSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-                    using (var cmd = new SqlCommand(checkGroupSql, con))
+                    // 同群組檢查
+                    using (var cmd = new SqlCommand("SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID", con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
                         cmd.Parameters.AddWithValue("@APG_NO", apgNo);
                         cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
                         if ((int)cmd.ExecuteScalar() > 0)
                         {
-                            result.ErrorMessages.Add(new ImportError
-                            {
-                                RowNumber = row.RowNumber,
-                                EmpNo = row.EmpNo,
-                                Message = "此群組已存在該員工"
-                            });
+                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "此群組已存在該員工" });
                             continue;
                         }
                     }
 
-                    // 🔹 3. 檢查是否已存在於「該系統的其他群組」
-                    string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
-                    using (var cmd = new SqlCommand(checkSystemSql, con))
+                    // 系統其他群組檢查
+                    using (var cmd = new SqlCommand("SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID", con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
                         cmd.Parameters.AddWithValue("@APG_NO", apgNo);
                         cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
                         if ((int)cmd.ExecuteScalar() > 0)
                         {
-                            result.ErrorMessages.Add(new ImportError
-                            {
-                                RowNumber = row.RowNumber,
-                                EmpNo = row.EmpNo,
-                                Message = "該系統其他群組已存在該員工"
-                            });
+                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "該系統其他群組已存在該員工" });
                             continue;
                         }
                     }
 
-                    // 🔹 4. 寫入 AP_USER
-                    string insertSql = @"
-                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
-
-                    using (var cmd = new SqlCommand(insertSql, con))
+                    // 寫入
+                    using (var cmd = new SqlCommand(@"
+                        INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
+                        VALUES(@SYS_ID,@APG_NO,@U_ID,@U_NAME,@CREATOR,GETDATE())", con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
                         cmd.Parameters.AddWithValue("@APG_NO", apgNo);
@@ -204,23 +183,13 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                 }
                 catch (Exception exRow)
                 {
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = row.RowNumber,
-                        EmpNo = row.EmpNo,
-                        Message = "寫入錯誤：" + exRow.Message
-                    });
+                    result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "寫入錯誤：" + exRow.Message });
                 }
             }
         }
 
         result.SuccessCount = successCount;
-        result.IsSuccess = successCount > 0 && result.ErrorMessages.Count == 0;
-
-        if (successCount == 0)
-            result.ErrorMessage = "匯入失敗，所有資料均有錯誤";
-        else if (result.ErrorMessages.Count > 0)
-            result.ErrorMessage = "部分資料匯入失敗，請檢查錯誤清單";
+        result.IsSuccess = true; // ✅ 不論有無錯誤，都回 true，前端自己顯示錯誤清單
     }
     catch (Exception ex)
     {
@@ -234,37 +203,17 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
 
 ⸻
 
-✅ 現在你的邏輯是：
-	•	員工不存在 → ❌ 錯誤
-	•	同群組已存在 → ❌ 錯誤
-	•	同系統其他群組已存在 → ❌ 錯誤
-	•	都沒問題 → ✅ 新增
+3. JS
 
-⸻
+改動重點：
+	•	成功和錯誤同時顯示
+	•	顯示「成功 X 筆，失敗 Y 筆」
+	•	成功仍然會刷新使用者清單
 
-要不要我順便幫你把 前端顯示錯誤清單的表格 改成紅色表格（跟你之前傳的 modal 樣式一致，有動畫提示）？
-// 打開批次匯入 Modal
-function openImportModal() {
-    $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
-    $('#importResult').empty();
-    $("#errorSection").addClass("d-none");
-    $("#successSection").addClass("d-none");
-    $("#uploadProgress").addClass("d-none");
-    $(".progress-bar").css("width", "0%");
-    $('#importModal').modal('show');
-}
-
-// 下載範本
-function downloadTemplate() {
-    window.location.href = '@Url.Action("DownloadImportTemplate","AP")';
-}
-
-// 匯入表單送出
 $("#importForm").submit(function (e) {
     e.preventDefault();
     var formData = new FormData(this);
 
-    // 顯示進度條動畫
     $("#uploadProgress").removeClass("d-none");
     $(".progress-bar").css("width", "50%");
 
@@ -275,37 +224,33 @@ $("#importForm").submit(function (e) {
         contentType: false,
         processData: false,
         success: function (res) {
-            // 歸零進度條
             $("#uploadProgress").addClass("d-none");
             $(".progress-bar").css("width", "0%");
 
-            if (res.success) {
-                // ✅ 成功
-                $("#successMessage").text(res.message);
-                $("#successSection").removeClass("d-none");
-                $("#errorSection").addClass("d-none");
-                loadUsers(); // 刷新管理使用者清單
-            } else {
-                // ❌ 失敗
-                $("#errorMessage").text(res.message);
+            // 顯示成功訊息
+            $("#successMessage").text(res.message);
+            $("#successSection").removeClass("d-none");
+
+            // 清空錯誤表格
+            $("#errorTable tbody").empty();
+
+            if (res.errors && res.errors.length > 0) {
                 $("#errorSection").removeClass("d-none");
-                $("#successSection").addClass("d-none");
-
-                // 清空舊的錯誤表格
-                $("#errorTable tbody").empty();
-
-                if (res.errors && res.errors.length > 0) {
-                    res.errors.forEach(err => {
-                        $("#errorTable tbody").append(
-                            `<tr class="table-danger animate__animated animate__fadeIn">
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
-                                <td>${err.Message}</td>
-                            </tr>`
-                        );
-                    });
-                }
+                res.errors.forEach(err => {
+                    $("#errorTable tbody").append(
+                        `<tr class="table-danger">
+                            <td>${err.RowNumber}</td>
+                            <td>${err.EmpNo}</td>
+                            <td>${err.Message}</td>
+                        </tr>`
+                    );
+                });
+            } else {
+                $("#errorSection").addClass("d-none");
             }
+
+            // ✅ 刷新使用者區塊
+            loadUsers();
         },
         error: function () {
             $("#uploadProgress").addClass("d-none");
@@ -315,10 +260,15 @@ $("#importForm").submit(function (e) {
     });
 });
 
-// 重新上傳按鈕
-$("#btnRetryUpload").click(function () {
-    $("#errorSection").addClass("d-none");
-    $("#successSection").addClass("d-none");
-    $("#importForm")[0].reset();
-});
 
+⸻
+
+這樣修改後：
+	•	會「部分成功」插入 DB
+	•	前端會顯示 成功 X 筆，失敗 Y 筆
+	•	失敗的筆數會在錯誤表格中列出
+	•	成功筆數會立即反應在 管理使用者清單
+
+⸻
+
+要不要我再幫你把 View 的錯誤清單表格樣式（紅框、動畫）套好？
