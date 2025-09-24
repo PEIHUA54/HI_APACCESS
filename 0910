@@ -1,214 +1,55 @@
-👌 明白了，你現在要改成 部分成功、部分失敗 的模式：
-	1.	允許成功的筆數先寫入
-	2.	失敗的筆數收集起來，顯示錯誤清單
-	3.	最後顯示：成功 X 筆，失敗 Y 筆
-	4.	成功的筆數要寫入資料庫，並刷新使用者清單
+懂了 ✅
+你希望在 前端顯示的訊息區塊 明確分成 三種狀態：
+	1.	完全成功
+	•	顯示綠色框： 匯入成功：共 X 筆
+	2.	完全失敗
+	•	顯示紅色框： 匯入失敗：請重新上傳
+	•	下方不需要顯示成功筆數，但可以直接顯示錯誤清單
+	3.	部分成功
+	•	顯示黃色框： 匯入部分成功：成功 X 筆，失敗 Y 筆
+	•	下方錯誤清單顯示失敗筆數的明細
 
 ⸻
 
-1. Controller
+🔧 Controller (回傳結構)
 
-改動重點：
-	•	message 改成「成功/失敗筆數」
-	•	保留 errors 給前端顯示
+你現在的 ImportUsers action 可以改成這樣：
 
-[HttpPost]
-public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo)
+if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
 {
-    if (file == null || file.ContentLength == 0)
-        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
-
-    if (string.IsNullOrWhiteSpace(apgNo))
-        return Json(new { success = false, message = "請先選擇群組" });
-
-    var ext = Path.GetExtension(file.FileName).ToLower();
-    if (ext != ".xls" && ext != ".xlsx")
-        return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
-
-    var uploadDir = Server.MapPath("~/Upload");
-    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
-
-    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
-    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
-
-    try
+    // ✅ 全部成功
+    return Json(new
     {
-        file.SaveAs(uploadPath);
-
-        var service = GetAPService();
-        var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId, apgNo, this.Emp_NO);
-
-        string msg = $"成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆";
-
-        return Json(new
-        {
-            success = true, // ✅ 不管有錯誤還是成功都回 true，前端判斷用錯誤清單
-            message = msg,
-            errors = importResult.ErrorMessages.Select(e => new
-            {
-                RowNumber = e.RowNumber,
-                EmpNo = e.EmpNo,
-                Message = e.Message
-            })
-        });
-    }
-    catch (Exception ex)
+        status = "success",
+        message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+    });
+}
+else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+{
+    // ❌ 全部失敗
+    return Json(new
     {
-        return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
-    }
-    finally
+        status = "fail",
+        message = "匯入失敗：請重新上傳",
+        errors = importResult.ErrorMessages
+    });
+}
+else
+{
+    // ⚠️ 部分成功
+    return Json(new
     {
-        if (System.IO.File.Exists(uploadPath))
-        {
-            var fc = new F_Common();
-            fc.SafeDeleteFile(uploadDir, safeName);
-        }
-    }
+        status = "partial",
+        message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+        errors = importResult.ErrorMessages
+    });
 }
 
+這裡我把 success 換成 status（取值 "success" | "fail" | "partial"），方便前端判斷。
 
 ⸻
 
-2. F_AP 方法
-
-改動重點：
-	•	不要在「有錯誤」時直接 return
-	•	成功筆數累加
-	•	失敗筆數收集到 ErrorMessages
-
-public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-{
-    ImportResult result = new ImportResult { ErrorMessages = new List<ImportError>() };
-
-    try
-    {
-        var rows = new List<(int RowNumber, string EmpNo)>();
-
-        // 讀 Excel
-        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var reader = ExcelReaderFactory.CreateReader(stream))
-        {
-            int rowIndex = 0;
-            while (reader.Read())
-            {
-                rowIndex++;
-                if (rowIndex == 1)
-                {
-                    string header = reader.GetString(0)?.Trim();
-                    if (string.IsNullOrEmpty(header) || header != "員工編號")
-                    {
-                        result.IsSuccess = false;
-                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                        return result;
-                    }
-                    continue;
-                }
-
-                string empNo = reader.GetValue(0)?.ToString().Trim();
-                if (!string.IsNullOrEmpty(empNo))
-                    rows.Add((rowIndex, empNo));
-            }
-        }
-
-        if (rows.Count == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "Excel 無任何員工資料";
-            return result;
-        }
-
-        int successCount = 0;
-
-        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
-        {
-            con.Open();
-
-            foreach (var row in rows)
-            {
-                try
-                {
-                    // 檢查員工是否存在
-                    string empName = null;
-                    using (var cmd = new SqlCommand("SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO", con))
-                    {
-                        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-                        empName = cmd.ExecuteScalar() as string;
-                    }
-
-                    if (string.IsNullOrEmpty(empName))
-                    {
-                        result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "查無此員工" });
-                        continue;
-                    }
-
-                    // 同群組檢查
-                    using (var cmd = new SqlCommand("SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID", con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        if ((int)cmd.ExecuteScalar() > 0)
-                        {
-                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "此群組已存在該員工" });
-                            continue;
-                        }
-                    }
-
-                    // 系統其他群組檢查
-                    using (var cmd = new SqlCommand("SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID", con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        if ((int)cmd.ExecuteScalar() > 0)
-                        {
-                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "該系統其他群組已存在該員工" });
-                            continue;
-                        }
-                    }
-
-                    // 寫入
-                    using (var cmd = new SqlCommand(@"
-                        INSERT INTO AP_USER(SYS_ID,APG_NO,U_ID,U_NAME,CREATOR,CREATE_TIME)
-                        VALUES(@SYS_ID,@APG_NO,@U_ID,@U_NAME,@CREATOR,GETDATE())", con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        cmd.Parameters.AddWithValue("@U_NAME", empName);
-                        cmd.Parameters.AddWithValue("@CREATOR", creator);
-                        cmd.ExecuteNonQuery();
-                        successCount++;
-                    }
-                }
-                catch (Exception exRow)
-                {
-                    result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "寫入錯誤：" + exRow.Message });
-                }
-            }
-        }
-
-        result.SuccessCount = successCount;
-        result.IsSuccess = true; // ✅ 不論有無錯誤，都回 true，前端自己顯示錯誤清單
-    }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-    }
-
-    return result;
-}
-
-
-⸻
-
-3. JS
-
-改動重點：
-	•	成功和錯誤同時顯示
-	•	顯示「成功 X 筆，失敗 Y 筆」
-	•	成功仍然會刷新使用者清單
+🔧 JS (處理三種狀態)
 
 $("#importForm").submit(function (e) {
     e.preventDefault();
@@ -226,31 +67,53 @@ $("#importForm").submit(function (e) {
         success: function (res) {
             $("#uploadProgress").addClass("d-none");
             $(".progress-bar").css("width", "0%");
-
-            // 顯示成功訊息
-            $("#successMessage").text(res.message);
-            $("#successSection").removeClass("d-none");
-
-            // 清空錯誤表格
+            
+            // 清空舊的訊息區塊
+            $("#successSection, #errorSection, #partialSection").addClass("d-none");
             $("#errorTable tbody").empty();
 
-            if (res.errors && res.errors.length > 0) {
-                $("#errorSection").removeClass("d-none");
-                res.errors.forEach(err => {
-                    $("#errorTable tbody").append(
-                        `<tr class="table-danger">
-                            <td>${err.RowNumber}</td>
-                            <td>${err.EmpNo}</td>
-                            <td>${err.Message}</td>
-                        </tr>`
-                    );
-                });
-            } else {
-                $("#errorSection").addClass("d-none");
+            if (res.status === "success") {
+                // ✅ 全部成功
+                $("#successMessage").text(res.message);
+                $("#successSection").removeClass("d-none");
+                loadUsers();
             }
+            else if (res.status === "fail") {
+                // ❌ 全部失敗
+                $("#errorMessage").text(res.message);
+                $("#errorSection").removeClass("d-none");
 
-            // ✅ 刷新使用者區塊
-            loadUsers();
+                if (res.errors && res.errors.length > 0) {
+                    res.errors.forEach(err => {
+                        $("#errorTable tbody").append(
+                            `<tr class="table-danger">
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${err.Message}</td>
+                            </tr>`
+                        );
+                    });
+                }
+            }
+            else if (res.status === "partial") {
+                // ⚠️ 部分成功
+                $("#partialMessage").text(res.message);
+                $("#partialSection").removeClass("d-none");
+
+                if (res.errors && res.errors.length > 0) {
+                    res.errors.forEach(err => {
+                        $("#errorTable tbody").append(
+                            `<tr class="table-warning">
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${err.Message}</td>
+                            </tr>`
+                        );
+                    });
+                }
+
+                loadUsers();
+            }
         },
         error: function () {
             $("#uploadProgress").addClass("d-none");
@@ -263,12 +126,63 @@ $("#importForm").submit(function (e) {
 
 ⸻
 
-這樣修改後：
-	•	會「部分成功」插入 DB
-	•	前端會顯示 成功 X 筆，失敗 Y 筆
-	•	失敗的筆數會在錯誤表格中列出
-	•	成功筆數會立即反應在 管理使用者清單
+🔧 View (訊息區塊)
+
+在 modal 裡多加一個黃色的 部分成功區塊：
+
+<!-- 成功顯示 -->
+<div id="successSection" class="mt-4 d-none">
+    <div class="alert alert-success">
+        <strong id="successMessage"></strong>
+    </div>
+</div>
+
+<!-- 失敗顯示 -->
+<div id="errorSection" class="mt-4 d-none">
+    <div class="alert alert-danger">
+        <strong id="errorMessage"></strong>
+    </div>
+    <div class="table-responsive mt-2">
+        <table class="table table-bordered table-striped" id="errorTable">
+            <thead class="table-dark">
+                <tr>
+                    <th>行號</th>
+                    <th>員編</th>
+                    <th>錯誤訊息</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 部分成功顯示 -->
+<div id="partialSection" class="mt-4 d-none">
+    <div class="alert alert-warning">
+        <strong id="partialMessage"></strong>
+    </div>
+    <div class="table-responsive mt-2">
+        <table class="table table-bordered table-striped" id="errorTable">
+            <thead class="table-dark">
+                <tr>
+                    <th>行號</th>
+                    <th>員編</th>
+                    <th>錯誤訊息</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
 
 ⸻
 
-要不要我再幫你把 View 的錯誤清單表格樣式（紅框、動畫）套好？
+✅ 這樣就會有 三種不同顏色的訊息框：
+	•	綠色（成功）
+	•	紅色（失敗）
+	•	黃色（部分成功，附錯誤清單）
+
+⸻
+
+要不要我幫你把 錯誤表格 errorTable 改成共用一個，避免 fail/partial 各自重複一份表格？
