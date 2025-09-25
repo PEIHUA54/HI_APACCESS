@@ -1,21 +1,47 @@
-<!-- 統一錯誤 / 部分成功區塊 -->
-<div id="errorSection" class="mt-4 d-none">
-    <div id="errorAlert" class="alert">
-        <strong id="errorMessage"></strong>
-    </div>
-    <div class="table-responsive mt-2">
-        <table class="table table-bordered table-striped" id="errorTable">
-            <thead class="table-dark">
-                <tr>
-                    <th>行號</th>
-                    <th>員編</th>
-                    <th>錯誤訊息</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-    </div>
-    <div class="text-center mt-3">
-        <button type="button" class="btn btn-warning" id="btnRetryUpload">重新上傳</button>
-    </div>
-</div>
+在HI_APACCESS專案(裡面有HI_APACCESS權限管理作業系統、HI_APACCESS_DLL 功能類別、HI_APACCESS_DLL_TEST)
+HI_APACCESS_DLL_TEST建一個WINFORM 方便測試寫完的DLL
+(在FORM2=1)總共有五個輸入框 七個按鈕(7功能API)
+按下按鈕 跑出REQUEST、RESPONSE(在FORM2)
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+namespace HI_APACCESS_DLL_TEST
+{
+    public partial class Form1 : Form
+    {
+        public Form1()
+        {
+            InitializeComponent();
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+
+// 這一段是同事寫的 請參考他的方法
+//須建立MODEL、跟引用HI_APACCESS_DLL 
+            var input = new model.checkbarcode1_input
+            {
+                shop_id = SHOP_ID.Text,
+                barcode1 = textBox1.Text
+            };
+            string json_input = JsonConvert.SerializeObject(input);
+            string json_output = ARC.Check_Barcode1(json_input);
+            model.checkbarcode1_output output = JsonConvert.DeserializeObject<model.checkbarcode1_output>(json_output);
+            Form2 obj = new Form2();
+            obj.TextBoxMsg1 = json_input;//把form1的值設定到form2
+            obj.TextBoxMsg2 = json_output;//把form1的值設定到form2
+            //MessageBox.Show(msg); 
+            textBox1.Text = "";
+            textBox1.Focus();
+            obj.Show();
+        }
+    }
+}
