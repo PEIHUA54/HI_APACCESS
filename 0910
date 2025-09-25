@@ -1,10 +1,436 @@
-這幾個輸入框 改成選項
-1.IsIncludeChildGroups
-true:包含子群組人員
-false:不包含子群
-2.Environment
-TEST:測試
-PROD:正式
-3.Type
-1:頁面&按鈕設定
-2:權限設定
+懂了 👍
+你希望在 WinForm 測試工具裡，像 IsIncludeChildGroups / Environment / Type 這些值，不用輸入文字，而是下拉選單 (ComboBox) 讓你直接選。這樣就不用擔心打錯字。
+
+我幫你設計好：
+
+⸻
+
+需要的控制項設計
+	1.	IsIncludeChildGroups → cmbChildGroup (ComboBox)
+	•	Items: true (包含子群組人員) / false (不包含子群組)
+	•	預設選 false
+	2.	Environment → cmbEnv (ComboBox)
+	•	Items: TEST (測試) / PROD (正式)
+	•	預設選 TEST
+	3.	Type → cmbType (ComboBox)
+	•	Items: 1 (頁面&按鈕設定) / 2 (權限設定)
+	•	預設選 1
+
+⸻
+
+Designer.cs (片段範例)
+
+private System.Windows.Forms.ComboBox cmbChildGroup;
+private System.Windows.Forms.ComboBox cmbEnv;
+private System.Windows.Forms.ComboBox cmbType;
+
+private void InitializeComponent()
+{
+    this.cmbChildGroup = new System.Windows.Forms.ComboBox();
+    this.cmbEnv = new System.Windows.Forms.ComboBox();
+    this.cmbType = new System.Windows.Forms.ComboBox();
+
+    // 
+    // cmbChildGroup
+    // 
+    this.cmbChildGroup.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+    this.cmbChildGroup.Items.AddRange(new object[] {
+        "true:包含子群組人員",
+        "false:不包含子群"});
+    this.cmbChildGroup.SelectedIndex = 1; // 預設選 false
+    this.cmbChildGroup.Location = new System.Drawing.Point(120, 30);
+    this.cmbChildGroup.Name = "cmbChildGroup";
+    this.cmbChildGroup.Size = new System.Drawing.Size(200, 23);
+
+    // 
+    // cmbEnv
+    // 
+    this.cmbEnv.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+    this.cmbEnv.Items.AddRange(new object[] {
+        "TEST:測試",
+        "PROD:正式"});
+    this.cmbEnv.SelectedIndex = 0; // 預設 TEST
+    this.cmbEnv.Location = new System.Drawing.Point(120, 70);
+    this.cmbEnv.Name = "cmbEnv";
+    this.cmbEnv.Size = new System.Drawing.Size(200, 23);
+
+    // 
+    // cmbType
+    // 
+    this.cmbType.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+    this.cmbType.Items.AddRange(new object[] {
+        "1:頁面&按鈕設定",
+        "2:權限設定"});
+    this.cmbType.SelectedIndex = 0; // 預設 1
+    this.cmbType.Location = new System.Drawing.Point(120, 110);
+    this.cmbType.Name = "cmbType";
+    this.cmbType.Size = new System.Drawing.Size(200, 23);
+
+    // 把控制項加進 Form
+    this.Controls.Add(this.cmbChildGroup);
+    this.Controls.Add(this.cmbEnv);
+    this.Controls.Add(this.cmbType);
+}
+
+
+⸻
+
+在程式取值
+
+bool isIncludeChild = cmbChildGroup.SelectedItem.ToString().StartsWith("true");
+string environment = cmbEnv.SelectedItem.ToString().StartsWith("TEST") ? "TEST" : "PROD";
+string type = cmbType.SelectedItem.ToString().StartsWith("1") ? "1" : "2";
+
+
+⸻
+
+要不要我幫你把 Form1.Designer.cs + Form1.cs 完整範例（含七個按鈕的事件）都生成好？
+這樣你直接複製就能跑測試，不用再自己加控制項。
+
+好 👍 我幫你把 Form1.Designer.cs + Form1.cs 產完整範例，包含七個按鈕（對應 7 個功能 API）、三個下拉選單（IsIncludeChildGroups / Environment / Type），以及 Request / Response 的顯示方式。
+
+⸻
+
+🔹 Form1.Designer.cs
+
+namespace HI_APACCESS_DLL_TEST
+{
+    partial class Form1
+    {
+        private System.ComponentModel.IContainer components = null;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+            {
+                components.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        #region Windows Form Designer generated code
+
+        private void InitializeComponent()
+        {
+            this.txtSysID = new System.Windows.Forms.TextBox();
+            this.txtUserAD = new System.Windows.Forms.TextBox();
+            this.txtGroupID = new System.Windows.Forms.TextBox();
+            this.txtFuncID = new System.Windows.Forms.TextBox();
+            this.txtBtnID = new System.Windows.Forms.TextBox();
+
+            this.cmbChildGroup = new System.Windows.Forms.ComboBox();
+            this.cmbEnv = new System.Windows.Forms.ComboBox();
+            this.cmbType = new System.Windows.Forms.ComboBox();
+
+            this.btnFunc1 = new System.Windows.Forms.Button();
+            this.btnFunc2 = new System.Windows.Forms.Button();
+            this.btnFunc3 = new System.Windows.Forms.Button();
+            this.btnFunc4 = new System.Windows.Forms.Button();
+            this.btnFunc5 = new System.Windows.Forms.Button();
+            this.btnFunc6 = new System.Windows.Forms.Button();
+            this.btnFunc7 = new System.Windows.Forms.Button();
+
+            this.SuspendLayout();
+
+            // ====== TextBoxes ======
+            this.txtSysID.Location = new System.Drawing.Point(30, 20);
+            this.txtSysID.Name = "txtSysID";
+            this.txtSysID.PlaceholderText = "SysID";
+            this.txtSysID.Size = new System.Drawing.Size(200, 23);
+
+            this.txtUserAD.Location = new System.Drawing.Point(30, 60);
+            this.txtUserAD.Name = "txtUserAD";
+            this.txtUserAD.PlaceholderText = "UserAD";
+            this.txtUserAD.Size = new System.Drawing.Size(200, 23);
+
+            this.txtGroupID.Location = new System.Drawing.Point(30, 100);
+            this.txtGroupID.Name = "txtGroupID";
+            this.txtGroupID.PlaceholderText = "GroupID";
+            this.txtGroupID.Size = new System.Drawing.Size(200, 23);
+
+            this.txtFuncID.Location = new System.Drawing.Point(30, 140);
+            this.txtFuncID.Name = "txtFuncID";
+            this.txtFuncID.PlaceholderText = "FuncID";
+            this.txtFuncID.Size = new System.Drawing.Size(200, 23);
+
+            this.txtBtnID.Location = new System.Drawing.Point(30, 180);
+            this.txtBtnID.Name = "txtBtnID";
+            this.txtBtnID.PlaceholderText = "BtnID";
+            this.txtBtnID.Size = new System.Drawing.Size(200, 23);
+
+            // ====== ComboBoxes ======
+            this.cmbChildGroup.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbChildGroup.Items.AddRange(new object[] {
+                "true:包含子群組人員",
+                "false:不包含子群"});
+            this.cmbChildGroup.SelectedIndex = 1;
+            this.cmbChildGroup.Location = new System.Drawing.Point(30, 220);
+            this.cmbChildGroup.Size = new System.Drawing.Size(200, 23);
+
+            this.cmbEnv.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbEnv.Items.AddRange(new object[] {
+                "TEST:測試",
+                "PROD:正式"});
+            this.cmbEnv.SelectedIndex = 0;
+            this.cmbEnv.Location = new System.Drawing.Point(30, 260);
+            this.cmbEnv.Size = new System.Drawing.Size(200, 23);
+
+            this.cmbType.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbType.Items.AddRange(new object[] {
+                "1:頁面&按鈕設定",
+                "2:權限設定"});
+            this.cmbType.SelectedIndex = 0;
+            this.cmbType.Location = new System.Drawing.Point(30, 300);
+            this.cmbType.Size = new System.Drawing.Size(200, 23);
+
+            // ====== Buttons ======
+            this.btnFunc1.Location = new System.Drawing.Point(270, 20);
+            this.btnFunc1.Name = "btnFunc1";
+            this.btnFunc1.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc1.Text = "功能1 GetUserData";
+            this.btnFunc1.Click += new System.EventHandler(this.btnFunc1_Click);
+
+            this.btnFunc2.Location = new System.Drawing.Point(270, 60);
+            this.btnFunc2.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc2.Text = "功能2 GetGroupAllUser";
+            this.btnFunc2.Click += new System.EventHandler(this.btnFunc2_Click);
+
+            this.btnFunc3.Location = new System.Drawing.Point(270, 100);
+            this.btnFunc3.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc3.Text = "功能3 GetTree";
+            this.btnFunc3.Click += new System.EventHandler(this.btnFunc3_Click);
+
+            this.btnFunc4.Location = new System.Drawing.Point(270, 140);
+            this.btnFunc4.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc4.Text = "功能4 GetFuncBtn";
+            this.btnFunc4.Click += new System.EventHandler(this.btnFunc4_Click);
+
+            this.btnFunc5.Location = new System.Drawing.Point(270, 180);
+            this.btnFunc5.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc5.Text = "功能5 CheckBtnEnabled";
+            this.btnFunc5.Click += new System.EventHandler(this.btnFunc5_Click);
+
+            this.btnFunc6.Location = new System.Drawing.Point(270, 220);
+            this.btnFunc6.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc6.Text = "功能6 GetFunctionAndAccessUrl";
+            this.btnFunc6.Click += new System.EventHandler(this.btnFunc6_Click);
+
+            this.btnFunc7.Location = new System.Drawing.Point(270, 260);
+            this.btnFunc7.Size = new System.Drawing.Size(150, 30);
+            this.btnFunc7.Text = "功能7 GetAllUser";
+            this.btnFunc7.Click += new System.EventHandler(this.btnFunc7_Click);
+
+            // ====== Form1 ======
+            this.ClientSize = new System.Drawing.Size(450, 350);
+            this.Controls.Add(this.txtSysID);
+            this.Controls.Add(this.txtUserAD);
+            this.Controls.Add(this.txtGroupID);
+            this.Controls.Add(this.txtFuncID);
+            this.Controls.Add(this.txtBtnID);
+
+            this.Controls.Add(this.cmbChildGroup);
+            this.Controls.Add(this.cmbEnv);
+            this.Controls.Add(this.cmbType);
+
+            this.Controls.Add(this.btnFunc1);
+            this.Controls.Add(this.btnFunc2);
+            this.Controls.Add(this.btnFunc3);
+            this.Controls.Add(this.btnFunc4);
+            this.Controls.Add(this.btnFunc5);
+            this.Controls.Add(this.btnFunc6);
+            this.Controls.Add(this.btnFunc7);
+
+            this.Name = "Form1";
+            this.Text = "HI_APACCESS 測試工具";
+            this.ResumeLayout(false);
+            this.PerformLayout();
+        }
+
+        #endregion
+
+        private System.Windows.Forms.TextBox txtSysID;
+        private System.Windows.Forms.TextBox txtUserAD;
+        private System.Windows.Forms.TextBox txtGroupID;
+        private System.Windows.Forms.TextBox txtFuncID;
+        private System.Windows.Forms.TextBox txtBtnID;
+
+        private System.Windows.Forms.ComboBox cmbChildGroup;
+        private System.Windows.Forms.ComboBox cmbEnv;
+        private System.Windows.Forms.ComboBox cmbType;
+
+        private System.Windows.Forms.Button btnFunc1;
+        private System.Windows.Forms.Button btnFunc2;
+        private System.Windows.Forms.Button btnFunc3;
+        private System.Windows.Forms.Button btnFunc4;
+        private System.Windows.Forms.Button btnFunc5;
+        private System.Windows.Forms.Button btnFunc6;
+        private System.Windows.Forms.Button btnFunc7;
+    }
+}
+
+
+⸻
+
+🔹 Form1.cs
+
+using Newtonsoft.Json;
+using System;
+using System.Windows.Forms;
+
+namespace HI_APACCESS_DLL_TEST
+{
+    public partial class Form1 : Form
+    {
+        public Form1()
+        {
+            InitializeComponent();
+        }
+
+        // 取 ComboBox 值
+        private string GetEnvironment() =>
+            cmbEnv.SelectedItem.ToString().StartsWith("TEST") ? "TEST" : "PROD";
+
+        private bool GetIsIncludeChild() =>
+            cmbChildGroup.SelectedItem.ToString().StartsWith("true");
+
+        private string GetTypeValue() =>
+            cmbType.SelectedItem.ToString().StartsWith("1") ? "1" : "2";
+
+        // ===== 功能1 GetUserData =====
+        private void btnFunc1_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetUserDataRequest
+            {
+                SysID = txtSysID.Text,
+                UserAD = txtUserAD.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetUserNameAndGroup(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetUserDataResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能2 GetGroupAllUser =====
+        private void btnFunc2_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetGroupAllUserRequest
+            {
+                SysID = txtSysID.Text,
+                GroupID = txtGroupID.Text,
+                IsIncludeChildGroups = GetIsIncludeChild(),
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetGroupAllUser(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetGroupAllUserResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能3 GetTree =====
+        private void btnFunc3_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetTreeRequest
+            {
+                SysID = txtSysID.Text,
+                GroupID = txtGroupID.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetTree(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetTreeResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能4 GetFuncBtn =====
+        private void btnFunc4_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetFuncBtnRequest
+            {
+                SysID = txtSysID.Text,
+                GroupID = txtGroupID.Text,
+                FuncID = txtFuncID.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetFuncBtn(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetFuncBtnResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能5 CheckBtnEnabled =====
+        private void btnFunc5_Click(object sender, EventArgs e)
+        {
+            var req = new Model.CheckBtnEnabledRequest
+            {
+                SysID = txtSysID.Text,
+                GroupID = txtGroupID.Text,
+                FuncID = txtFuncID.Text,
+                BtnID = txtBtnID.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().CheckBtnEnabled(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.CheckBtnEnabledResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能6 GetFunctionAndAccessUrl =====
+        private void btnFunc6_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetFunctionAndAccessUrlRequest
+            {
+                SysID = txtSysID.Text,
+                UserAD = txtUserAD.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetFunctionAndAccessUrlResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // ===== 功能7 GetAllUser =====
+        private void btnFunc7_Click(object sender, EventArgs e)
+        {
+            var req = new Model.GetAllUserRequest
+            {
+                SysID = txtSysID.Text,
+                Environment = GetEnvironment()
+            };
+            string jsonReq = JsonConvert.SerializeObject(req);
+            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetAllUser(jsonReq);
+            var res = JsonConvert.DeserializeObject<Model.GetAllUserResponse>(jsonRes);
+
+            ShowResult(jsonReq, jsonRes);
+        }
+
+        // 顯示 Request & Response
+        private void ShowResult(string req, string res)
+        {
+            Form2 f = new Form2();
+            f.TextBoxMsg1 = req;
+            f.TextBoxMsg2 = res;
+            f.Show();
+        }
+    }
+}
+
+
+⸻
+
+這樣就完成了：
+
+✅ 7 個按鈕對應 DLL 的 7 功能
+✅ ComboBox 下拉選單避免手動輸入錯誤
+✅ Request / Response 顯示在 Form2
+
+⸻
+
+要不要我順便幫你把 Form2.Designer.cs + Form2.cs 也生完整？（兩個 TextBox 專門顯示 Request / Response）
