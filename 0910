@@ -1,36 +1,22 @@
-明白了 👍
-如果你的 Model 不想共用 DLL 裡面的 M_AP，而是要獨立建立在 HI_APACCESS_DLL_TEST WinForm 專案裡，那我們就直接在 WinForm 專案 建一個 Models 資料夾，把所有 七個功能的 Request/Response 各自定義出來。
-
-⸻
-
-📂 結構
-
-HI_APACCESS_DLL_TEST
- ┣ Models
- ┃ ┗ ApiModels.cs   ← 全部的 Model 放這裡
- ┣ Form1.cs
- ┣ Form2.cs
-
-
-⸻
-
-📌 ApiModels.cs
-
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
-namespace HI_APACCESS_DLL_TEST.Models
+namespace HI_APACCESS_DLL_TEST
 {
-    public class ApiModels
+    internal class Model
     {
-        // 功能 1: GetUserNameAndGroup
-        public class GetUserNameAndGroupRequest
+        // GetUserDataModel
+        public class GetUserDataRequest
         {
             public string SysID { get; set; }
             public string UserAD { get; set; }
             public string Environment { get; set; }
         }
 
-        public class GetUserNameAndGroupResponse
+        public class GetUserDataResponse
         {
             public string Result_code { get; set; }
             public string Msg { get; set; }
@@ -43,10 +29,14 @@ namespace HI_APACCESS_DLL_TEST.Models
                 public string PostName { get; set; }
                 public string OrganName { get; set; }
                 public string GroupID { get; set; }
+                public string GroupName { get; set; }
+                public List<string> ParentGroupID { get; set; }
+                public List<string> ChildGroupID { get; set; }
+                public bool SensitiveDataAccess { get; set; }
             }
         }
 
-        // 功能 2: GetGroupAllUser
+        // GetGroupAllUser
         public class GetGroupAllUserRequest
         {
             public string SysID { get; set; }
@@ -68,7 +58,27 @@ namespace HI_APACCESS_DLL_TEST.Models
             }
         }
 
-        // 功能 3: GetTree
+        // GetAllUser
+        public class GetAllUserRequest
+        {
+            public string SysID { get; set; }
+            public string Environment { get; set; }
+        }
+
+        public class GetAllUserResponse
+        {
+            public string Result_code { get; set; }
+            public string Msg { get; set; }
+            public List<ResultData> Result { get; set; }
+
+            public class ResultData
+            {
+                public string UserID { get; set; }
+                public string UserName { get; set; }
+            }
+        }
+
+        // GetTree
         public class GetTreeRequest
         {
             public string SysID { get; set; }
@@ -95,7 +105,7 @@ namespace HI_APACCESS_DLL_TEST.Models
             }
         }
 
-        // 功能 4: GetFuncBtn
+        // GetFuncBtn
         public class GetFuncBtnRequest
         {
             public string SysID { get; set; }
@@ -121,7 +131,7 @@ namespace HI_APACCESS_DLL_TEST.Models
             }
         }
 
-        // 功能 5: CheckBtnEnabled
+        //  CheckBtnEnabled
         public class CheckBtnEnabledRequest
         {
             public string SysID { get; set; }
@@ -138,7 +148,7 @@ namespace HI_APACCESS_DLL_TEST.Models
             public bool Result { get; set; }
         }
 
-        // 功能 6: GetFunctionAndAccessUrl
+        //  GetFunctionAndAccessUrl
         public class GetFunctionAndAccessUrlRequest
         {
             public string SysID { get; set; }
@@ -152,208 +162,5 @@ namespace HI_APACCESS_DLL_TEST.Models
             public string Msg { get; set; }
             public string Url { get; set; }
         }
-
-        // 功能 7: GetAllUser
-        public class GetAllUserRequest
-        {
-            public string SysID { get; set; }
-            public string Environment { get; set; }
-        }
-
-        public class GetAllUserResponse
-        {
-            public string Result_code { get; set; }
-            public string Msg { get; set; }
-            public List<ResultData> Result { get; set; }
-
-            public class ResultData
-            {
-                public string UserID { get; set; }
-                public string UserName { get; set; }
-            }
-        }
     }
 }
-
-
-⸻
-
-📌 Form1.cs 使用方式
-
-在 Form1.cs 你就改成引用 WinForm 專案內的 Model：
-
-using HI_APACCESS_DLL_TEST.Models; // 改成自己專案 Models
-
-然後呼叫時用：
-
-var req = new ApiModels.GetAllUserRequest
-{
-    SysID = txtSysID.Text,
-    Environment = txtEnv.Text
-};
-
-string json_input = JsonConvert.SerializeObject(req, Formatting.Indented);
-string json_output = new APACCESS().GetAllUser(json_input);
-
-var res = JsonConvert.DeserializeObject<ApiModels.GetAllUserResponse>(json_output);
-
-
-⸻
-
-✅ 這樣你的 Model 完全獨立在 WinForm 專案，不會依賴 DLL 內建的 M_AP。
-✅ Result 都是 List<T>，所以反序列化不會再噴錯。
-
-⸻
-
-要不要我幫你把 Form1.cs 七個按鈕都套上這個 ApiModels 的完整程式碼？
-
-好 👍 那我直接幫你把 Form1.cs 七個按鈕都改成用你 WinForm 專案自己定義的 ApiModels。
-這樣每個按鈕按下去都會序列化 Request → 呼叫 DLL → 反序列化 Response → 丟到 Form2 顯示。
-
-⸻
-
-📌 Form1.cs (完整版範例)
-
-using HI_APACCESS_DLL;                // DLL
-using HI_APACCESS_DLL_TEST.Models;    // 你在 WinForm 裡建的 ApiModels
-using Newtonsoft.Json;
-using System;
-using System.Windows.Forms;
-
-namespace HI_APACCESS_DLL_TEST
-{
-    public partial class Form1 : Form
-    {
-        private APACCESS ARC = new APACCESS(); // DLL 主類別
-
-        public Form1()
-        {
-            InitializeComponent();
-        }
-
-        // 功能1: GetUserNameAndGroup
-        private void btnGetUserData_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetUserNameAndGroupRequest
-            {
-                SysID = txtSysID.Text,
-                UserAD = txtUserAD.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetUserNameAndGroup<ApiModels.GetUserNameAndGroupResponse>);
-        }
-
-        // 功能2: GetGroupAllUser
-        private void btnGetGroupAllUser_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetGroupAllUserRequest
-            {
-                SysID = txtSysID.Text,
-                GroupID = txtGroupID.Text,
-                IsIncludeChildGroups = chkChildGroup.Checked,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetGroupAllUser<ApiModels.GetGroupAllUserResponse>);
-        }
-
-        // 功能3: GetTree
-        private void btnGetTree_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetTreeRequest
-            {
-                SysID = txtSysID.Text,
-                GroupID = txtGroupID.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetTree<ApiModels.GetTreeResponse>);
-        }
-
-        // 功能4: GetFuncBtn
-        private void btnGetFuncBtn_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetFuncBtnRequest
-            {
-                SysID = txtSysID.Text,
-                GroupID = txtGroupID.Text,
-                FuncID = txtFuncID.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetFuncBtn<ApiModels.GetFuncBtnResponse>);
-        }
-
-        // 功能5: CheckBtnEnabled
-        private void btnCheckBtnEnabled_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.CheckBtnEnabledRequest
-            {
-                SysID = txtSysID.Text,
-                GroupID = txtGroupID.Text,
-                FuncID = txtFuncID.Text,
-                BtnID = txtBtnID.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.CheckBtnEnabled<ApiModels.CheckBtnEnabledResponse>);
-        }
-
-        // 功能6: GetFunctionAndAccessUrl
-        private void btnGetFunctionAndAccessUrl_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetFunctionAndAccessUrlRequest
-            {
-                SysID = txtSysID.Text,
-                UserAD = txtUserAD.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetFunctionAndAccessUrl<ApiModels.GetFunctionAndAccessUrlResponse>);
-        }
-
-        // 功能7: GetAllUser
-        private void btnGetAllUser_Click(object sender, EventArgs e)
-        {
-            var req = new ApiModels.GetAllUserRequest
-            {
-                SysID = txtSysID.Text,
-                Environment = txtEnv.Text
-            };
-
-            RunApi(req, ARC.GetAllUser<ApiModels.GetAllUserResponse>);
-        }
-
-        // 通用執行 API 的方法
-        private void RunApi<TReq, TRes>(TReq req, Func<string, string> apiMethod)
-        {
-            string json_input = JsonConvert.SerializeObject(req, Formatting.Indented);
-            string json_output = apiMethod(json_input);
-
-            var res = JsonConvert.DeserializeObject<TRes>(json_output);
-
-            Form2 obj = new Form2
-            {
-                TextBoxMsg1 = json_input,
-                TextBoxMsg2 = json_output
-            };
-            obj.Show();
-        }
-    }
-}
-
-
-⸻
-
-📌 說明
-	1.	RunApi<TReq, TRes> 是共用方法：
-	•	把 Request 轉成 JSON
-	•	呼叫 DLL
-	•	顯示 Request/Response 在 Form2
-	2.	每個按鈕只要建立 Request Model → 丟給 RunApi。
-	3.	Form2 只要有兩個 TextBox (TextBoxMsg1, TextBoxMsg2) 就可以直接看到 Request 和 Response。
-
-⸻
-
-要不要我幫你把 Form2.cs 也生出來，讓它可以直接顯示 Request / Response？
