@@ -1,161 +1,62 @@
-       問題是 FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] 這個資料庫是 [HI_TMMAIN]
-其他的事[HI_AUTOS] 怎麼處理?
+我看到你的錯誤訊息了 👀
+問題出在：
+	•	你用的 連線字串 是 ConnDB_TFS_HI_AUTOS（資料庫 [HI_AUTOS]）
+	•	但查詢裡 VW_M1EMP_MAST 這個 View 實際存在於 [HI_TMMAIN]
 
- // 批次匯入人員
-        public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-        {
-            ImportResult result = new ImportResult()
-            {
-                ErrorMessages = new List<ImportError>()
-            };
+所以 SQL Server 會報錯 → 無效的物件名稱。
 
-            try
-            {
-                var rows = new List<(int RowNumber, string EmpNo)>();
+⸻
 
-                // 讀 Excel
-                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
-                {
-                    int rowIndex = 0;
-                    while (reader.Read())
-                    {
-                        rowIndex++;
+🔧 解決方法
 
-                        // 第一列當表頭 → 檢查是否正確
-                        if (rowIndex == 1)
-                        {
-                            string header = reader.GetString(0)?.Trim();
-                            if (string.IsNullOrEmpty(header) || header != "員工編號")
-                            {
-                                result.IsSuccess = false;
-                                result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                                return result;
-                            }
-                            continue;
-                        }
+這裡有三個做法，你要依環境決定：
 
-                        // 讀取資料
-                        string empNo = reader.GetValue(0)?.ToString().Trim();
-                        if (!string.IsNullOrEmpty(empNo))
-                        {
-                            rows.Add((rowIndex, empNo));
-                        }
-                    }
-                }
+⸻
 
-                // 沒有資料
-                if (rows.Count == 0)
-                {
-                    result.IsSuccess = false;
-                    result.ErrorMessage = "Excel 無任何員工資料";
-                    return result;
-                }
+✅ 方法 1：在 SQL 裡加 DB 前綴
 
-                int successCount = 0;
+如果同一個帳號能存取 [HI_TMMAIN]，可以直接改查詢：
 
-                using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_AUTOS"].ConnectionString))
-                {
-                    con.Open();
+string checkEmpSql = "SELECT EMP_NAME FROM [HI_TMMAIN].dbo.VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
 
-                    foreach (var row in rows)
-                    {
-                        try
-                        {
-                            // 檢查員工是否存在
-                            string checkEmpSql = "SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
-                            string empName = null;
-                            using (var cmd = new SqlCommand(checkEmpSql, con))
-                            {
-                                cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-                                empName = cmd.ExecuteScalar() as string;
-                            }
+這樣即使你用 [HI_AUTOS] 連線，也能跨 DB 查詢 [HI_TMMAIN]。
 
-                            if (string.IsNullOrEmpty(empName))
-                            {
-                                result.ErrorMessages.Add(new ImportError
-                                {
-                                    RowNumber = row.RowNumber,
-                                    EmpNo = row.EmpNo,
-                                    Message = "查無此員工"
-                                });
-                                continue;
-                            }
+⸻
 
-                            // 檢查是否已存在於同一個群組
-                            string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-                            using (var cmd = new SqlCommand(checkUserSql, con))
-                            {
-                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+✅ 方法 2：用兩個連線字串
 
-                                int exists = (int)cmd.ExecuteScalar();
-                                if (exists > 0)
-                                {
-                                    result.ErrorMessages.Add(new ImportError
-                                    {
-                                        RowNumber = row.RowNumber,
-                                        EmpNo = row.EmpNo,
-                                        Message = "此群組已存在該員工"
-                                    });
-                                    continue;
-                                }
-                            }
+如果權限限制，HI_AUTOS 的帳號不能查 HI_TMMAIN，那就要分開連線：
 
-                            // 檢查是否已存在於該系統的其他群組
-                            string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
-                            using (var cmd = new SqlCommand(checkSystemSql, con))
-                            {
-                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                                if ((int)cmd.ExecuteScalar() > 0)
-                                {
-                                    result.ErrorMessages.Add(new ImportError
-                                    {
-                                        RowNumber = row.RowNumber,
-                                        EmpNo = row.EmpNo,
-                                        Message = "此系統其他群組已存在該員工"
-                                    });
-                                    continue;
-                                }
-                            }
+using (var conEmp = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
+{
+    conEmp.Open();
+    using (var cmd = new SqlCommand("SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO", conEmp))
+    {
+        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
+        empName = cmd.ExecuteScalar() as string;
+    }
+}
 
-                            // 寫入 AP_USER
-                            string insertSql = @"
-                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())
-";
+然後 AP_USER 還是照舊寫進 HI_AUTOS。
 
-                            using (var cmd = new SqlCommand(insertSql, con))
-                            {
-                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                                cmd.Parameters.AddWithValue("@U_NAME", empName);
-                                cmd.Parameters.AddWithValue("@CREATOR", creator);
+⸻
 
-                                cmd.ExecuteNonQuery();
-                                successCount++;
-                            }
-                        }
-                        catch (Exception exRow)
-                        {
-                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "寫入錯誤：" + exRow.Message });
-                        }
-                    }
-                }
+✅ 方法 3：在 DB 裡建 Linked Server / Synonym
 
-                result.SuccessCount = successCount;
-                result.IsSuccess = true;
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccess = false;
-                result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-            }
+如果不想改程式，可以請 DBA 幫忙：
+	•	在 [HI_AUTOS] 建一個 Synonym 指到 [HI_TMMAIN].dbo.VW_M1EMP_MAST
 
-            return result;
-        }
+CREATE SYNONYM VW_M1EMP_MAST FOR [HI_TMMAIN].dbo.VW_M1EMP_MAST;
 
+這樣程式不用改 SQL，HI_AUTOS 也能直接查 VW_M1EMP_MAST。
+
+⸻
+
+🔑 建議
+
+就程式層面來說，方法 1（加 DB 前綴）最快最穩，只要帳號有跨 DB 權限。
+如果你不確定權限，就用 方法 2（兩個連線字串）。
+
+⸻
+
+要不要我幫你改成 方法 2 的完整程式碼（一個連線查人、一個連線存檔），這樣就不怕跨 DB 沒權限？
