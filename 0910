@@ -1,62 +1,187 @@
-我看到你的錯誤訊息了 👀
-問題出在：
-	•	你用的 連線字串 是 ConnDB_TFS_HI_AUTOS（資料庫 [HI_AUTOS]）
-	•	但查詢裡 VW_M1EMP_MAST 這個 View 實際存在於 [HI_TMMAIN]
-
-所以 SQL Server 會報錯 → 無效的物件名稱。
+好👌 我幫你直接把 ImportUsersFromExcel 改好，讓 查詢用 HI_TMMAIN.VW_M1EMP_MAST，寫入還是進 HI_AUTOS.AP_USER。
 
 ⸻
 
-🔧 解決方法
+修改後程式碼（已標註修改的地方 ✅）
 
-這裡有三個做法，你要依環境決定：
-
-⸻
-
-✅ 方法 1：在 SQL 裡加 DB 前綴
-
-如果同一個帳號能存取 [HI_TMMAIN]，可以直接改查詢：
-
-string checkEmpSql = "SELECT EMP_NAME FROM [HI_TMMAIN].dbo.VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
-
-這樣即使你用 [HI_AUTOS] 連線，也能跨 DB 查詢 [HI_TMMAIN]。
-
-⸻
-
-✅ 方法 2：用兩個連線字串
-
-如果權限限制，HI_AUTOS 的帳號不能查 HI_TMMAIN，那就要分開連線：
-
-using (var conEmp = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString))
+// 批次匯入人員
+public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
 {
-    conEmp.Open();
-    using (var cmd = new SqlCommand("SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO", conEmp))
+    ImportResult result = new ImportResult()
     {
-        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-        empName = cmd.ExecuteScalar() as string;
+        ErrorMessages = new List<ImportError>()
+    };
+
+    try
+    {
+        var rows = new List<(int RowNumber, string EmpNo)>();
+
+        // 讀 Excel
+        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+        {
+            int rowIndex = 0;
+            while (reader.Read())
+            {
+                rowIndex++;
+
+                // 第一列當表頭 → 檢查是否正確
+                if (rowIndex == 1)
+                {
+                    string header = reader.GetString(0)?.Trim();
+                    if (string.IsNullOrEmpty(header) || header != "員工編號")
+                    {
+                        result.IsSuccess = false;
+                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                        return result;
+                    }
+                    continue;
+                }
+
+                // 讀取資料
+                string empNo = reader.GetValue(0)?.ToString().Trim();
+                if (!string.IsNullOrEmpty(empNo))
+                {
+                    rows.Add((rowIndex, empNo));
+                }
+            }
+        }
+
+        // 沒有資料
+        if (rows.Count == 0)
+        {
+            result.IsSuccess = false;
+            result.ErrorMessage = "Excel 無任何員工資料";
+            return result;
+        }
+
+        int successCount = 0;
+
+        // ✅ 用 HI_AUTOS 連線（因為 AP_USER 在這邊）
+        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_AUTOS"].ConnectionString))
+        {
+            con.Open();
+
+            foreach (var row in rows)
+            {
+                try
+                {
+                    // ✅ 查詢員工要用 HI_TMMAIN 裡的 View
+                    string checkEmpSql = "SELECT EMP_NAME FROM [HI_TMMAIN].dbo.VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
+                    string empName = null;
+                    using (var cmd = new SqlCommand(checkEmpSql, con))
+                    {
+                        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
+                        empName = cmd.ExecuteScalar() as string;
+                    }
+
+                    if (string.IsNullOrEmpty(empName))
+                    {
+                        result.ErrorMessages.Add(new ImportError
+                        {
+                            RowNumber = row.RowNumber,
+                            EmpNo = row.EmpNo,
+                            Message = "查無此員工"
+                        });
+                        continue;
+                    }
+
+                    // ✅ 檢查是否已存在於同一個群組
+                    string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+                    using (var cmd = new SqlCommand(checkUserSql, con))
+                    {
+                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+
+                        int exists = (int)cmd.ExecuteScalar();
+                        if (exists > 0)
+                        {
+                            result.ErrorMessages.Add(new ImportError
+                            {
+                                RowNumber = row.RowNumber,
+                                EmpNo = row.EmpNo,
+                                Message = "此群組已存在該員工"
+                            });
+                            continue;
+                        }
+                    }
+
+                    // ✅ 檢查是否已存在於該系統的其他群組
+                    string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
+                    using (var cmd = new SqlCommand(checkSystemSql, con))
+                    {
+                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                        if ((int)cmd.ExecuteScalar() > 0)
+                        {
+                            result.ErrorMessages.Add(new ImportError
+                            {
+                                RowNumber = row.RowNumber,
+                                EmpNo = row.EmpNo,
+                                Message = "此系統其他群組已存在該員工"
+                            });
+                            continue;
+                        }
+                    }
+
+                    // ✅ 寫入 AP_USER（這張表在 HI_AUTOS）
+                    string insertSql = @"
+                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
+
+                    using (var cmd = new SqlCommand(insertSql, con))
+                    {
+                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                        cmd.Parameters.AddWithValue("@U_NAME", empName);
+                        cmd.Parameters.AddWithValue("@CREATOR", creator);
+
+                        cmd.ExecuteNonQuery();
+                        successCount++;
+                    }
+                }
+                catch (Exception exRow)
+                {
+                    result.ErrorMessages.Add(new ImportError
+                    {
+                        RowNumber = row.RowNumber,
+                        EmpNo = row.EmpNo,
+                        Message = "寫入錯誤：" + exRow.Message
+                    });
+                }
+            }
+        }
+
+        result.SuccessCount = successCount;
+        result.IsSuccess = (successCount > 0 && result.ErrorMessages.Count == 0);
+
+        if (successCount == 0 && result.ErrorMessages.Count > 0)
+            result.ErrorMessage = "匯入失敗，所有資料均有錯誤";
+        else if (result.ErrorMessages.Count > 0)
+            result.ErrorMessage = $"部分資料匯入失敗：成功 {successCount} 筆，失敗 {result.ErrorMessages.Count} 筆";
+        else
+            result.ErrorMessage = $"成功匯入 {successCount} 筆資料";
     }
+    catch (Exception ex)
+    {
+        result.IsSuccess = false;
+        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+    }
+
+    return result;
 }
 
-然後 AP_USER 還是照舊寫進 HI_AUTOS。
 
 ⸻
 
-✅ 方法 3：在 DB 裡建 Linked Server / Synonym
-
-如果不想改程式，可以請 DBA 幫忙：
-	•	在 [HI_AUTOS] 建一個 Synonym 指到 [HI_TMMAIN].dbo.VW_M1EMP_MAST
-
-CREATE SYNONYM VW_M1EMP_MAST FOR [HI_TMMAIN].dbo.VW_M1EMP_MAST;
-
-這樣程式不用改 SQL，HI_AUTOS 也能直接查 VW_M1EMP_MAST。
+✅ 修改重點
+	1.	查詢員工姓名 → [HI_TMMAIN].dbo.VW_M1EMP_MAST（固定加資料庫前綴）
+	2.	寫入使用者資料 → AP_USER（因為連線在 HI_AUTOS，不用加前綴）
+	3.	這樣一份程式就能同時查 HI_TMMAIN、寫 HI_AUTOS。
 
 ⸻
 
-🔑 建議
-
-就程式層面來說，方法 1（加 DB 前綴）最快最穩，只要帳號有跨 DB 權限。
-如果你不確定權限，就用 方法 2（兩個連線字串）。
-
-⸻
-
-要不要我幫你改成 方法 2 的完整程式碼（一個連線查人、一個連線存檔），這樣就不怕跨 DB 沒權限？
+要不要我幫你 前端回傳訊息 也改成「成功 N 筆、失敗 M 筆」的三種狀態（成功 / 全失敗 / 部分成功）？
