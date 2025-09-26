@@ -1,47 +1,161 @@
-👌 那我幫你包一個 共用小方法，放在 Form1 (或一個 Utility 類別) 裡。
-這樣之後你只要呼叫一次，就能清空所有輸入框並把焦點設回第一個。
+       問題是 FROM [HI_TMMAIN].[dbo].[VW_M1EMP_MAST] 這個資料庫是 [HI_TMMAIN]
+其他的事[HI_AUTOS] 怎麼處理?
 
-⸻
-
-範例程式碼
-
-// 在 Form1 類別裡加上這個方法
-private void ClearInputsAndFocus()
-{
-    // 遍歷 Form 上的所有控制項
-    foreach (Control ctrl in this.Controls)
-    {
-        if (ctrl is TextBox)
+ // 批次匯入人員
+        public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
         {
-            ctrl.Text = ""; // 清空所有 TextBox
+            ImportResult result = new ImportResult()
+            {
+                ErrorMessages = new List<ImportError>()
+            };
+
+            try
+            {
+                var rows = new List<(int RowNumber, string EmpNo)>();
+
+                // 讀 Excel
+                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+                {
+                    int rowIndex = 0;
+                    while (reader.Read())
+                    {
+                        rowIndex++;
+
+                        // 第一列當表頭 → 檢查是否正確
+                        if (rowIndex == 1)
+                        {
+                            string header = reader.GetString(0)?.Trim();
+                            if (string.IsNullOrEmpty(header) || header != "員工編號")
+                            {
+                                result.IsSuccess = false;
+                                result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                                return result;
+                            }
+                            continue;
+                        }
+
+                        // 讀取資料
+                        string empNo = reader.GetValue(0)?.ToString().Trim();
+                        if (!string.IsNullOrEmpty(empNo))
+                        {
+                            rows.Add((rowIndex, empNo));
+                        }
+                    }
+                }
+
+                // 沒有資料
+                if (rows.Count == 0)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "Excel 無任何員工資料";
+                    return result;
+                }
+
+                int successCount = 0;
+
+                using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_AUTOS"].ConnectionString))
+                {
+                    con.Open();
+
+                    foreach (var row in rows)
+                    {
+                        try
+                        {
+                            // 檢查員工是否存在
+                            string checkEmpSql = "SELECT EMP_NAME FROM VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
+                            string empName = null;
+                            using (var cmd = new SqlCommand(checkEmpSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
+                                empName = cmd.ExecuteScalar() as string;
+                            }
+
+                            if (string.IsNullOrEmpty(empName))
+                            {
+                                result.ErrorMessages.Add(new ImportError
+                                {
+                                    RowNumber = row.RowNumber,
+                                    EmpNo = row.EmpNo,
+                                    Message = "查無此員工"
+                                });
+                                continue;
+                            }
+
+                            // 檢查是否已存在於同一個群組
+                            string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+                            using (var cmd = new SqlCommand(checkUserSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+
+                                int exists = (int)cmd.ExecuteScalar();
+                                if (exists > 0)
+                                {
+                                    result.ErrorMessages.Add(new ImportError
+                                    {
+                                        RowNumber = row.RowNumber,
+                                        EmpNo = row.EmpNo,
+                                        Message = "此群組已存在該員工"
+                                    });
+                                    continue;
+                                }
+                            }
+
+                            // 檢查是否已存在於該系統的其他群組
+                            string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
+                            using (var cmd = new SqlCommand(checkSystemSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                                if ((int)cmd.ExecuteScalar() > 0)
+                                {
+                                    result.ErrorMessages.Add(new ImportError
+                                    {
+                                        RowNumber = row.RowNumber,
+                                        EmpNo = row.EmpNo,
+                                        Message = "此系統其他群組已存在該員工"
+                                    });
+                                    continue;
+                                }
+                            }
+
+                            // 寫入 AP_USER
+                            string insertSql = @"
+                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())
+";
+
+                            using (var cmd = new SqlCommand(insertSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                                cmd.Parameters.AddWithValue("@U_NAME", empName);
+                                cmd.Parameters.AddWithValue("@CREATOR", creator);
+
+                                cmd.ExecuteNonQuery();
+                                successCount++;
+                            }
+                        }
+                        catch (Exception exRow)
+                        {
+                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "寫入錯誤：" + exRow.Message });
+                        }
+                    }
+                }
+
+                result.SuccessCount = successCount;
+                result.IsSuccess = true;
+            }
+            catch (Exception ex)
+            {
+                result.IsSuccess = false;
+                result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+            }
+
+            return result;
         }
-        else if (ctrl is ComboBox)
-        {
-            ((ComboBox)ctrl).SelectedIndex = -1; // 清空 ComboBox 選項
-        }
-    }
 
-    // 把焦點設回第一個輸入框 (例如 txtSysID)
-    txtSysID.Focus();
-}
-
-
-⸻
-
-使用方式
-
-在 任意按鈕事件裡呼叫：
-
-private void btnReset_Click(object sender, EventArgs e)
-{
-    ClearInputsAndFocus();
-}
-
-這樣效果是：
-	•	所有 TextBox → 清空文字。
-	•	所有 ComboBox → 清空選擇 (變成沒有選項)。
-	•	游標自動跳回 txtSysID。
-
-⸻
-
-要不要我幫你改成 可以指定要 Focus 的控制項名稱（例如 txtUserAD），這樣就不一定固定在 txtSysID？
