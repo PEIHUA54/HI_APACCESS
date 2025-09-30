@@ -1,187 +1,191 @@
-好👌 我幫你直接把 ImportUsersFromExcel 改好，讓 查詢用 HI_TMMAIN.VW_M1EMP_MAST，寫入還是進 HI_AUTOS.AP_USER。
+GETGROUPALLUSER(取得群組人員清單) 、GETALLUSER(取得全部人員清單)-新增回傳使用者UserAD (參數傳進來的ad)
 
-⸻
-
-修改後程式碼（已標註修改的地方 ✅）
-
-// 批次匯入人員
-public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-{
-    ImportResult result = new ImportResult()
+1.
+    internal class FGetGroupAllUser
     {
-        ErrorMessages = new List<ImportError>()
-    };
-
-    try
-    {
-        var rows = new List<(int RowNumber, string EmpNo)>();
-
-        // 讀 Excel
-        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
         {
-            int rowIndex = 0;
-            while (reader.Read())
-            {
-                rowIndex++;
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
 
-                // 第一列當表頭 → 檢查是否正確
-                if (rowIndex == 1)
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
                 {
-                    string header = reader.GetString(0)?.Trim();
-                    if (string.IsNullOrEmpty(header) || header != "員工編號")
-                    {
-                        result.IsSuccess = false;
-                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                        return result;
-                    }
-                    continue;
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
                 }
 
-                // 讀取資料
-                string empNo = reader.GetValue(0)?.ToString().Trim();
-                if (!string.IsNullOrEmpty(empNo))
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
                 {
-                    rows.Add((rowIndex, empNo));
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
                 }
-            }
-        }
 
-        // 沒有資料
-        if (rows.Count == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "Excel 無任何員工資料";
-            return result;
-        }
+                var resultList = new List<GetGroupAllUserModel.ResultData>();
 
-        int successCount = 0;
-
-        // ✅ 用 HI_AUTOS 連線（因為 AP_USER 在這邊）
-        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_AUTOS"].ConnectionString))
-        {
-            con.Open();
-
-            foreach (var row in rows)
-            {
-                try
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
-                    // ✅ 查詢員工要用 HI_TMMAIN 裡的 View
-                    string checkEmpSql = "SELECT EMP_NAME FROM [HI_TMMAIN].dbo.VW_M1EMP_MAST WHERE EMP_NO=@EMP_NO";
-                    string empName = null;
-                    using (var cmd = new SqlCommand(checkEmpSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
-                        empName = cmd.ExecuteScalar() as string;
-                    }
+                    conn.Open();
 
-                    if (string.IsNullOrEmpty(empName))
+                    // 群組清單
+                    var groupIds = new List<string> { groupId };
+
+                    if (isIncludeChildGroups)
                     {
-                        result.ErrorMessages.Add(new ImportError
+                        string sqlChild = @"SELECT APG_NO 
+                                            FROM [HI_AUTOS].[dbo].[AP_GROUP] 
+                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+
+                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
                         {
-                            RowNumber = row.RowNumber,
-                            EmpNo = row.EmpNo,
-                            Message = "查無此員工"
-                        });
-                        continue;
-                    }
+                            cmd.Parameters.AddWithValue("@SysID", sysId);
+                            cmd.Parameters.AddWithValue("@GroupID", groupId);
 
-                    // ✅ 檢查是否已存在於同一個群組
-                    string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
-                    using (var cmd = new SqlCommand(checkUserSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-
-                        int exists = (int)cmd.ExecuteScalar();
-                        if (exists > 0)
-                        {
-                            result.ErrorMessages.Add(new ImportError
+                            using (var reader = cmd.ExecuteReader())
                             {
-                                RowNumber = row.RowNumber,
-                                EmpNo = row.EmpNo,
-                                Message = "此群組已存在該員工"
-                            });
-                            continue;
+                                while (reader.Read())
+                                {
+                                    groupIds.Add(reader["APG_NO"].ToString());
+                                }
+                            }
                         }
                     }
 
-                    // ✅ 檢查是否已存在於該系統的其他群組
-                    string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
-                    using (var cmd = new SqlCommand(checkSystemSql, con))
+                    // 取使用者清單
+                    string sqlUser = $@"
+SELECT DISTINCT U_ID AS UserID, U_NAME AS UserName
+FROM [HI_AUTOS].[dbo].[AP_USER]
+WHERE SYS_ID=@SysID 
+AND APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
+ORDER BY U_ID";
+
+                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
                     {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        if ((int)cmd.ExecuteScalar() > 0)
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        for (int i = 0; i < groupIds.Count; i++)
                         {
-                            result.ErrorMessages.Add(new ImportError
+                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
+                        }
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
                             {
-                                RowNumber = row.RowNumber,
-                                EmpNo = row.EmpNo,
-                                Message = "此系統其他群組已存在該員工"
-                            });
-                            continue;
+                                resultList.Add(new GetGroupAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
+                            }
                         }
                     }
-
-                    // ✅ 寫入 AP_USER（這張表在 HI_AUTOS）
-                    string insertSql = @"
-                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
-
-                    using (var cmd = new SqlCommand(insertSql, con))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                        cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
-                        cmd.Parameters.AddWithValue("@U_NAME", empName);
-                        cmd.Parameters.AddWithValue("@CREATOR", creator);
-
-                        cmd.ExecuteNonQuery();
-                        successCount++;
-                    }
                 }
-                catch (Exception exRow)
+
+                if (resultList.Count == 0)
                 {
-                    result.ErrorMessages.Add(new ImportError
-                    {
-                        RowNumber = row.RowNumber,
-                        EmpNo = row.EmpNo,
-                        Message = "寫入錯誤：" + exRow.Message
-                    });
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
                 }
             }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
         }
-
-        result.SuccessCount = successCount;
-        result.IsSuccess = (successCount > 0 && result.ErrorMessages.Count == 0);
-
-        if (successCount == 0 && result.ErrorMessages.Count > 0)
-            result.ErrorMessage = "匯入失敗，所有資料均有錯誤";
-        else if (result.ErrorMessages.Count > 0)
-            result.ErrorMessage = $"部分資料匯入失敗：成功 {successCount} 筆，失敗 {result.ErrorMessages.Count} 筆";
-        else
-            result.ErrorMessage = $"成功匯入 {successCount} 筆資料";
     }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-    }
-
-    return result;
 }
 
 
-⸻
+2.
+ internal class FGetAllUser
+    {
+        internal GetAllUserModel.GetAllUserResponse Execute(string sysId, string environment)
+        {
+            var response = new GetAllUserModel.GetAllUserResponse();
 
-✅ 修改重點
-	1.	查詢員工姓名 → [HI_TMMAIN].dbo.VW_M1EMP_MAST（固定加資料庫前綴）
-	2.	寫入使用者資料 → AP_USER（因為連線在 HI_AUTOS，不用加前綴）
-	3.	這樣一份程式就能同時查 HI_TMMAIN、寫 HI_AUTOS。
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
 
-⸻
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
 
-要不要我幫你 前端回傳訊息 也改成「成功 N 筆、失敗 M 筆」的三種狀態（成功 / 全失敗 / 部分成功）？
+                var resultList = new List<GetAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
+SELECT U_ID AS UserID, U_NAME AS UserName
+FROM [HI_AUTOS].[dbo].[AP_USER]
+WHERE SYS_ID=@SysID
+ORDER BY U_ID
+";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
