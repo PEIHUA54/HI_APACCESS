@@ -1,267 +1,2926 @@
-好👌 我幫你把 FGetAllUser / FGetGroupAllUser 改版後完整程式碼生出來，包含 UserAD 回傳，還有 Model 的更新。
+1.權限設定
+@using HI_APACCESS.Service;
 
-⸻
+@{
+    ViewBag.Title = "群組權限管理";
+    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
+    var emp_APG_NO = controller.APG_NO;
+    var emp_no = controller.Emp_NO;
+}
 
-🔹 FGetAllUser.cs (改版後)
+<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
 
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
+<style>
+    .management-section {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        height: 700px;
+        overflow-y: auto;
+    }
 
-namespace HI_APACCESS_DLL.Factory
-{
-    internal class FGetAllUser
-    {
-        internal GetAllUserModel.GetAllUserResponse Execute(string sysId, string environment)
-        {
-            var response = new GetAllUserModel.GetAllUserResponse();
+    .section-header {
+        background: #f8f9fa;
+        margin: -15px -15px 15px -15px;
+        padding: 12px 15px;
+        border-bottom: 1px solid #dee2e6;
+        font-weight: bold;
+        color: #495057;
+        position: sticky;
+        top: -15px;
+        z-index: 10;
+    }
 
-            try
-            {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
-                    return response;
+    .user-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .page-item:hover {
+        background-color: #e9ecef !important;
+    }
+
+    .page-item.has-permission {
+        background: #e8f5e8;
+        border-color: #28a745;
+    }
+
+    /* 按鈕權限項目樣式*/
+    .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: white;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+    }
+
+        .btn-item:hover {
+            background-color: #f0f8ff !important;
+        }
+
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+    .page-item, .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+        display: block;
+    }
+
+        .page-item:hover, .btn-item:hover {
+            background-color: #e9ecef !important;
+        }
+
+        .page-item.has-permission {
+            background: #e8f5e8;
+            border-color: #28a745;
+            line-height: 1.4;
+        }
+
+        .page-item.parent-page {
+            background: #fff3e0 !important;
+            border-color: #ff9800;
+            border-left: 4px solid #ff9800;
+            line-height: 1.4;
+        }
+
+            .page-item.parent-page:hover {
+                background-color: #ffe0b2 !important;
+            }
+
+            .page-item.parent-page.has-permission {
+                background: #fff3e0 !important; /* 改為保持橘色，不變綠色 */
+                border-color: #ff9800; /* 改為保持橘色邊框 */
+                border-left: 4px solid #ff9800; /* 改為保持橘色左邊框 */
+            }
+
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+    .permission-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 12px; /* 使用 gap 來設定間距 */
+    }
+
+    .permission-checkbox {
+        margin: 0 !important;
+        padding: 0 !important;
+        pointer-events: none; /* 防止直接點擊checkbox，統一由父元素處理 */
+        flex-shrink: 0;
+        width: 16px !important;
+        height: 16px !important;
+        cursor: pointer;
+        transform: scale(1) !important; /* 確保checkbox不會被放大 */
+        -webkit-transform: scale(1) !important;
+        -moz-transform: scale(1) !important;
+        vertical-align: middle;
+        box-sizing: border-box !important;
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+    }
+
+    .permission-title {
+        font-weight: bold;
+        flex: 1; /* 占剩餘空間 */
+        min-width: 0; /* 允許縮小 */
+    }
+
+    .permission-info {
+        font-size: 12px;
+        color: #6c757d;
+        flex-shrink: 0; /* 不縮小 */
+    }
+
+    /* 權限管理區域包框樣式 - 有明顯框線 */
+    .permission-wrapper {
+        border: 2px solid #ffb74d; /* 改為淺橘色 */
+        border-radius: 8px;
+        padding: 5px;
+        background: #fafafa;
+        margin-bottom: 50px;
+        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
+    }
+
+    .permission-wrapper-header {
+        background: #fff3e0; /* 淺橘色背景 */
+        margin: -10px -10px 20px -20px;
+        padding: 10px 10px;
+        border-bottom: 2px solid #ffb74d;
+        font-weight: bold;
+        color: #f57c00; /* 橘色文字 */
+        border-radius: 6px 6px 0 0;
+    }
+
+    /* 確保高度對齊 */
+    .management-section {
+        height: 750px; /* 統一高度 */
+    }
+
+    .group-selector {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+
+    .btn-small {
+        padding: 2px 8px;
+        font-size: 12px;
+    }
+
+    .no-data {
+        text-align: center;
+        color: #6c757d;
+        font-style: italic;
+        padding: 40px 20px;
+    }
+
+    /* 儲存提醒樣式 */
+    .save-reminder {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 3px;
+        border-radius: 5px;
+        margin-bottom: 2px;
+        display: none;
+    }
+
+        .save-reminder .fa-exclamation-triangle {
+            color: #f39c12;
+            margin-right: 8px;
+        }
+
+    /* 階層顯示樣式 */
+    .parent-page-header {
+        background: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 10px 15px;
+        margin: 10px 0 5px 0;
+        font-weight: bold;
+        color: #1976d2;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+
+    .child-page-item {
+        margin-left: 20px;
+        position: relative;
+    }
+
+        .child-page-item::before {
+            content: "└─";
+            position: absolute;
+            left: -20px;
+            color: #6c757d;
+            font-family: monospace;
+        }
+
+    /* Modal表格對齊 */
+    .modal-body .form-group label {
+        font-weight: 600;
+        margin-bottom: 5px;
+        display: block;
+    }
+
+    .modal-body .form-control {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .modal-body .row {
+        margin-left: -10px;
+        margin-right: -10px;
+    }
+
+    .modal-body .col-md-6 {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .extra-info{
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 2px;
+        line-height : 1.2;
+    }
+</style>
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">系統群組權限管理 : @ViewBag.SystemId</div>
+</section>
+
+<div class="container-fluid">
+    <!-- 查詢功能區 -->
+    <div class="search-section" style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+        <div class="row align-items-center">
+            <div class="col-md-1">
+                <label class="form-label mb-0"><strong>查詢人員權限：</strong></label>
+            </div>
+            <div class="col-md-4">
+                <div class="input-group">
+                    <input type="text" class="form-control" id="searchUserId" placeholder="請輸入員工編號" autocomplete="off">
+                </div>
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-info" onclick="searchUserPermissions()">
+                    <i class="fa fa-search" aria-hidden="true"></i>查詢
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="clearSearch()">
+                    清除
+                </button>
+            </div>
+            <div class="col-md-5">
+                <div id="searchResult" style="display: none; background: #f0f4f7; padding: 6px; border-radius: 6px; margin-top: 6px; ">
+                    <div id="searchResultContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 群組選擇區 -->
+    <div class="search-section" style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+        <div class="row align-items-center">
+            <div class="col-md-1"><label for="groupSelect" class="form-label mb-0"><strong>選擇群組：</strong></label></div>
+            <div class="col-md-4">
+                <select class="form-control" id="groupSelect" onchange="loadGroupData()">
+                    <option value="">-- 請選擇群組 --</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <button type="button" class="btn btn-primary" onclick="openGroupModal()">
+                    <i class="fas fa-plus"></i> 新增群組
+                </button>
+                <button type="button" class="btn btn-secondary" id="editGroupBtn" onclick="editGroup()" disabled>修改</button>
+                <button type="button" class="btn btn-danger" id="deleteGroupBtn" onclick="deleteGroup()" disabled>刪除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 三個管理區塊 -->
+    <div class="row">
+        <!-- 左邊：管理使用者 -->
+        <div class="col-md-4">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-users"></i> 管理使用者
+                    <button type="button" class="btn btn-primary" onclick="openUserModal()" id="addUserBtn" disabled>
+                        <i class="fas fa-plus"></i>
+                        新增使用者
+                    </button>
+                    <button type="button" class="btn btn-info" onclick="openImportModal()" id="importUserBtn" disabled>
+                        <i class="fas fa-file-import"></i> 批次匯入使用者
+                    </button>
+                </div>
+                <div id="userList">
+                    <div class="no-data">請先選擇群組</div>
+                </div>
+            </div>
+        </div>
+        <!-- 右邊：管理頁面、按鈕 -->
+        <div class="col-md-8">
+            <div class="permission-wrapper">
+                <!-- 儲存提醒與按鈕同一列 -->
+                <div class="row align-items-center mb-3">
+                    <div class="col-md-10">
+                        <div class="save-reminder" id="saveReminder">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <strong>注意！</strong> 已修改權限設定，請記得「儲存權限」！
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-success" onclick="saveAllPermissions()" id="saveAllBtn" disabled>
+                            <i class="fas fa-save"></i> 儲存權限
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 權限管理的兩個區塊 -->
+                <div class="row">
+                    <!-- 中間：管理頁面權限 -->
+                    <div class="col-md-6">
+                        <div class="management-section">
+                            <div class="section-header">
+                                <i class="fas fa-file-alt"></i> 管理頁面權限
+                            </div>
+                            <div id="pageList">
+                                <div class="no-data">請先選擇群組</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右邊：管理按鈕權限 -->
+                    <div class="col-md-6">
+                        <div class="management-section">
+                            <div class="section-header">
+                                <i class="fas fa-mouse-pointer"></i> 管理按鈕權限
+                            </div>
+                            <div id="buttonList">
+                                <div class="no-data">請先選擇群組</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- 匯入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次匯入使用者</h5>
+                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+
+                <!-- 上傳區 -->
+                <div id="uploadFormSection">
+                    <form id="importForm" enctype="multipart/form-data" method="post">
+                        <input type="hidden" name="apgNo" id="importGroupNo" />
+                        <input type="hidden" name="sysID" id="@Session["CurrentSystemId"]" />
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
+                        </div>
+                        <div class="d-flex">
+                            <button type="submit" class="btn btn-primary">匯入</button>
+                            <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                                <i class="fas fa-download"></i> 下載範本
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- 匯入進度 -->
+                    <div id="uploadProgress" class="progress mt-3 d-none">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- 成功顯示 -->
+                <div id="successSection" class="mt-4 d-none">
+                    <div class="alert alert-success">
+                        <strong id="successMessage"></strong>
+                    </div>
+                </div>
+
+                <!-- 失敗顯示 -->
+                <div id="errorSection" class="mt-4 d-none">
+                    <div class="alert alert-danger">
+                        <strong id="errorMessage"></strong>
+                    </div>
+                    <div class="table-responsive mt-2">
+                        <table class="table table-bordered table-striped" id="errorTable">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>行號</th>
+                                    <th>員編</th>
+                                    <th>錯誤訊息</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                    </div>
+                </div>
+
+                <!-- 部分成功顯示 -->
+                <div id="partialSection" class="mt-4 d-none">
+                    <div class="alert alert-warning">
+                        <strong id="partialMessage"></strong>
+                    </div>
+                    <div class="table-responsive mt-2">
+                        <table class="table table-bordered table-striped" id="errorTable">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>行號</th>
+                                    <th>員編</th>
+                                    <th>錯誤訊息</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 群組 Modal -->
+<div class="modal fade" id="groupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="groupModalTitle">新增群組</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="groupForm">
+                    <div class="form-group">
+                        <label for="groupNo">群組編號</label>
+                        <input type="text" class="form-control" id="groupNo" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="groupName">群組名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="groupName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>主管群組代號</label>
+                        <div class="border p-3" style="max-height: 200px; overflow-y: auto; background-color: #f8f9fa;">
+                            <div id="parentGroupList">
+                                <div class="text-center text-muted">載入中...</div>
+                            </div>
+                        </div>
+                        <small class="form-text text-muted">可複選</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveGroup()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 使用者 Modal -->
+<div class="modal fade" id="userModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">新增使用者</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="form-group">
+                                <label for="userIdInput">員工編號 <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="userIdInput" list="empList" placeholder="請輸入員工編號" required />
+                                    <datalist id="empList"></datalist>
+                                    <div class="input-group-append">
+                                        <button type="button" class="btn btn-outline-secondary" onclick="clearUserIdInput()">
+                                            <i class="fas fa-times"></i>清除
+                                        </button>
+                                    </div>
+                                    <small class="form-text text-muted">可下拉選擇，或輸入員編</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="userName">員工姓名 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="userName" readonly style="background-color: #f8f9fa;">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="userDept">部門</label>
+                                <input type="text" class="form-control" id="userDept" readonly style="background-color: #f8f9fa;">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="userPost">階職</label>
+                                <input type="text" class="form-control" id="userPost" readonly style="background-color: #f8f9fa;">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveUser()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+@section Scripts {
+    <script>
+        let currentGroup = '';
+        let isEditMode = false;
+        let allFunctions = [];
+        let groupPermissions = {};
+        let hasUnsavedChanges = false;
+        const currentSysID = '@Session["CurrentSystemId"]';
+
+        // 頁面載入時允許搜尋
+        $(document).ready(function () {
+            loadGroups();
+            loadAllFunctions();
+
+            // 支援 Enter 鍵搜尋
+            $('#searchUserId').on('keypress', function (e) {
+                if (e.which === 13) {
+                    searchUserPermissions();
+                }
+            });
+        });
+
+        // 顯示/隱藏 儲存提醒
+        function showSaveReminder() {
+            $('#saveReminder').show();
+            hasUnsavedChanges = true;
+        }
+
+        function hideSaveReminder() {
+            $('#saveReminder').hide();
+            hasUnsavedChanges = false;
+        }
+
+       //  載入群組下拉選單 loadGroups 函數支援 callback
+        function loadGroups(callback) {
+            $.get('@Url.Action("GetGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
+                let options = '<option value="">– 請選擇群組 –</option>';
+
+                if (Array.isArray(response)) {
+                    response.forEach(function (group) {
+                        options += `<option value="${group.value}">${group.text}</option>`;
+                    });
+                } else {
+                    console.log('群組資料格式錯誤:', response);
+                    options += '<option value="">-- 載入失敗 --</option>';
                 }
 
-                // 2. 系統授權檢查
-                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorizedSystems.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
+                $('#groupSelect').html(options);
+
+                if (callback) callback();
+
+            }).fail(function (xhr, status, error) {
+                console.log('載入群組失敗:', error);
+                $('#groupSelect').html('<option value="">-- 載入失敗 --</option>');
+            });
+        }
+
+        // 載入所有頁面
+        function loadAllFunctions() {
+            $.get('@Url.Action("GetAllFunctions", "AP")', { sysID: currentSysID } , function (response) {
+                if (response.success) {
+                    allFunctions = response.data || [];
+                    //console.log('後端返回的數據順序:');
+                    allFunctions.forEach((f, index) => {
+                        console.log(`${index}: ${f.FUNC_ID} - ${f.FUNC_NA} (Parent: ${f.PARENT_ID}, Sort: ${f.SORT_NO})`);
+                    });
+                } else {
+                    allFunctions = [];
                 }
+            });
+        }
 
-                var resultList = new List<GetAllUserModel.ResultData>();
+        // 載入群組資料 loadGroupData 函數，啟用/停用刪除按鈕
+        function loadGroupData() {
+            const newGroup = $('#groupSelect').val();
 
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
+            if (hasUnsavedChanges && currentGroup !== newGroup && currentGroup !== '') {
+                if (!confirm('有未儲存的變更，切換群組將遺失這些變更。確定要繼續嗎？')) {
+                    $('#groupSelect').val(currentGroup);
+                    return;
+                }
+            }
 
-                    string sql = @"
-SELECT 
-    U.U_ID   AS UserID,
-    U.U_NAME AS UserName,
-    ISNULL(LTRIM(RTRIM(E.EMP_DOM_ID)), '') AS UserAD
-FROM [HI_AUTOS].[dbo].[AP_USER] U
-LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
-    ON E.EMP_ID = U.U_ID
-WHERE U.SYS_ID = @SysID
-ORDER BY U.U_ID";
+            currentGroup = newGroup;
+            hideSaveReminder();
 
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
+            if (!currentGroup) {
+                resetAllSections();
+                return;
+            }
 
-                        using (var reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                resultList.Add(new GetAllUserModel.ResultData
-                                {
-                                    UserID = reader["UserID"].ToString(),
-                                    UserName = reader["UserName"].ToString(),
-                                    UserAD = reader["UserAD"].ToString()
+            // 啟用所有按鈕
+            $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', false);
+            loadUsers();
+            loadPagePermissions();
+        }
+
+        // 重設所有區塊 resetAllSections 函數
+        function resetAllSections() {
+            // 停用所有按鈕
+            $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', true);
+            $('#userList').html('<div class="no-data">請先選擇群組</div>');
+            $('#pageList').html('<div class="no-data">請先選擇群組</div>');
+            $('#buttonList').html('<div class="no-data">請先選擇群組</div>');
+            hideSaveReminder();
+        }
+
+        // 載入使用者列表
+        function loadUsers() {
+            $.get('@Url.Action("GetUsersByGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+                if (response.success) {
+                    let html = '';
+                    if (response.data.length > 0) {
+                        response.data.forEach(function (user) {
+                            html += `
+                                <div class="user-item">
+                                    <div>
+                                        <strong>${user.U_ID}</strong><br>
+                                        <small>${user.U_NAME}</small><br>
+                                        <div class="extra-info">
+                                              建立人員:${user.CREATOR || ''}
+                                              建立日期:${user.CREATE_TIME || ''}<br>
+                                              修改人員:${user.EDITOR || ''}
+                                              修改日期:${user.EDIT_TIME || ''}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <button type="button"
+                                                class="btn btn-sm btn-warning btn-small"
+                                                onclick="openChangeGroupModal('${user.U_ID}', '${user.U_NAME}', '${currentGroup}')">
+                                            變更群組
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-danger btn-small"
+                                                onclick="deleteUser('${user.U_ID}', '${user.U_NAME}')">
+                                            刪除
+                                        </button>
+                                    </div>
+                                </div>`;
+                        });
+                    } else {
+                        html = '<div class="no-data">此群組暫無使用者</div>';
+                    }
+                    $('#userList').html(html);
+                }
+            });
+        }
+
+        // 載入頁面權限
+        function loadPagePermissions() {
+            $.get('@Url.Action("GetGroupPermissions", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+                if (response.success) {
+                    groupPermissions = {};
+                    response.data.forEach(function (item) {
+                        if (!groupPermissions[item.FUNC_ID]) {
+                            groupPermissions[item.FUNC_ID] = {
+                                hasPagePermission: item.HasPagePermission,
+                                buttons: {}
+                            };
+                        }
+                        item.ButtonPermissions.forEach(function (btn) {
+                            groupPermissions[item.FUNC_ID].buttons[btn.BTNSEQ] = btn.HasPermission;
+                        });
+                    });
+                    renderPageListHierarchical();
+                    updateButtonListHierarchical(); // 這會顯示所有頁面的按鈕
+                }
+            });
+        }
+
+        // 輔助函數
+        function getFuncId(func) {
+            return func.FUNC_ID || func.value || func.func_id;
+        }
+
+        function getParentId(func) {
+        return func.PARENT_ID || func.parent_id || func.parentId;
+        }
+
+        function getFuncName(func) {
+        return func.FUNC_NA || func.text || func.func_na;
+        }
+
+        // 變更使用者群組Modal
+        function openChangeGroupModal(userId, userName, currentGroup) {
+            $('#changeGroupModal').remove(); // 先移除舊的（避免重覆）
+
+            const modalHtml = `
+                <div class="modal fade" id="changeGroupModal" tabindex="-1">
+                  <div class="modal-dialog">
+                    <div class="modal-content">
+                      <div class="modal-header">
+                        <h5 class="modal-title">變更使用者群組</h5>
+                        <button type="button" class="close" data-dismiss="modal">&times;</button>
+                      </div>
+                      <div class="modal-body">
+                        <div class="alert alert-info">
+                          <strong>使用者：</strong> ${userName} (${userId})<br>
+                          <strong>目前群組：</strong> ${currentGroup}
+                        </div>
+                        <form id="changeGroupForm">
+                          <input type="hidden" id="changeUserId" value="${userId}">
+                          <input type="hidden" id="changeCurrentGroup" value="${currentGroup}">
+                          <div class="form-group">
+                            <label for="newGroupSelect">選擇新群組 <span class="text-danger">*</span></label>
+                            <select class="form-control" id="newGroupSelect" required>
+                              <option value="">-- 請選擇新群組 --</option>
+                            </select>
+                          </div>
+                        </form>
+                      </div>
+                      <div class="modal-footer">
+                        <button type="button" class="btn btn-primary" onclick="confirmChangeGroup()">確認變更</button>
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>`;
+
+            $('body').append(modalHtml);
+
+            // 載入群組下拉
+            $.get('@Url.Action("GetGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
+                let options = '<option value="">-- 請選擇新群組 --</option>';
+                if (Array.isArray(response)) {
+                    response.forEach(function (group) {
+                        if (group.value !== currentGroup) { // 排除目前群組
+                            options += `<option value="${group.value}">${group.text}</option>`;
+                        }
+                    });
+                }
+                $('#newGroupSelect').html(options);
+            });
+
+            $('#changeGroupModal').modal('show');
+        }
+
+        // 變更使用者群組
+        function confirmChangeGroup() {
+            const userId = $('#changeUserId').val();
+            const currentGroup = $('#changeCurrentGroup').val();
+            const newGroup = $('#newGroupSelect').val();
+
+            if (!newGroup) {
+                alert('請選擇新群組');
+                return;
+            }
+            if (newGroup === currentGroup) {
+                alert('新群組與目前群組相同');
+                return;
+            }
+
+            if (confirm(`確定要將使用者 ${userId} 從群組 ${currentGroup} 變更到 ${newGroup} 嗎？`)) {
+                $.post('@Url.Action("ChangeUserGroup", "AP")', {
+                    u_id: userId,
+                    old_apg_no: currentGroup,
+                    new_apg_no: newGroup,
+                    sysID: currentSysID
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message || '使用者群組變更成功');
+                        $('#changeGroupModal').modal('hide');
+                        loadUsers(); // 重新載入清單
+                    } else {
+                        alert(response.message || '群組變更失敗');
+                    }
+                }).fail(function (xhr) {
+                    alert('群組變更失敗：' + (xhr.responseText || '系統錯誤'));
+                });
+            }
+        }
+
+        // 檢查是否為父層頁面 (PARENT_ID=HOME 或無父級且有子頁面)
+        function isParentPage(func) {
+            const funcId = getFuncId(func);
+            const parentId = getParentId(func);
+
+            // 檢查是否為 HOME 層級的頁面
+            if (parentId === 'HOME' || !parentId || parentId === '') {
+                return true;
+            }
+
+            // 檢查是否有子頁面
+            return allFunctions.some(f => getParentId(f) === funcId);
+        }
+
+        // 階層式渲染頁面列表
+        function renderPageListHierarchical() {
+            let html = '';
+            if (allFunctions.length === 0) {
+                html = '<div class="no-data">無可用頁面</div>';
+            } else {
+                // 只取顯示的頁面 (IS_SHOW = 'Y')
+                const visibleFunctions = allFunctions.filter(f => f.IS_SHOW === 'Y');
+
+                const parentPages = visibleFunctions.filter(f => !getParentId(f) || !visibleFunctions.some(p => getFuncId(p) === getParentId(f)));
+                const childPages = visibleFunctions.filter(f => getParentId(f) && visibleFunctions.some(p => getFuncId(p) === getParentId(f)));
+
+                parentPages.forEach(function (parentFunc) {
+                    html += renderPageItem(parentFunc, false);
+                    const children = childPages.filter(c => getParentId(c) === getFuncId(parentFunc));
+                    children.forEach(function (childFunc) {
+                        html += renderPageItem(childFunc, true);
+                    });
+                });
+            }
+            $('#pageList').html(html);
+        }
+
+        // 頁面項目渲染 - 一列顯示
+        function renderPageItem(func, isChild) {
+            const funcId = getFuncId(func);
+            const funcName = getFuncName(func);
+
+            const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+            const checkedAttr = hasPermission ? 'checked' : '';
+
+            // 判斷是否為父層頁面並添加相應樣式
+            const isParent = isParentPage(func);
+            let itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
+            if (isParent) {
+                itemClass += ' parent-page';
+            }
+
+            const childClass = isChild ? 'child-page-item' : '';
+
+            return `
+    <div class="${itemClass} ${childClass}" data-func-id="${funcId}" onclick="togglePagePermissionByClick('${funcId}')">
+        <div class="permission-content">
+            <input type="checkbox" class="permission-checkbox" ${checkedAttr}>
+            <span class="permission-title">${funcName}</span>
+            <span class="permission-info">頁面ID: ${funcId}</span>
+        </div>
+    </div>`;
+
+        }
+
+        // 點擊切換頁面權限
+        function togglePagePermissionByClick(funcId) {
+            const checkbox = $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`);
+            const isChecked = checkbox.prop('checked');
+            checkbox.prop('checked', !isChecked);
+            togglePagePermission(funcId, !isChecked);
+        }
+
+        // 切換頁面權限
+        function togglePagePermission(funcId, hasPermission) {
+            if (!groupPermissions[funcId]) {
+                groupPermissions[funcId] = { buttons: {} };
+            }
+            groupPermissions[funcId].hasPagePermission = hasPermission;
+
+            showSaveReminder();
+
+            if (hasPermission) {
+                // 勾選頁面時，自動全勾該頁面的所有按鈕
+                $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                    func_id: funcId,
+                    sysID: currentSysID
+                }, function (btnResponse) {
+                    if (btnResponse.success && btnResponse.data) {
+                        if (!groupPermissions[funcId]) {
+                            groupPermissions[funcId] = { buttons: {} };
+                        }
+                        btnResponse.data.forEach(function (btn) {
+                            groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
+                        });
+                        refreshButtonsDisplay(funcId);   // 只刷新這個頁面的按鈕顯示
+                        showSaveReminder();
+                    }
+                });
+
+                if (isParentPage(allFunctions.find(f => getFuncId(f) === funcId))) {
+                    const childPages = allFunctions.filter(f => getParentId(f) === funcId);
+                    childPages.forEach(function (childFunc) {
+                        const childId = getFuncId(childFunc);
+                        if (!groupPermissions[childId]) {
+                            groupPermissions[childId] = { buttons: {} };
+                        }
+                        groupPermissions[childId].hasPagePermission = true;
+                        $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', true);
+                        $(`.page-item[data-func-id="${childId}"]`).addClass('has-permission');
+
+                        // 自動勾選該子頁面的所有按鈕權限
+                        $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                            func_id: childId,
+                            sysID: currentSysID
+                        }, function (btnResponse) {
+                            if (btnResponse.success && btnResponse.data) {
+                                btnResponse.data.forEach(function (btn) {
+                                    groupPermissions[childId].buttons[btn.BTNSEQ] = true;
                                 });
                             }
+                        });
+                    });
+                }
+
+                const currentPage = allFunctions.find(f => getFuncId(f) === funcId);
+                if (currentPage && getParentId(currentPage)) {
+                    const parentExists = allFunctions.some(f => getFuncId(f) === getParentId(currentPage));
+                    if (parentExists) {
+                        const parentId = getParentId(currentPage);
+                        if (!groupPermissions[parentId]) {
+                            groupPermissions[parentId] = { buttons: {} };
+                        }
+                        if (!groupPermissions[parentId].hasPagePermission) {
+                            groupPermissions[parentId].hasPagePermission = true;
+                            $(`.page-item[data-func-id="${parentId}"] input[type="checkbox"]`).prop('checked', true);
+                            $(`.page-item[data-func-id="${parentId}"]`).addClass('has-permission');
+                            alert(`已自動勾選上層頁面權限：${parentId}`);
                         }
                     }
                 }
+            } else {
+                const childPages = allFunctions.filter(f => getParentId(f) === funcId);
+                const hasChildWithPermission = childPages.some(child =>
+                    groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission
+                );
 
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無人員";
+                if (hasChildWithPermission) {
+                    const childNames = childPages
+                        .filter(child => groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission)
+                        .map(child => getFuncName(child))
+                        .join('、');
+
+                    if (!confirm(`取消此頁面權限將同時取消子頁面權限：${childNames}\n\n確定要繼續嗎？`)) {
+                        $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`).prop('checked', true);
+                        return;
+                    } else {
+                        childPages.forEach(child => {
+                            const childId = getFuncId(child);
+                            if (groupPermissions[childId] && groupPermissions[childId].hasPagePermission) {
+                                groupPermissions[childId].hasPagePermission = false;
+                                groupPermissions[childId].buttons = {};
+                                $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', false);
+                                $(`.page-item[data-func-id="${childId}"]`).removeClass('has-permission');
+                            }
+                        });
+                    }
                 }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
+
+                groupPermissions[funcId].buttons = {};
             }
 
-            return response;
+            const pageItem = $(`.page-item[data-func-id="${funcId}"]`);
+            if (hasPermission) {
+                pageItem.addClass('has-permission');
+            } else {
+                pageItem.removeClass('has-permission');
+            }
+
+            updateButtonListHierarchical();
         }
-    }
-}
 
+        // 全勾選按鈕權限
+        function selectAllButtons(funcId) {
+            if (!groupPermissions[funcId]) {
+                groupPermissions[funcId] = { buttons: {} };
+            }
 
-⸻
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success && response.data) {
+                    response.data.forEach(function (btn) {
+                        groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
+                    });
+                    // 只更新該頁面的按鈕顯示狀態，不重新排序
+                    refreshButtonsDisplay(funcId);
+                    showSaveReminder();
+                }
+            });
+        }
 
-🔹 FGetGroupAllUser.cs (改版後)
+        // 全取消按鈕權限
+        function clearAllButtons(funcId) {
+            if (!groupPermissions[funcId]) {
+                groupPermissions[funcId] = { buttons: {} };
+            }
 
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success && response.data) {
+                    response.data.forEach(function (btn) {
+                        groupPermissions[funcId].buttons[btn.BTNSEQ] = false;
+                    });
+                    // 只更新該頁面的按鈕顯示狀態，不重新排序
+                    refreshButtonsDisplay(funcId);
+                    showSaveReminder();
+                }
+            });
+        }
 
-namespace HI_APACCESS_DLL.Factory
-{
-    internal class FGetGroupAllUser
-    {
-        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
-        {
-            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+        // 階層式更新按鈕列表
+        function updateButtonListHierarchical() {
+            if (allFunctions.length === 0) {
+                $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+                return;
+            }
 
-            try
-            {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
-                    return response;
+            // 建立父子關係映射
+            const parentChildMap = {};
+            const parentPages = [];
+
+            // 分離父頁面和子頁面，並過濾隱藏的子頁面
+            allFunctions.forEach(func => {
+                const funcId = getFuncId(func);
+                const parentId = getParentId(func);
+
+                if (!parentId || parentId === '' || parentId === 'HOME') {
+                    // 父頁面
+                    parentPages.push(func);
+                    if (!parentChildMap[funcId]) {
+                        parentChildMap[funcId] = [];
+                    }
+                } else {
+                    // 子頁面 - 只要顯示的子頁面
+                    if (func.IS_SHOW === 'Y') {
+                        if (!parentChildMap[parentId]) {
+                            parentChildMap[parentId] = [];
+                        }
+                        parentChildMap[parentId].push(func);
+                    }
+                }
+            });
+
+            // 父頁面按SORT_NO排序
+            parentPages.sort((a, b) => {
+                const aSort = parseInt(a.SORT_NO) || 999;
+                const bSort = parseInt(b.SORT_NO) || 999;
+                return aSort - bSort;
+            });
+
+            // 每個父頁面的子頁面按SORT_NO排序
+            Object.keys(parentChildMap).forEach(parentId => {
+                parentChildMap[parentId].sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+            });
+
+            let html = '';
+
+            // 按父頁面順序顯示
+            parentPages.forEach(parentFunc => {
+                const parentId = getFuncId(parentFunc);
+                const parentName = getFuncName(parentFunc);
+                const children = parentChildMap[parentId] || [];
+
+                // 父頁面標題
+                html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+        </div>`;
+
+                // 父頁面區塊（包含父頁面本身的按鈕）
+                const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
+                const parentSectionStyle = parentHasPagePermission
+                    ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
+                    : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
+
+                html += `
+        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
+            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                <span>
+                    <i class="fas fa-folder-open"></i> ${parentName}
+                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
+                </span>
+                <div style="display: flex; gap: 5px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>`;
+
+                // 如果有子頁面，在父層區塊內加入分隔線，然後繼續在同一個區塊內顯示子頁面
+                if (children.length > 0) {
+                    html += `
+            <div style="margin: 10px 15px; border-top: 2px solid #6c757d; position: relative;">
+                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #f8f9fa; padding: 0 10px; color: #6c757d; font-size: 12px; font-weight: bold;">
+
+                </div>
+            </div>`;
+
+                    // 在同一個父層區塊內顯示子頁面
+                    children.forEach(childFunc => {
+                        const funcId = getFuncId(childFunc);
+                        const funcName = getFuncName(childFunc);
+                        const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+                        html += `
+                <div class="child-page-section" style="margin: 10px; border: 1px solid #ccc; border-radius: 4px; background: ${hasPagePermission ? '#fff' : '#f5f5f5'}; ${!hasPagePermission ? 'opacity: 0.6;' : ''}">
+                    <div class="page-header" style="background: #f1f3f4; padding: 8px 12px; border-bottom: 1px solid #ccc; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
+                        <span>
+                            <i class="fas fa-file-alt"></i> ${funcName}
+                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                        </span>
+                        <div style="display: flex; gap: 5px;">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-check-square"></i> 全勾選
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-square"></i> 全取消
+                            </button>
+                        </div>
+                    </div>
+                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 8px;">
+                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+                    </div>
+                </div>`;
+                    });
                 }
 
-                // 2. 系統授權檢查
-                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorizedSystems.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
+                // 結束父頁面區塊
+                html += `</div>`;
+            });
+
+            $('#buttonList').html(html);
+
+            // 現在載入每個頁面的按鈕
+            parentPages.forEach(parentFunc => {
+                const parentId = getFuncId(parentFunc);
+                const children = parentChildMap[parentId] || [];
+
+                // 載入父頁面的按鈕
+                loadButtonsForPage(parentId);
+
+                // 載入子頁面的按鈕
+                children.forEach(childFunc => {
+                    loadButtonsForPage(getFuncId(childFunc));
+                });
+            });
+        }
+
+        // updateButtonListHierarchical：渲染頁面按鈕區塊
+        function renderPageButtonSection(func, isChild) {
+            const funcId = getFuncId(func);
+            const funcName = getFuncName(func);
+            const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+            // 頁面區塊樣式
+            const sectionStyle = hasPagePermission
+                ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa;' + (isChild ? ' margin-left: 20px;' : '')
+                : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6;' + (isChild ? ' margin-left: 20px;' : '');
+
+            return `
+        <div class="page-section ${isChild ? 'child-section' : 'parent-section'}" id="page-section-${funcId}" style="${sectionStyle}">
+            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
+                <span>
+                    <i class="fas fa-file-alt"></i> ${funcName}
+                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
+                </span>
+                <div style="display: flex; gap: 5px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>
+        </div>`;
+        }
+
+        function loadButtonsForPage(funcId) {
+            const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            }, function (response) {
+                let buttonHtml = '';
+
+                if (response.success && response.data && response.data.length > 0) {
+                    // 有按鈕時，使用正常的容器樣式
+                    response.data.forEach(function (btn) {
+                        const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
+                        const checkedAttr = hasPermission ? 'checked' : '';
+                        const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
+                        const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
+
+                        buttonHtml += `
+                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
+                    <div class="permission-content">
+                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
+                        <span class="permission-title">${btn.BTN_NAME}</span>
+                        <span class="permission-info">ID: ${btn.BTNID}</span>
+                    </div>
+                </div>`;
+                    });
+
+                    // 更新該頁面的按鈕容器 - 正常高度
+                    $(`#buttons-${funcId}`).html(buttonHtml).css({
+                        'padding': '10px',
+                        'min-height': 'auto'
+                    });
+                } else {
+                    // 沒有按鈕時，使用緊湊樣式
+                    buttonHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #6c757d; font-size: 12px;">此頁面無按鈕</div>';
+
+                    // 更新該頁面的按鈕容器 - 緊湊高度
+                    $(`#buttons-${funcId}`).html(buttonHtml).css({
+                        'padding': '0',
+                        'min-height': '30px'
+                    });
                 }
+            }).fail(function () {
+                // 載入失敗時也使用緊湊樣式
+                const errorHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #dc3545; font-size: 12px;">載入失敗</div>';
+                $(`#buttons-${funcId}`).html(errorHtml).css({
+                    'padding': '0',
+                    'min-height': '30px'
+                });
+            });
+        }
 
-                var resultList = new List<GetGroupAllUserModel.ResultData>();
+        // 點擊切換按鈕權限
+        function toggleButtonPermissionByClick(funcId, btnSeq) {
+            const checkbox = $(`.btn-item`).filter(function () {
+                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
+            }).find('input[type="checkbox"]');
 
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
+            const isChecked = checkbox.prop('checked');
+            checkbox.prop('checked', !isChecked);
+            toggleButtonPermission(funcId, btnSeq, !isChecked);
 
-                    // 群組清單
-                    var groupIds = new List<string> { groupId };
+        }
 
-                    if (isIncludeChildGroups)
-                    {
-                        string sqlChild = @"SELECT APG_NO 
-                                            FROM [HI_AUTOS].[dbo].[AP_GROUP] 
-                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+        // 切換按鈕權限
+        function toggleButtonPermission(funcId, btnSeq, hasPermission) {
+            groupPermissions[funcId].buttons[btnSeq] = hasPermission;
+            showSaveReminder();
 
-                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@SysID", sysId);
-                            cmd.Parameters.AddWithValue("@GroupID", groupId);
+            const btnItem = $(`.btn-item`).filter(function () {
+                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
+            });
 
-                            using (var reader = cmd.ExecuteReader())
-                            {
-                                while (reader.Read())
-                                {
-                                    groupIds.Add(reader["APG_NO"].ToString());
+            if (hasPermission) {
+                btnItem.addClass('has-permission');
+            } else {
+                btnItem.removeClass('has-permission');
+            }
+        }
+
+        // 刷新指定頁面的按鈕顯示狀態
+        function refreshButtonsDisplay(funcId) {
+            $(`.page-section`).each(function () {
+                const pageHeader = $(this).find('.page-header');
+                if (pageHeader.text().includes(`(${funcId})`)) {
+                    const buttonsContainer = $(this).find('.buttons-container');
+                    buttonsContainer.find('.btn-item').each(function () {
+                        const btnElement = $(this);
+                        const onclick = btnElement.attr('onclick');
+                        if (onclick && onclick.includes(`'${funcId}',`)) {
+                            const btnSeqMatch = onclick.match(/'([^']+)', '([^']+)'/);
+                            if (btnSeqMatch && btnSeqMatch.length >= 3) {
+                                const btnSeq = btnSeqMatch[2];
+                                const hasPermission = groupPermissions[funcId].buttons[btnSeq] || false;
+                                const checkbox = btnElement.find('input[type="checkbox"]');
+                                checkbox.prop('checked', hasPermission);
+
+                                if (hasPermission) {
+                                    btnElement.addClass('has-permission');
+                                } else {
+                                    btnElement.removeClass('has-permission');
                                 }
                             }
                         }
-                    }
+                    });
+                }
+            });
+        }
 
-                    // 取使用者清單 (加上 AD)
-                    string sqlUser = $@"
-SELECT DISTINCT 
-    U.U_ID   AS UserID,
-    U.U_NAME AS UserName,
-    ISNULL(LTRIM(RTRIM(E.EMP_DOM_ID)), '') AS UserAD
-FROM [HI_AUTOS].[dbo].[AP_USER] U
-LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
-    ON E.EMP_ID = U.U_ID
-WHERE U.SYS_ID = @SysID 
-  AND U.APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
-ORDER BY U.U_ID";
+        // 儲存所有權限
+        function saveAllPermissions() {
+            const funcIds = [];
+            const buttonPermissions = [];
+            Object.keys(groupPermissions).forEach(function (funcId) {
+                if (groupPermissions[funcId].hasPagePermission) {
+                    funcIds.push(funcId);
 
-                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
-                        for (int i = 0; i < groupIds.Count; i++)
-                        {
-                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
+                    Object.keys(groupPermissions[funcId].buttons).forEach(function (btnSeq) {
+                        if (groupPermissions[funcId].buttons[btnSeq]) {
+                            buttonPermissions.push(`${funcId}|${btnSeq}`);
+                        }
+                    });
+                }
+            });
+
+            $.post('@Url.Action("BatchSetPermissions", "AP")', {
+                apg_no: currentGroup,
+                funcIds: funcIds,
+                buttonPermissions: buttonPermissions,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    alert('權限設定儲存成功！');
+                    hideSaveReminder();
+                } else {
+                    alert('儲存失敗：' + response.message);
+                }
+            });
+        }
+
+        // 群組管理函數
+        function openGroupModal() {
+            isEditMode = false;
+            $('#groupModalTitle').text('新增群組');
+            $('#groupForm')[0].reset();
+
+            $.get('@Url.Action("GetNextGroupNo", "AP")', { sysID: currentSysID } ,function (response) {
+                if (response.success) {
+                    $('#groupNo').val(response.data);
+                }
+            });
+
+            loadParentGroupOptions();
+
+            $('#groupModal').modal('show');
+        }
+
+        function editGroup() {
+            if (!currentGroup) return;
+
+            isEditMode = true;
+            $('#groupModalTitle').text('修改群組');
+
+            // 載入主管群組選項
+            loadParentGroupOptions(() => {
+                // 載入群組資料
+                $.get('@Url.Action("GetGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+                    if (response.success) {
+                        $('#groupNo').val(response.data.APG_NO);
+                        $('#groupName').val(response.data.APG_NAME);
+
+                        if (response.data.PARENT_APG_NO) {
+                            const parentGroups = response.data.PARENT_APG_NO.split(',');
+                            parentGroups.forEach(function (parentApgNo) {
+                                const trimmedApgNo = parentApgNo.trim();
+                                if (trimmedApgNo) {
+                                    $(`input[name="parentGroups"][value="${trimmedApgNo}"]`).prop('checked', true);
+                                }
+                            });
                         }
 
-                        using (var reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                resultList.Add(new GetGroupAllUserModel.ResultData
-                                {
-                                    UserID = reader["UserID"].ToString(),
-                                    UserName = reader["UserName"].ToString(),
-                                    UserAD = reader["UserAD"].ToString()
-                                });
+                        $('#groupModal').modal('show');
+                    }
+                });
+            });
+        }
+
+        // 主管群組選項
+        function loadParentGroupOptions(callback) {
+            $.get('@Url.Action("GetParentGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
+                let html = '';
+
+                if (Array.isArray(response)) {
+                    response.forEach(function (group) {
+                        // 允許選擇自己群組
+                        html += `
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" name="parentGroups"
+                               value="${group.value}" id="parent_${group.value}">
+                        <label class="form-check-label" for="parent_${group.value}">
+                            ${group.text}
+                        </label>
+                    </div>`;
+                    });
+                }
+
+                if (html === '') {
+                    html = '<div class="text-muted">無可選擇的群組</div>';
+                }
+
+                $('#parentGroupList').html(html);
+
+                if (callback) callback();
+            }).fail(function () {
+                $('#parentGroupList').html('<div class="text-danger">載入失敗</div>');
+            });
+        }
+
+        // 儲存群組設定
+        function saveGroup() {
+            const groupNo = $('#groupNo').val();
+            const groupName = $('#groupName').val();
+
+            if (!groupName.trim()) {
+                alert('請輸入群組名稱');
+                return;
+            }
+
+            const selectedParentGroups = [];
+            $('input[name="parentGroups"]:checked').each(function () {
+                selectedParentGroups.push($(this).val());
+            });
+
+            const url = isEditMode ? '@Url.Action("UpdateGroup", "AP")' : '@Url.Action("AddGroup", "AP")';
+
+            const postData = {
+                APG_NO: groupNo,
+                APG_NAME: groupName
+            };
+
+            selectedParentGroups.forEach(function (parentApgNo, index) {
+                postData[`parentApgNos[${index}]`] = parentApgNo;
+            });
+
+            $.post(url, postData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#groupModal').modal('hide');
+                    if (isEditMode) {
+                        // 修改模式：只更新群組下拉選單，不重新載入其他區塊
+                        loadGroups(() => {
+                            $('#groupSelect').val(currentGroup);
+                        });
+                    } else {
+                        // 新增模式：需要選中新群組並載入所有資料
+                        loadGroups(() => {
+                            $('#groupSelect').val(groupNo);
+                            currentGroup = groupNo;
+                            loadGroupData();
+                        });
+                    }
+                } else {
+                    alert(response.message);
+                }
+            }).fail(function () {
+                alert('儲存失敗，請稍後再試');
+            });
+        }
+
+        // 刪除群組
+        function deleteGroup() {
+            if (!currentGroup) return;
+
+            const groupName = $('#groupSelect option:selected').text();
+
+            if (confirm(`確定要刪除群組「${groupName}」嗎？\n\n注意：這將同時刪除該群組的所有使用者和權限設定，且無法復原！`)) {
+                $.post('@Url.Action("DeleteGroup", "AP")',
+                    {
+                        apg_no: currentGroup,
+                        sysID: currentSysID
+                    },
+                    function (response) {
+                        if (response.success) {
+                            alert('群組刪除成功！');
+                            // 重新載入群組清單並重置所有區塊
+                            loadGroups();
+                            currentGroup = '';
+                            resetAllSections();
+                        } else {
+                            alert('刪除失敗：' + response.message);
+                        }
+                    }).fail(function () {
+                        alert('刪除失敗，請稍後再試');
+                    });
+            }
+        }
+
+        // 使用者管理函數
+        function openUserModal() {
+            $('#userForm')[0].reset();
+            $('#empList').empty();
+
+            //  一進去就撈全部清單
+            $.get('@Url.Action("GetEmployeeList", "AP")', { sysID: currentSysID }, function (res) {
+                if (res.success && Array.isArray(res.data)) {
+                    const options = res.data.map(emp =>
+                        `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+                    ).join('');
+                    $('#empList').html(options);
+                }
+            });
+
+            // 綁定選擇事件（自動帶姓名/部門/職稱）
+            $('#userIdInput').off('change blur').on('change blur', function () {
+                const empNo = this.value.trim();
+                if (!empNo) return;
+                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
+                    if (r.success && r.data) {
+                        const emp = r.data;
+                        $('#userName').val(emp.EMP_NAME || '');
+                        $('#userDept').val(emp.ORGAN_CAP || '');
+                        $('#userPost').val(emp.POST_NAME || '');
+                    } else {
+                        $('#userName,#userDept,#userPost').val('');
+                    }
+                });
+            });
+
+            $('#userModal').modal('show');
+        }
+
+        function saveUser() {
+            const formData = {
+                APG_NO: currentGroup,
+                U_ID: ($('#userIdInput').val() || '').trim(),
+                U_NAME: ($('#userName').val() || '').trim()
+            };
+            if (!formData.U_ID || !formData.U_NAME) {
+                alert('請選擇有效員工編號，並確認姓名已帶出');
+                return;
+            }
+            $.post('@Url.Action("AddUser", "AP")', formData, function (res) {
+                if (res.success) {
+                    alert(res.message || '新增成功');
+                    $('#userModal').modal('hide');
+                    loadUsers();
+                } else { alert(res.message || '新增失敗'); }
+            });
+        }
+
+        function deleteUser(userId, userName) {
+            if (confirm(`確定要將 "${userName}" 從群組中移除嗎？`)) {
+                $.post('@Url.Action("DeleteUser", "AP")', {
+                    apg_no: currentGroup,
+                    u_id: userId,
+                    sysID: currentSysID
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+                        loadUsers();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 查詢人員權限
+        function searchUserPermissions() {
+            const userId = $('#searchUserId').val().trim();
+            if (!userId) { alert('請輸入員工編號'); return; }
+
+            $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId, sysID: currentSysID }, function (response) {
+                if (response.success) {
+                    displaySearchResult(response.data);
+                    $('#searchResult').show();
+
+                    const apgNo = response.data?.UserInfo?.APG_NO || '';
+                    if (apgNo) {
+                        $('#groupSelect').val(apgNo);
+                        loadGroupData();
+                    }
+                } else {
+                    alert(response.message || '查無資料');
+                    $('#searchResult').hide();
+                }
+            }).fail(function () {
+                alert('查詢失敗，請稍後再試');
+                $('#searchResult').hide();
+            });
+        }
+
+        // 顯示查詢結果
+        function displaySearchResult(data) {
+            const u = data.UserInfo || {};
+            const html = `
+    <div class="d-flex flex-wrap align-items-center small" style="gap:14px; line-height:1.6;">
+      <span><strong>員工編號</strong>：${u.U_ID || ''}</span>
+      <span><strong>員工姓名</strong>：${u.U_NAME || ''}</span>
+      <span><strong>所屬群組</strong>：${u.APG_NAME || ''}${u.APG_NO ? ` (${u.APG_NO})` : ''}</span>
+      <span><strong>員工部門</strong>：${u.ORGAN_CAP || ''}</span>
+      <span><strong>員工職稱</strong>：${u.POST_NAME || ''}</span>
+    </div>`;
+            $('#searchResultContent').html(html);
+        }
+
+        // 載入使用者群組
+        function loadUserGroup(apgNo) {
+            $('#groupSelect').val(apgNo);
+            loadGroupData();
+            clearSearch();
+        }
+
+        // 清除查詢
+        function clearSearch() {
+            $('#searchUserId').val('');
+            //$('#groupSelect').val('');
+            $('#searchResult').hide();
+            //resetAllSections();
+        }
+
+        // 初始化員工下拉選單（支援搜尋）
+        function initEmployeeSelect() {
+            $('#userIdSelect').select2({
+                ajax: {
+                    url: '@Url.Action("GetEmployeeList", "AP")',
+                    dataType: 'json',
+                    delay: 300,
+                    data: function (params) {
+                        return {
+                            keyword: params.term || '',
+                            sysID: currentSysID
+                        };
+                    },
+                    processResults: function (data) {
+                        if (data.success) {
+                            return {
+                                results: data.data.map(function (emp) {
+                                    return {
+                                        id: emp.EMP_NO,
+                                        text: `${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP})`,
+                                        empData: emp
+                                    };
+                                })
+                            };
+                        }
+                        return { results: [] };
+                    },
+                    cache: true
+                },
+                placeholder: '請輸入員工編號或姓名搜尋',
+                allowClear: true,
+                minimumInputLength: 0,
+                language: {
+                    noResults: function () {
+                        return "查無相關員工資料";
+                    },
+                    searching: function () {
+                        return "搜尋中...";
+                    }
+                }
+            });
+
+            // 監聽選擇事件
+            $('#userIdSelect').on('select2:select', function (e) {
+                onEmployeeSelect();
+            });
+
+            // 監聽清除事件
+            $('#userIdSelect').on('select2:clear', function (e) {
+                $('#userName, #userDept, #userPost').val('');
+            });
+        }
+
+        // 員工選擇事件
+        function onEmployeeSelect() {
+            const empNo = $('#userIdSelect').val();
+            if (empNo) {
+                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (response) {
+                    if (response.success) {
+                        const emp = response.data;
+                        $('#userName').val(emp.EMP_NAME || '');
+                        $('#userDept').val(emp.ORGAN_CAP || '');
+                        $('#userPost').val(emp.POST_NAME || '');
+                    } else {
+                        alert('取得員工資訊失敗：' + response.message);
+                    }
+                }).fail(function () {
+                    alert('取得員工資訊失敗，請稍後再試');
+                });
+            } else {
+                $('#userName, #userDept, #userPost').val('');
+            }
+        }
+
+        // debounce 工具
+        const debounce = (fn, wait = 300) => {
+            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
+        };
+
+        // 使用者 Modal：綁定 datalist
+        function bindUserIdTypeahead() {
+            $('#userIdInput').off('input').on('input', debounce(function () {
+                const kw = this.value.trim();
+                if (kw.length < 3) return;
+
+                $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID }, function (res) {
+                    if (res.success && Array.isArray(res.data)) {
+                        const rows = res.data.slice(0, 20);
+                        const options = rows.map(emp =>
+                            `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+                        ).join('');
+                        $('#empList').html(options);
+                    }
+                });
+            }, 250));
+
+            $('#userIdInput').off('change blur').on('change blur', function () {
+                const empNo = this.value.trim();
+                if (!empNo) return;
+                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
+                    if (r.success && r.data) {
+                        const emp = r.data;
+                        $('#userName').val(emp.EMP_NAME || '');
+                        $('#userDept').val(emp.ORGAN_CAP || '');
+                        $('#userPost').val(emp.POST_NAME || '');
+                    } else {
+                        $('#userName,#userDept,#userPost').val('');
+                    }
+                });
+            });
+        }
+
+        // 清除員工編號
+        function clearUserIdInput() {
+            $('#userIdInput').val('');
+            $('#userName, #userDept, #userPost').val('');
+        }
+
+        // 批次匯入使用者MODAL
+        function openImportModal() {
+            $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
+            $('#importResult').empty();
+            $("#errorSection").addClass("d-none");
+            $("#successSection").addClass("d-none");
+            $("#uploadProgress").addClass("d-none");
+            $(".progress-bar").css("width", "0%");
+            $('#importModal').modal('show');
+        }
+
+        // 下載匯入範例
+        function downloadTemplate() {
+            var sysID = currentSysID;
+            window.location.href = '@Url.Action("DownloadImportTemplate","AP")' + "?sysID=" + encodeURIComponent(sysID);
+        }
+
+        // 匯入表單送出
+        $("#importForm").submit(function (e) {
+            e.preventDefault();
+            var formData = new FormData(this);
+
+            $("#uploadProgress").removeClass("d-none");
+            $(".progress-bar").css("width", "50%");
+
+            $.ajax({
+                url: '@Url.Action("ImportUsers", "AP")',
+                type: 'POST',
+                data: formData,
+                contentType: false,
+                processData: false,
+                success: function (res) {
+                    $("#uploadProgress").addClass("d-none");
+                    $(".progress-bar").css("width", "0%");
+
+                    // 清空舊的訊息區塊
+                    $("#successSection, #errorSection, #partialSection").addClass("d-none");
+                    $("#errorTable tbody").empty();
+
+                    if (res.status === "success") {
+                        // 全部成功
+                        $("#successMessage").text(res.message);
+                        $("#successSection").removeClass("d-none");
+                        loadUsers();
+                    }
+                    else if (res.status === "fail") {
+                        // 全部失敗
+                        $("#errorMessage").text(res.message);
+                        $("#errorSection").removeClass("d-none");
+
+                        if (res.errors && res.errors.length > 0) {
+                            res.errors.forEach(err => {
+                                $("#errorTable tbody").append(
+                                    `<tr>
+                                        <td>${err.RowNumber}</td>
+                                        <td>${err.EmpNo}</td>
+                                        <td>${err.Message}</td>
+                                    </tr>`
+                                );
+                            });
+                        }
+                    }
+                    else if (res.status === "partial") {
+                        // 部分成功
+                        $("#partialMessage").text(res.message);
+                        $("#partialSection").removeClass("d-none");
+
+                        if (res.errors && res.errors.length > 0) {
+                            res.errors.forEach(err => {
+                                $("#errorTable tbody").append(
+                                    `<tr>
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${err.Message}</td>
+                            </tr>`
+                                );
+                            });
+                        }
+
+                        loadUsers();
+                    }
+                },
+                error: function () {
+                    $("#uploadProgress").addClass("d-none");
+                    $(".progress-bar").css("width", "0%");
+                    alert("伺服器發生錯誤，請稍後再試。");
+                }
+            });
+        });
+
+        // 重新上傳按鈕
+        $(document).on("click", ".btn-retry-upload", function () {
+            $("#errorSection").addClass("d-none");
+            $("#partialSection").addClass("d-none");
+            $("#successSection").addClass("d-none");
+            $("#importForm")[0].reset();
+            $("#errorTable tbody").empty();
+        });
+
+    </script>
+}
+
+2.系統頁面設定
+@using HI_APACCESS.Service;
+
+@{
+    ViewBag.Title = "系統頁面設定";
+    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
+    var emp_APG_NO = controller.APG_NO;
+    var emp_no = controller.Emp_NO;
+}
+
+<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
+
+<style>
+    .management-section {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        height: 800px;
+        overflow-y: auto;
+    }
+
+    .section-header {
+        background: #f8f9fa;
+        margin: -15px -15px 15px -15px;
+        padding: 12px 15px;
+        border-bottom: 1px solid #dee2e6;
+        font-weight: bold;
+        color: #495057;
+        position: sticky;
+        top: -15px;
+        z-index: 10;
+    }
+
+    .page-item, .button-item {
+        padding: 10px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        background: #f8f9fa;
+        transition: all 0.2s;
+        position: relative;
+    }
+
+        .page-item:hover, .button-item:hover {
+            background: #e9ecef;
+            transform: translateX(2px);
+        }
+
+        .page-item.selected {
+            background: #e8f5e8;
+            border-color: #28a745;
+            box-shadow: 0 2px 4px rgba(40, 167, 69, 0.2);
+        }
+
+    .item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+
+    .item-title {
+        font-weight: bold;
+        color: #495057;
+        flex-grow: 1;
+    }
+
+    .item-actions {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+
+    .item-info {
+        font-size: 12px;
+        color: #6c757d;
+        margin-top: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .sort-info {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 2px 6px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: bold;
+        margin-left: 8px;
+    }
+
+    .sort-controls {
+        display: flex;
+        gap: 2px;
+        margin-left: 8px;
+    }
+
+    .sort-btn {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        font-size: 10px;
+        line-height: 1;
+        border: 1px solid #ddd;
+        background: white;
+        color: #666;
+        border-radius: 3px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+    }
+
+        .sort-btn:hover {
+            background: #f8f9fa;
+            border-color: #007bff;
+            color: #007bff;
+        }
+
+        .sort-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+    .group-sort-controls {
+        display: flex;
+        gap: 2px;
+        margin-left: 8px;
+    }
+
+    .group-sort-btn {
+        padding: 2px 6px;
+        font-size: 10px;
+        line-height: 1.2;
+        border: 1px solid #28a745;
+        background: #e8f5e8;
+        color: #28a745;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+        .group-sort-btn:hover {
+            background: #d4edda;
+            border-color: #1e7e34;
+            color: #1e7e34;
+        }
+
+    .btn-tiny {
+        padding: 2px 6px;
+        font-size: 11px;
+        line-height: 1.2;
+    }
+
+    .no-data {
+        text-align: center;
+        color: #6c757d;
+        font-style: italic;
+        padding: 60px 20px;
+    }
+
+    .page-selector {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        border-left: 4px solid #007bff;
+    }
+
+    .button-item {
+        background: #f0f8ff;
+        border-color: #2196f3;
+    }
+
+    /* 階層顯示樣式 */
+    .parent-page-item {
+        background: #e3f2fd;
+        border-left: 4px solid #2196f3;
+        font-weight: bold;
+    }
+
+    .child-page-item {
+        margin-left: 20px;
+        position: relative;
+        border-left: 2px solid #ddd;
+    }
+
+        .child-page-item::before {
+            content: "└─";
+            position: absolute;
+            left: -20px;
+            color: #6c757d;
+            font-family: monospace;
+            top: 12px;
+        }
+
+    /* Modal表格對齊 */
+    .modal-body .form-group label {
+        font-weight: 600;
+        margin-bottom: 5px;
+        display: block;
+    }
+
+    .modal-body .form-control {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .modal-body .row {
+        margin-left: -10px;
+        margin-right: -10px;
+    }
+
+    .modal-body .col-md-6 {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    /* 隱藏新增按鈕的樣式 */
+    .hide-add-button #addButtonBtn {
+        display: none !important;
+    }
+
+    /* 排序操作提示 */
+    .sort-operation-hint {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        font-size: 12px;
+        display: none;
+    }
+
+    #onclick {
+        line-height: 1.5;
+        padding: 8px;
+        min-height: 60px;
+        font-family: 'Consolas','Monaco','Curier New',monospace;
+    }
+</style>
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">系統頁面設定 : @ViewBag.SystemId</div>
+</section>
+
+<div class="container-fluid">
+    <br />
+    <!-- 兩個管理區塊 -->
+    <div class="row">
+        <!-- 左邊：頁面管理 -->
+        <div class="col-md-6">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-file-alt"></i> 頁面定義管理 (AP_FUNC)
+                    <button type="button" class="btn btn-primary" onclick="openPageModal()">
+                        <i class="fas fa-plus"></i> 新增頁面
+                    </button>
+                </div>
+                <!-- 排序操作提示 -->
+                <div class="sort-operation-hint" id="sortHint">
+                    <i class="fas fa-info-circle"></i> 使用上移/下移按鈕調整排序，變更會立即儲存
+                </div>
+
+                <div id="pageList">
+                    <div class="no-data">
+                        <i class="fas fa-spinner fa-spin"></i><br>
+                        載入中...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右邊：按鈕管理 -->
+        <div class="col-md-6" id="buttonSection">
+            <div class="management-section">
+                <div class="section-header">
+                    <i class="fas fa-mouse-pointer"></i> 按鈕定義管理 (AP_RFUNC)
+                    <button type="button" class="btn btn-success" onclick="openButtonModal()" id="addButtonBtn" disabled>
+                        <i class="fas fa-plus"></i> 新增按鈕
+                    </button>
+                </div>
+                <div id="buttonList">
+                    <div class="no-data">請先選擇左側的頁面</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 頁面 Modal -->
+<div class="modal fade" id="pageModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="pageModalTitle">新增頁面</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="pageForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="funcId">頁面ID <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="funcId" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sortNo">排序</label>
+                                <input type="number" class="form-control" id="sortNo"
+                                       placeholder="留空將自動分配">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="parentId">上層ID <span class="text-danger">*</span></label>
+                                <select class="form-control" id="parentId" required>
+                                    <option value="">-- 載入中 --</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="funcName">頁面名稱 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="funcName" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="viewH">CONTROLLER名稱 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="viewH" required
+                                       placeholder="例：Home">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="viewHB">ACTION名稱 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="viewHB" required
+                                       placeholder="例：Index">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="isShow">是否顯示</label>
+                                <select class="form-control" id="isShow">
+                                    <option value="Y">是</option>
+                                    <option value="N">否</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="memo">備註</label>
+                                <textarea class="form-control" id="memo" rows="2" placeholder="頁面說明、備註"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="savePage()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 按鈕 Modal -->
+<div class="modal fade" id="buttonModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="buttonModalTitle">新增按鈕</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="buttonForm">
+                    <input type="hidden" id="buttonFuncId">
+                    <input type="hidden" id="buttonBtnSeq">
+
+                    <div class="alert alert-info">
+                        <small>
+                            <i class="fas fa-info-circle"></i>
+                            頁面 : <strong id="selectedPageName">-</strong>
+                        </small>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="btnId">按鈕ID  <span class="text-danger">*</span> </label>
+                                <input type="text" class="form-control" id="btnId" required
+                                       placeholder="例：btn_insert">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="btnSeqDisplay">按鈕序號</label>
+                                <input type="text" class="form-control" id="btnSeqDisplay" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="btnName">按鈕名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="btnName" required
+                               placeholder="例：新增">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="controller">按鈕CONTROLLER</label>
+                                <input type="text" class="form-control" id="controller">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="action">按鈕ACTION</label>
+                                <input type="text" class="form-control" id="action">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="loc">按鈕位置</label>
+                                <input type="text" class="form-control" id="loc">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="onclick">CLICK觸發事件</label>
+                                <textarea class="form-control" id="onclick" row="3"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="saveButton()">儲存</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+@section Scripts {
+    <script>
+        let currentSelectedPage = '';
+        let isPageEditMode = false;
+        let isButtonEditMode = false;
+        let originalFuncId = '';
+        let allPages = [];
+        const currentSysID = '@Session["CurrentSystemId"]';
+
+        $(document).ready(function () {
+            loadPages();
+        });
+
+        // 載入所有頁面
+        function loadPages() {
+            $('#pageList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+            $.get('@Url.Action("GetAllFunctions", "AP")', function (response) {
+                if (response.success) {
+                    allPages = response.data;
+                    renderPageListHierarchical();
+                } else {
+                    $('#pageList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 載入父頁面下拉選單
+        function loadParentPageOptions() {
+            $.get('@Url.Action("GetParentPageSelectList", "AP")', { sysID: currentSysID } ,function (response) {
+                let options = '';
+
+                if (Array.isArray(response)) {
+                    response.forEach(function (item) {
+                        options += `<option value="${item.value}">${item.text}</option>`;
+                    });
+                } else {
+                    console.log('父頁面資料格式錯誤:', response);
+                    options = '<option value="">-- 載入失敗 --</option>';
+                }
+
+                $('#parentId').html(options);
+                // 新增頁面時預設選擇 HOME
+                if (!isPageEditMode) {
+                    $('#parentId').val('HOME');
+                }
+            }).fail(function () {
+                $('#parentId').html('<option value="">-- 載入失敗 --</option>');
+            });
+        }
+
+        // 階層式渲染頁面列表
+        function renderPageListHierarchical() {
+            let html = '';
+
+
+            if (allPages.length === 0) {
+                html = '<div class="no-data">尚未建立任何頁面<br><button type="button" class="btn btn-primary btn-sm mt-2" onclick="openPageModal()">新增第一個頁面</button></div>';
+            } else {
+                // 顯示操作提示
+                $('#sortHint').show();
+
+                // 建立所有 FUNC_ID 的集合，用於判斷父子關係
+                const allFuncIds = new Set(allPages.map(p => p.FUNC_ID));
+
+                // 分離父頁面和子頁面，並按排序號排序
+                const parentPages = allPages.filter(p =>
+                    !p.PARENT_ID ||
+                    p.PARENT_ID === '' ||
+                    !allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                const childPages = allPages.filter(p =>
+                    p.PARENT_ID &&
+                    p.PARENT_ID !== '' &&
+                    allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                // 先顯示沒有父級的頁面
+                parentPages.forEach(function (parentPage, parentIndex) {
+                    html += renderPageItem(parentPage, false, parentIndex, parentPages.length);
+
+                    // 顯示其子頁面
+                    const children = childPages.filter(c => c.PARENT_ID === parentPage.FUNC_ID);
+                    children.forEach(function (childPage, childIndex) {
+                        html += renderPageItem(childPage, true, childIndex, children.length, parentPage.FUNC_ID);
+                    });
+                });
+            }
+
+            $('#pageList').html(html);
+        }
+
+        // 渲染單個頁面項目
+        function renderPageItem(page, isChild, index, totalCount, parentId = null) {
+            const isSelected = page.FUNC_ID === currentSelectedPage;
+            const selectedClass = isSelected ? 'selected' : '';
+            const hierarchyClass = isChild ? 'child-page-item' : 'parent-page-item';
+
+            // 檢查是否為隱藏頁面
+            const isHidden = page.IS_SHOW === 'N';
+            const hiddenClass = isHidden ? 'hidden-page' : '';
+
+            const showBadge = page.IS_SHOW === 'Y' ?
+                '<span class="badge badge-success badge-sm">顯示</span>' :
+                '<span class="badge badge-secondary badge-sm">隱藏</span>';
+
+            // 計算顯示的排序號
+            let displaySortNo = page.SORT_NO || 'N/A';
+            if (isChild && parentId) {
+                const parentPage = allPages.find(p => p.FUNC_ID === parentId);
+                const parentSort = parentPage ? (parentPage.SORT_NO || '1') : '1';
+                const childSort = page.SORT_NO || '1';
+                displaySortNo = `${parentSort}-${childSort}`;
+            }
+
+            // 排序控制按鈕 - 隱藏頁面不顯示排序箭頭
+            let sortControls = '';
+            if (!isHidden) {
+                if (isChild) {
+                    // 子頁面排序控制
+                    sortControls = `
+                <div class="sort-controls">
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'up', '${parentId}')"
+                            ${index === 0 ? 'disabled' : ''} title="上移">
+                        <i class="fas fa-chevron-up"></i>
+                    </button>
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'down', '${parentId}')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="下移">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>`;
+                } else {
+                    // 父頁面排序控制
+                    sortControls = `
+                <div class="group-sort-controls">
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'up')"
+                            ${index === 0 ? 'disabled' : ''} title="整組上移">
+                        <i class="fas fa-angle-double-up"></i> 組上移
+                    </button>
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'down')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="整組下移">
+                        <i class="fas fa-angle-double-down"></i> 組下移
+                    </button>
+                </div>`;
+                }
+            }
+
+            return `
+    <div class="page-item ${selectedClass} ${hierarchyClass} ${hiddenClass}" onclick="selectPage('${page.FUNC_ID}', '${page.FUNC_NA}', ${isChild})">
+        <div class="item-header">
+            <div class="item-title">${page.FUNC_NA}</div>
+            <div class="item-actions">
+                ${showBadge}
+                <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="event.stopPropagation(); editPage('${page.FUNC_ID}')">
+                    <i class="fas fa-edit"></i>修改
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="event.stopPropagation(); deletePage('${page.FUNC_ID}', '${page.FUNC_NA}')">
+                    <i class="fas fa-trash"></i>刪除
+                </button>
+            </div>
+        </div>
+        <div class="item-info">
+            <div>
+                頁面ID: ${page.FUNC_ID}
+                ${page.PARENT_ID ? ' | 上層: ' + page.PARENT_ID : ''}
+                ${page.MEMO ? '<br>備註: ' + page.MEMO : ''}
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span class="sort-info">排序: ${displaySortNo}</span>
+                ${sortControls}
+            </div>
+        </div>
+    </div>`;
+        }
+
+        // 移動單個項目
+        function moveItem(funcId, direction, parentId) {
+            $.post('@Url.Action("MoveItem", "AP")', {
+                funcId: funcId,
+                direction: direction,
+                parentId: parentId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
                             }
                         }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 移動整組
+        function moveGroup(funcId, direction) {
+            $.post('@Url.Action("MoveGroup", "AP")', {
+                funcId: funcId,
+                direction: direction,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                            }
+                        }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 選擇頁面
+        function selectPage(funcId, funcName, isChild) {
+            currentSelectedPage = funcId;
+            renderPageListHierarchical(); // 重新渲染以顯示選中狀態
+
+            $('#buttonSection').removeClass('hide-add-button');
+            loadButtons(funcId, funcName);
+            $('#addButtonBtn').prop('disabled', false);
+        }
+
+        // 載入按鈕
+        function loadButtons(funcId, funcName) {
+            $('#buttonList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            },
+                function (response) {
+                if (response.success) {
+                    renderButtonList(response.data, funcName);
+                } else {
+                    $('#buttonList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 渲染按鈕列表
+        function renderButtonList(buttons, funcName) {
+            let html = '';
+
+            if (buttons.length === 0) {
+                html = `
+            <div class="no-data">
+                頁面 "${funcName}" 尚未定義按鈕
+                <br>
+            </div>`;
+            } else {
+                buttons.forEach(function (btn) {
+                    html += `
+                <div class="button-item">
+                    <div class="item-header">
+                        <div class="item-title">${btn.BTN_NAME}</div>
+                        <div class="item-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="editButton('${btn.FUNC_ID}', '${btn.BTNSEQ}')">
+                                <i class="fas fa-edit"></i>修改
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="deleteButton('${btn.FUNC_ID}', '${btn.BTNSEQ}', '${btn.BTN_NAME}')">
+                                <i class="fas fa-trash"></i>刪除
+                            </button>
+                        </div>
+                    </div>
+                    <div class="item-info">
+                        <div class="button-details">
+                            <span class="detail-item">按鈕ID: ${btn.BTNID}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">序號: ${btn.BTNSEQ}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Controller: ${btn.CONTROLLER || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Action: ${btn.ACTION || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">LOC: ${btn.LOC || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">OnClick: ${btn.ONCLICK || ' '}</span>
+                        </div>
+                  </div>
+                </div>`;
+                });
+            }
+
+            $('#buttonList').html(html);
+        }
+
+        // 頁面管理函數
+        function openPageModal() {
+            isPageEditMode = false;
+            $('#pageModalTitle').text('新增頁面');
+            $('#pageForm')[0].reset();
+            $('#isShow').val('Y');
+            $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
+            $('#viewH').val('');
+            $('#viewHB').val('');
+
+            // 載入父頁面選項
+            loadParentPageOptions();
+            $('#pageModal').modal('show');
+        }
+
+        function editPage(funcId) {
+            isPageEditMode = true;
+            originalFuncId = funcId; // 儲存原始ID
+            $('#pageModalTitle').text('修改頁面');
+
+            const page = allPages.find(p => p.FUNC_ID === funcId);
+            if (page) {
+                $('#funcId').val(page.FUNC_ID).prop('readonly', false);
+                $('#funcName').val(page.FUNC_NA);
+                $('#sortNo').val(page.SORT_NO || '');
+                $('#isShow').val(page.IS_SHOW || 'Y');
+                $('#memo').val(page.MEMO || '');
+                $('#viewH').val(page.VIEW_H || '');
+                $('#viewHB').val(page.VIEW_HB || '');
+
+                // 載入父頁面選項
+                loadParentPageOptions();
+                setTimeout(function () {
+                    $('#parentId').val(page.PARENT_ID || '');
+                }, 300);
+                $('#pageModal').modal('show');
+            }
+        }
+
+        function savePage() {
+            const formData = {
+                FUNC_ID: $('#funcId').val(),
+                FUNC_NA: $('#funcName').val(),
+                PARENT_ID: $('#parentId').val() || null,
+                SORT_NO: $('#sortNo').val() || null,
+                IS_SHOW: $('#isShow').val(),
+                MEMO: $('#memo').val() || null,
+                VIEW_H: $('#viewH').val() || null,      // 新增
+                VIEW_HB: $('#viewHB').val() || null     // 新增
+            };
+
+            if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
+                alert('請輸入頁面ID和頁面名稱');
+                return;
+            }
+
+            if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
+                alert('請輸入CONTROLLER名稱和ACTION名稱');
+                return;
+            }
+
+            // 新增頁面時檢查上層ID是否為必填
+            if (!isPageEditMode && !formData.PARENT_ID) {
+                alert('請選擇上層ID');
+                return;
+            }
+
+            let url, postData;
+            if (isPageEditMode) {
+                url = '@Url.Action("UpdateFunction", "AP")';
+                postData = Object.assign(formData, { originalFuncId: originalFuncId });
+            } else {
+                url = '@Url.Action("AddFunction", "AP")';
+                postData = formData;
+            }
+
+            $.post(url, postData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#pageModal').modal('hide');
+                    loadPages();
+                    if (isPageEditMode) {
+                        setTimeout(function () {
+                            currentSelectedPage = formData.FUNC_ID;
+                            renderPageListHierarchical();
+                        }, 500);
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deletePage(funcId, funcName) {
+            if (confirm(`確定要刪除頁面 "${funcName}" 嗎？\n注意：這將同時刪除該頁面的所有按鈕定義！`)) {
+                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+                        // 如果刪除的是當前選中的頁面，清空選擇
+                        if (currentSelectedPage === funcId) {
+                            currentSelectedPage = '';
+                            $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
+                            $('#addButtonBtn').prop('disabled', true);
+                            $('#buttonSection').removeClass('hide-add-button');
+                        }
+
+                        // 自動重新載入頁面列表
+                        loadPages();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 按鈕管理函數
+        function openButtonModal() {
+            if (!currentSelectedPage) return;
+
+
+            isButtonEditMode = false;
+            $('#buttonModalTitle').text('新增按鈕');
+            $('#buttonForm')[0].reset();
+            $('#buttonFuncId').val(currentSelectedPage);
+
+            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+            $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : currentSelectedPage);
+
+            // 取得下一個按鈕序號
+            $.get('@Url.Action("GetNextButtonSeq", "AP")', { func_id: currentSelectedPage, sysID: currentSysID }, function (response) {
+                if (response.success) {
+                    $('#buttonBtnSeq').val(response.data);
+                    $('#btnSeqDisplay').val(response.data);
+                }
+            });
+
+            $('#buttonModal').modal('show');
+        }
+
+        function editButton(funcId, btnSeq) {
+            isButtonEditMode = true;
+            $('#buttonModalTitle').text('修改按鈕');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    const button = response.data.find(b => b.BTNSEQ === btnSeq);
+                    if (button) {
+                        $('#buttonFuncId').val(button.FUNC_ID);
+                        $('#buttonBtnSeq').val(button.BTNSEQ);
+                        $('#btnSeqDisplay').val(button.BTNSEQ);
+                        $('#btnId').val(button.BTNID);
+                        $('#btnName').val(button.BTN_NAME);
+                        $('#controller').val(button.CONTROLLER || '');
+                        $('#action').val(button.ACTION || '');
+                        $('#loc').val(button.LOC || '');
+                        $('#onclick').val(button.ONCLICK || '');
+
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === funcId);
+                        $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : funcId);
+
+                        $('#buttonModal').modal('show');
                     }
                 }
+            });
 
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無人員";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
-            }
-
-            return response;
         }
-    }
+
+        function saveButton() {
+            const formData = {
+                FUNC_ID: $('#buttonFuncId').val(),
+                BTNSEQ: $('#buttonBtnSeq').val(),
+                BTNID: $('#btnId').val(),
+                BTN_NAME: $('#btnName').val(),
+                CONTROLLER: $('#controller').val() || null,
+                ACTION: $('#action').val() || null,
+                LOC: $('#loc').val() || null,
+                ONCLICK: $('#onclick').val() || null
+            };
+
+
+            if (!formData.BTNID.trim() || !formData.BTN_NAME.trim()) {
+                alert('請輸入按鈕ID和按鈕名稱');
+                return;
+            }
+
+            const url = isButtonEditMode ? '@Url.Action("UpdateButton", "AP")' : '@Url.Action("AddButton", "AP")';
+
+            $.post(url, formData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#buttonModal').modal('hide');
+
+                    // 自動重新載入按鈕列表
+                    if (currentSelectedPage) {
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                        if (selectedPageData) {
+                            loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                        }
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deleteButton(funcId, btnSeq, btnName) {
+            if (confirm(`確定要刪除按鈕 "${btnName}" 嗎？`)) {
+                $.post('@Url.Action("DeleteButton", "AP")', {
+                    func_id: funcId,
+                    btnseq: btnSeq,
+                    sysID: currentSysID
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+
+                        // 自動重新載入按鈕列表
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                            }
+                        }
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 重新載入
+        function refreshData() {
+            // 重新載入頁面列表
+            loadPages();
+
+            // 如果有選中的頁面，重新載入其按鈕
+            if (currentSelectedPage) {
+                setTimeout(function () {
+                    const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                    if (selectedPageData) {
+                        const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                        selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                    }
+                }, 500);
+            }
+        }
+
+    </script>
 }
-
-
-⸻
-
-🔹 Model 更新 (共用)
-
-GetAllUserModel.ResultData
-
-public class ResultData
-{
-    public string UserID { get; set; }
-    public string UserName { get; set; }
-    public string UserAD { get; set; }   // 新增
-}
-
-GetGroupAllUserModel.ResultData
-
-public class ResultData
-{
-    public string UserID { get; set; }
-    public string UserName { get; set; }
-    public string UserAD { get; set; }   // 新增
-}
-
-
-⸻
-
-✅ 這樣回傳的 JSON 會長這樣：
-
-GetAllUser 成功回傳
-
-{
-  "Result_code": "0000",
-  "Msg": "成功",
-  "Result": [
-    { "UserID": "12345", "UserName": "王小明", "UserAD": "XMING" },
-    { "UserID": "54321", "UserName": "陳小美", "UserAD": "CMEI" }
-  ]
-}
-
-
-⸻
-
-要不要我也幫你把 HI_APACCESS 主類別裡面的 GetAllUser()、GetGroupAllUser() API 方法改成新版，直接呼叫這兩個 Factory？
