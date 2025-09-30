@@ -1,9 +1,48 @@
-好 👌 我先幫你解釋 SQL 為什麼要這樣寫，然後再提醒你改主類別的地方。
+好👌 我幫你把 FGetAllUser / FGetGroupAllUser 改版後完整程式碼生出來，包含 UserAD 回傳，還有 Model 的更新。
 
 ⸻
 
-🔹 FGetAllUser 的 SQL
+🔹 FGetAllUser.cs (改版後)
 
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetAllUser
+    {
+        internal GetAllUserModel.GetAllUserResponse Execute(string sysId, string environment)
+        {
+            var response = new GetAllUserModel.GetAllUserResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var resultList = new List<GetAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    string sql = @"
 SELECT 
     U.U_ID   AS UserID,
     U.U_NAME AS UserName,
@@ -12,26 +51,120 @@ FROM [HI_AUTOS].[dbo].[AP_USER] U
 LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
     ON E.EMP_ID = U.U_ID
 WHERE U.SYS_ID = @SysID
-ORDER BY U.U_ID
+ORDER BY U.U_ID";
 
-為什麼要這樣寫：
-	1.	AP_USER
-	•	存放系統使用者 (U_ID = 員工編號、U_NAME = 員工姓名)。
-	•	這是 AP 系統本身的帳號來源。
-	2.	NT_EMP (在 HILIFE_MTS 資料庫)
-	•	存放員工的登入 AD 帳號 (EMP_DOM_ID)。
-	•	但 不是每個員工在 AP_USER 都一定會有對應的 AD，所以用 LEFT JOIN。
-	3.	ISNULL(LTRIM(RTRIM(E.EMP_DOM_ID)), ‘’) AS UserAD
-	•	ISNULL：避免沒有找到對應 AD 時回傳 NULL，統一給空字串。
-	•	LTRIM(RTRIM(...))：去掉多餘的前後空白，避免因為資料庫裡存放格式不一致，導致比對問題。
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
 
-👉 簡單說：
-這段 SQL 先抓出 AP_USER 的所有人，再補上 AD (如果 NT_EMP 有對應就顯示，沒有就空白)。
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString(),
+                                    UserAD = reader["UserAD"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
 
 ⸻
 
-🔹 FGetGroupAllUser 的 SQL
+🔹 FGetGroupAllUser.cs (改版後)
 
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetGroupAllUser
+    {
+        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var resultList = new List<GetGroupAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    // 群組清單
+                    var groupIds = new List<string> { groupId };
+
+                    if (isIncludeChildGroups)
+                    {
+                        string sqlChild = @"SELECT APG_NO 
+                                            FROM [HI_AUTOS].[dbo].[AP_GROUP] 
+                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+
+                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@SysID", sysId);
+                            cmd.Parameters.AddWithValue("@GroupID", groupId);
+
+                            using (var reader = cmd.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    groupIds.Add(reader["APG_NO"].ToString());
+                                }
+                            }
+                        }
+                    }
+
+                    // 取使用者清單 (加上 AD)
+                    string sqlUser = $@"
 SELECT DISTINCT 
     U.U_ID   AS UserID,
     U.U_NAME AS UserName,
@@ -40,68 +173,95 @@ FROM [HI_AUTOS].[dbo].[AP_USER] U
 LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
     ON E.EMP_ID = U.U_ID
 WHERE U.SYS_ID = @SysID 
-  AND U.APG_NO IN (@Group0, @Group1, ...) -- 群組或子群組
-ORDER BY U.U_ID
+  AND U.APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
+ORDER BY U.U_ID";
 
-為什麼要這樣寫：
-	1.	群組過濾
-	•	AP_USER 有一個欄位 APG_NO，表示使用者隸屬的群組。
-	•	IN (@Group0, @Group1, ...) 是因為可能要同時查詢 母群組 + 子群組。
-	2.	DISTINCT
-	•	避免同一個人同時被查出多筆 (例如某人同時被配置到母群組和子群組)。
-	3.	LEFT JOIN NT_EMP
-	•	同樣理由，補上員工的 AD。
+                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        for (int i = 0; i < groupIds.Count; i++)
+                        {
+                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
+                        }
 
-👉 簡單說：
-這段 SQL 是「查詢某個群組 (含子群組) 的所有成員，並補上 AD」。
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetGroupAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString(),
+                                    UserAD = reader["UserAD"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
 
-⸻
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
 
-🔹 主類別要改什麼？
-
-在 HI_APACCESS 主類別 (你那邊應該有 GetAllUser() 和 GetGroupAllUser() 方法)，原本的 Response Result 是 單筆物件，要改成 List，跟剛剛的 Factory 對齊。
-
-例如：
-
-GetAllUser()
-
-public string GetAllUser(string requestJson)
-{
-    var response = new GetAllUserModel.GetAllUserResponse();
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetAllUserModel.GetAllUserRequest>(requestJson);
-        FGetAllUser func = new FGetAllUser();
-        response = func.Execute(request.SysID, request.Environment);
+            return response;
+        }
     }
-    catch (Exception ex)
-    {
-        response.Result_code = Common.Codes.SYSTEM_ERROR;
-        response.Msg = "系統錯誤：" + ex.Message;
-    }
-    return JsonConvert.SerializeObject(response);
-}
-
-GetGroupAllUser()
-
-public string GetGroupAllUser(string requestJson)
-{
-    var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetGroupAllUserModel.GetGroupAllUserRequest>(requestJson);
-        FGetGroupAllUser func = new FGetGroupAllUser();
-        response = func.Execute(request.SysID, request.GroupID, request.IsIncludeChildGroups, request.Environment);
-    }
-    catch (Exception ex)
-    {
-        response.Result_code = Common.Codes.SYSTEM_ERROR;
-        response.Msg = "系統錯誤：" + ex.Message;
-    }
-    return JsonConvert.SerializeObject(response);
 }
 
 
 ⸻
 
-要不要我幫你把 Model 的 Response 部分完整更新（Result 改成 List）然後把 WinForm 測試程式也一起調整，讓你測試的時候直接看到多筆結果？
+🔹 Model 更新 (共用)
+
+GetAllUserModel.ResultData
+
+public class ResultData
+{
+    public string UserID { get; set; }
+    public string UserName { get; set; }
+    public string UserAD { get; set; }   // 新增
+}
+
+GetGroupAllUserModel.ResultData
+
+public class ResultData
+{
+    public string UserID { get; set; }
+    public string UserName { get; set; }
+    public string UserAD { get; set; }   // 新增
+}
+
+
+⸻
+
+✅ 這樣回傳的 JSON 會長這樣：
+
+GetAllUser 成功回傳
+
+{
+  "Result_code": "0000",
+  "Msg": "成功",
+  "Result": [
+    { "UserID": "12345", "UserName": "王小明", "UserAD": "XMING" },
+    { "UserID": "54321", "UserName": "陳小美", "UserAD": "CMEI" }
+  ]
+}
+
+
+⸻
+
+要不要我也幫你把 HI_APACCESS 主類別裡面的 GetAllUser()、GetGroupAllUser() API 方法改成新版，直接呼叫這兩個 Factory？
