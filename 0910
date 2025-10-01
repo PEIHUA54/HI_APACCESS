@@ -1,100 +1,31 @@
-太好了 👍 你直接把 兩個 View 的完整程式碼貼給我，這樣我可以清楚知道畫面上能操作什麼、背後會呼叫哪些 action。
-我幫你寫一份 操作手冊（使用者指南），分別針對：
-	1.	系統群組權限管理 (權限設定頁面)
-	2.	系統頁面設定 (頁面/按鈕定義頁面)
+HONECONTROLLER:
+ public ActionResult Index()
+ {
+     //return null;  用這句的話 可以DEBUG 但是是空白頁面http://localhost:53088/
+     Response.Write("HOME INDEX被呼叫");
+     return View(); 用這句的話 會出現ALERT資料連線中斷，請重新登入 ，但是我看到畫面有出現[操作手冊]
+ }
+GLOBAL:
+ protected void Application_Start()
+ {
+     AreaRegistration.RegisterAllAreas();
+     FilterConfig.RegisterGlobalFilters(GlobalFilters.Filters);
+     RouteConfig.RegisterRoutes(RouteTable.Routes);
+     BundleConfig.RegisterBundles(BundleTable.Bundles);
+ }
 
-⸻
-
-權限作業操作手冊
-
-⸻
-
-① 系統群組權限管理 (權限設定頁面)
-
-進入方式：選擇系統 → 點擊「群組權限管理」
-
-功能與操作
-
-🔍 查詢人員權限
-	•	輸入 員工編號 → 點擊 查詢
-	•	顯示該員工：姓名 / 所屬群組 / 部門 / 職稱
-	•	點擊 清除 → 重設查詢
-
-👥 群組管理
-	•	下拉選單選擇群組 → 載入該群組資訊
-	•	功能：
-	•	新增群組：輸入群組名稱，選擇主管群組，儲存後建立
-	•	修改群組：可改名稱或主管群組
-	•	刪除群組：刪除群組會一併刪除該群組的使用者與權限設定
-
-👤 使用者管理
-	•	點擊 新增使用者 → 開啟表單，輸入員編，自動帶出姓名/部門/職稱，儲存後加入群組
-	•	點擊 批次匯入使用者 → 上傳 Excel：
-	•	全部成功 → 顯示成功筆數
-	•	部分成功 → 顯示成功筆數、失敗筆數 + 錯誤清單（行號/員編/錯誤原因）
-	•	全部失敗 → 顯示錯誤訊息 + 錯誤清單
-	•	清單中的每個使用者可：
-	•	變更群組（切換到其他群組）
-	•	刪除（移除群組）
-	•	顯示欄位：員編、姓名、建立人/日期、修改人/日期
-
-📄 頁面權限 / 按鈕權限
-	•	左側顯示 頁面清單 (階層式)
-	•	勾選 = 開啟頁面權限
-	•	取消勾選 = 移除該頁面與子頁面權限
-	•	勾選父頁面時，子頁面會自動帶勾
-	•	右側顯示 按鈕清單
-	•	針對單一頁面可設定其 新增/刪除/修改/查詢等按鈕
-	•	支援「全勾選 / 全取消」
-	•	畫面頂端有提醒「已修改，請儲存」
-	•	點擊 儲存權限 → 寫入設定
-
-⸻
-
-② 系統頁面設定 (頁面/按鈕定義頁面)
-
-進入方式：選擇系統 → 點擊「系統頁面設定」
-
-功能與操作
-
-📄 頁面定義管理 (AP_FUNC)
-	•	新增頁面 → 輸入：
-	•	頁面 ID
-	•	頁面名稱
-	•	上層 ID (父頁面，可選 HOME 或其他頁面)
-	•	Controller 名稱
-	•	Action 名稱
-	•	排序號（可空白，系統自動編號）
-	•	是否顯示 (Y/N)
-	•	備註說明
-	•	修改頁面 → 可修改名稱、排序、顯示/隱藏、Controller/Action
-	•	刪除頁面 → 同時刪除該頁面的所有按鈕定義
-	•	排序功能
-	•	父頁面：支援「整組上移/下移」
-	•	子頁面：支援「上移/下移」
-	•	順序會即時儲存
-
-⌨️ 按鈕定義管理 (AP_RFUNC)
-	•	必須先點選左側一個頁面，右側才會啟用按鈕管理
-	•	新增按鈕 → 輸入：
-	•	按鈕 ID
-	•	按鈕名稱
-	•	系統自動產生序號 (BTNSEQ)
-	•	Controller (可選填)
-	•	Action (可選填)
-	•	位置 (LOC，可選填)
-	•	OnClick 事件 (可選填)
-	•	修改按鈕 → 編輯上述欄位
-	•	刪除按鈕 → 移除指定按鈕
-	•	畫面右側即時顯示該頁面下的所有按鈕清單
-
-⸻
-
-📌 總結流程建議
-	1.	先到「系統頁面設定」 → 建立完整的頁面 (AP_FUNC) 與按鈕 (AP_RFUNC) 定義
-	2.	再到「系統群組權限管理」 → 建立群組、分配使用者、設定群組的頁面/按鈕權限
-
-⸻
-
-要不要我幫你整理成一份 帶目錄的 Word/PDF 操作手冊，
-並且在關鍵操作（例如「批次匯入」、「儲存權限」）留白框，讓你可以加上螢幕截圖？
+_Layout:
+alert 的那句js:
+        let RefreshSession = function () {
+            $.post("@Url.Content("~/Account/RefreshSession")").done(function (res) {
+                let date = new Date();
+                let now = date.getFullYear().toString() + "-" + String(date.getMonth() + 1).padStart(2, 0) + "-" + String(date.getDate()).padStart(2, 0) +
+                    " " + String(date.getHours()).padStart(2, 0) + ":" + String(date.getMinutes()).padStart(2, 0) + ":" + String(date.getSeconds()).padStart(2, 0);
+                console.log(`${res} - 現在時間: ${now}`);
+                if (res === "lost") {
+                    clearInterval(hndHeartbeat);
+                    alert("資料連線中斷，請重新登入");
+                    window.location = "@Url.RouteUrl("Default", ((Route)RouteTable.Routes["Default"]).Defaults)";
+                }
+            });
+        };
