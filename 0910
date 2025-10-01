@@ -1,31 +1,49 @@
-HONECONTROLLER:
- public ActionResult Index()
- {
-     //return null;  用這句的話 可以DEBUG 但是是空白頁面http://localhost:53088/
-     Response.Write("HOME INDEX被呼叫");
-     return View(); 用這句的話 會出現ALERT資料連線中斷，請重新登入 ，但是我看到畫面有出現[操作手冊]
- }
-GLOBAL:
- protected void Application_Start()
- {
-     AreaRegistration.RegisterAllAreas();
-     FilterConfig.RegisterGlobalFilters(GlobalFilters.Filters);
-     RouteConfig.RegisterRoutes(RouteTable.Routes);
-     BundleConfig.RegisterBundles(BundleTable.Bundles);
- }
+對對對 👍 你現在的 GetEnvironment() 方法只有分 TEST / PROD，如果你要加上 DEV，就要把判斷條件改一下。
 
-_Layout:
-alert 的那句js:
-        let RefreshSession = function () {
-            $.post("@Url.Content("~/Account/RefreshSession")").done(function (res) {
-                let date = new Date();
-                let now = date.getFullYear().toString() + "-" + String(date.getMonth() + 1).padStart(2, 0) + "-" + String(date.getDate()).padStart(2, 0) +
-                    " " + String(date.getHours()).padStart(2, 0) + ":" + String(date.getMinutes()).padStart(2, 0) + ":" + String(date.getSeconds()).padStart(2, 0);
-                console.log(`${res} - 現在時間: ${now}`);
-                if (res === "lost") {
-                    clearInterval(hndHeartbeat);
-                    alert("資料連線中斷，請重新登入");
-                    window.location = "@Url.RouteUrl("Default", ((Route)RouteTable.Routes["Default"]).Defaults)";
-                }
-            });
-        };
+⸻
+
+✅ 改法：
+
+// 取 ComboBox 值 (TEST / PROD / DEV)
+private string GetEnvironment()
+{
+    var val = cmbEnv.SelectedItem?.ToString();
+
+    if (string.IsNullOrEmpty(val)) 
+        return "TEST"; // 預設 TEST
+
+    if (val.StartsWith("TEST")) return "TEST";
+    if (val.StartsWith("PROD")) return "PROD";
+    if (val.StartsWith("DEV"))  return "DEV";
+
+    return "TEST"; // fallback 預設
+}
+
+這樣你的 環境下拉選單 (cmbEnv) 就能支援 TEST / PROD / DEV 三種環境。
+
+⸻
+
+⚡ 補充：另外兩個方法也可以順便改乾淨一點
+
+// 取是否包含子群組
+private bool GetIsIncludeChild() =>
+    cmbChildGroup.SelectedItem?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+
+// 取 Type (1:頁面&按鈕設定, 2:權限設定)
+private string GetTypeValue()
+{
+    var val = cmbType.SelectedItem?.ToString();
+    return val == "1" ? "1" : "2";
+}
+
+
+⸻
+
+👉 你只要把 cmbEnv 的 Items 設成：
+	•	“TEST”
+	•	“PROD”
+	•	“DEV”
+
+然後在程式裡呼叫 GetEnvironment() 就會拿到對應的字串。
+
+要不要我幫你直接把 Form1_Load 也加上 cmbEnv.Items.AddRange(new string[]{"TEST","PROD","DEV"});，這樣下拉選單就自動初始化了？
