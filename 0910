@@ -1,49 +1,59 @@
-對對對 👍 你現在的 GetEnvironment() 方法只有分 TEST / PROD，如果你要加上 DEV，就要把判斷條件改一下。
+ 現在問題是 我輸入3B7  下拉選單沒出現3B750、3B751相關員工編號
 
-⸻
+ // 使用者 Modal：綁定 datalist
+  function bindUserIdTypeahead() {
+      $('#userIdInput').off('input').on('input', debounce(function () {
+          const kw = this.value.trim();
+          if (kw.length < 3) return;
 
-✅ 改法：
+          $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID }, function (res) {
+              if (res.success && Array.isArray(res.data)) {
+                  const rows = res.data.slice(0, 20);
+                  const options = rows.map(emp =>
+                      `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+                  ).join('');
+                  $('#empList').html(options);
+              }
+          });
+      }, 250));
 
-// 取 ComboBox 值 (TEST / PROD / DEV)
-private string GetEnvironment()
-{
-    var val = cmbEnv.SelectedItem?.ToString();
+      $('#userIdInput').off('change blur').on('change blur', function () {
+          const empNo = this.value.trim();
+          if (!empNo) return;
+          $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
+              if (r.success && r.data) {
+                  const emp = r.data;
+                  $('#userName').val(emp.EMP_NAME || '');
+                  $('#userDept').val(emp.ORGAN_CAP || '');
+                  $('#userPost').val(emp.POST_NAME || '');
+              } else {
+                  $('#userName,#userDept,#userPost').val('');
+              }
+          });
+      });
+  }
 
-    if (string.IsNullOrEmpty(val)) 
-        return "TEST"; // 預設 TEST
+方法:
+        // 取得員工清單
+        public List<EmployeeModel> GetEmployeeList(string keyword = "")
+        {
+            string sql = @"
+SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
+WHERE 1=1
+";
 
-    if (val.StartsWith("TEST")) return "TEST";
-    if (val.StartsWith("PROD")) return "PROD";
-    if (val.StartsWith("DEV"))  return "DEV";
+            List<SqlParameter> parameters = new List<SqlParameter>();
 
-    return "TEST"; // fallback 預設
-}
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
+                parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
+            }
 
-這樣你的 環境下拉選單 (cmbEnv) 就能支援 TEST / PROD / DEV 三種環境。
+            // TOP 1000
+            sql = "SELECT TOP 1000 * FROM (" + sql + ") as T ORDER BY [EMP_NO]";
 
-⸻
-
-⚡ 補充：另外兩個方法也可以順便改乾淨一點
-
-// 取是否包含子群組
-private bool GetIsIncludeChild() =>
-    cmbChildGroup.SelectedItem?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
-
-// 取 Type (1:頁面&按鈕設定, 2:權限設定)
-private string GetTypeValue()
-{
-    var val = cmbType.SelectedItem?.ToString();
-    return val == "1" ? "1" : "2";
-}
-
-
-⸻
-
-👉 你只要把 cmbEnv 的 Items 設成：
-	•	“TEST”
-	•	“PROD”
-	•	“DEV”
-
-然後在程式裡呼叫 GetEnvironment() 就會拿到對應的字串。
-
-要不要我幫你直接把 Form1_Load 也加上 cmbEnv.Items.AddRange(new string[]{"TEST","PROD","DEV"});，這樣下拉選單就自動初始化了？
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
+        }
