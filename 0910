@@ -1,53 +1,162 @@
-// 安全 trim function
-const safeTrim = v => (v ?? '').toString().trim();
+using HI_APACCESS_DLL.Factory;
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using static HI_APACCESS_DLL.Common;
 
-// 綁定 datalist autocomplete
-function bindUserIdTypeahead() {
-    $('#userIdInput').off('input').on('input', debounce(function () {
-        const kw = safeTrim(this.value);
-        console.log('[typeahead] input =', kw);
-        if (kw.length < 3) return;
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetUserData
+    {
+        internal GetUserDataModel.GetUserDataResponse Execute(string sysId, string userAd, string environment)
+        {
+            var res = new GetUserDataModel.GetUserDataResponse();
 
-        $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID })
-         .done(function (res) {
-             const list = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
-             console.log('[typeahead] result count =', list.length);
+            try
+            {
+                // 0) 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                {
+                    res.Result_code = Codes.ENV_ERROR;
+                    res.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return res;
+                }
 
-             const rows = list.slice(0, 20);
-             const options = rows.map(emp =>
-                 `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
-             ).join('');
-             $('#empList').html(options);
-         });
-    }, 250));
+                // 1) 系統授權檢查
+                var authorized = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorized.Contains(sysId))
+                {
+                    res.Result_code = Codes.SYS_UNAUTHORIZED;
+                    res.Msg = "系統未授權";
+                    return res;
+                }
 
-    $('#userIdInput').off('change blur').on('change blur', function () {
-        const empNo = safeTrim($(this).val());
-        console.log('[typeahead] change/blur empNo =', empNo);
-        if (!empNo) return;
+                // 2) AD → 員編
+                string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
 
-        $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID })
-         .done(function (r) {
-             const ok = (r && (r.success ?? true));
-             const emp = ok ? (r.data ?? r) : null;
-             if (emp) {
-                 $('#userName').val(emp.EMP_NAME || '');
-                 $('#userDept').val(emp.ORGAN_CAP || '');
-                 $('#userPost').val(emp.POST_NAME || '');
-             } else {
-                 $('#userName,#userDept,#userPost').val('');
-             }
-         });
-    });
-}
+                // 3) 查使用者基本＋群組（用員編）
+                string groupId = null;
+                string groupName = null;
+                bool sensitive = false;
+                string userName = null;
+                string parentRaw = null;
+                string organ = null;
+                string post = null;
 
-// 在畫面初始化時執行一次
-$(document).ready(function () {
-    bindUserIdTypeahead();
-});
+                using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
 
-// 或者在 openUserModal() 的最後再呼叫一次
-function openUserModal() {
-    $('#userModal').modal('show');
-    bindUserIdTypeahead(); // 確保每次開 modal 都綁
+                    // 3-1 主要資料
+                    string sqlMain = @"
+SELECT TOP 1
+    B.U_ID           AS UserID,
+    B.U_NAME         AS UserName,
+    A.APG_NO         AS GroupID,
+    A.APG_NAME       AS GroupName,
+    A.PARENT_APG_NO  AS ParentRaw,
+    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
+    M.ORGAN_CAP      AS OrganName,
+    M.POST_NAME      AS PostName
+FROM [HI-AUTOS].[dbo].[AP_GROUP] A
+LEFT JOIN [HI-AUTOS].[dbo].[AP_USER] B  
+    ON A.APG_NO = B.APG_NO 
+    AND A.sys_id= B.sys_id 
+LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M 
+    ON B.U_ID = M.EMP_NO
+WHERE A.SYS_ID=@SYS_ID 
+    AND B.U_ID=@EMP_NO
+";
+
+                    using (var cmd = new SqlCommand(sqlMain, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            if (r.Read())
+                            {
+                                userName = r["UserName"]?.ToString();
+                                groupId = r["GroupID"]?.ToString();
+                                groupName = r["GroupName"]?.ToString();
+                                parentRaw = r["ParentRaw"]?.ToString();
+                                sensitive = r["SensitiveDataAccess"] != DBNull.Value && Convert.ToBoolean(r["SensitiveDataAccess"]);
+                                organ = r["OrganName"]?.ToString();
+                                post = r["PostName"]?.ToString();
+                            }
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(groupId))
+                    {
+                        res.Result_code = Codes.NO_PERMISSION;
+                        res.Msg = "查無權限";
+                        return res;
+                    }
+
+                    // 3-2 母群組：
+                    var parentList = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(parentRaw))
+                    {
+                        foreach (var s in parentRaw.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            parentList.Add(s.Trim());
+                    }
+
+                    // 3-3 子群組：
+                    var childList = new List<string>();
+                    string sqlChild = @"
+SELECT APG_NO 
+FROM [HI-AUTOS].[dbo].[AP_GROUP]
+WHERE SYS_ID=@SYS_ID
+  AND (',' + LTRIM(RTRIM(PARENT_APG_NO)) + ',') LIKE '%,' + @MY_GID + ',%'
+";
+
+                    using (var cmd2 = new SqlCommand(sqlChild, conn))
+                    {
+                        cmd2.Parameters.AddWithValue("@SYS_ID", sysId);
+                        cmd2.Parameters.AddWithValue("@MY_GID", groupId);
+
+                        using (var r2 = cmd2.ExecuteReader())
+                        {
+                            while (r2.Read())
+                            {
+                                childList.Add(r2["APG_NO"].ToString());
+                            }
+                        }
+                    }
+
+                    // 4) 回應
+                    res.Result_code = Codes.SUCCESS;
+                    res.Msg = "成功";
+                    res.Result = new GetUserDataModel.ResultData
+                    {
+                        UserID = empNo,      // 回傳員編
+                        UserName = userName,
+                        GroupID = groupId,
+                        GroupName = groupName,
+                        ParentGroupID = parentList,
+                        ChildGroupID = childList,
+                        SensitiveDataAccess = sensitive,
+                        OrganName = organ,
+                        PostName = post
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                res.Result_code = Codes.SYSTEM_ERROR;
+                res.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return res;
+        }
+    }
 }
