@@ -1,27 +1,53 @@
-public List<EmployeeModel> GetEmployeeList(string keyword = "")
-{
-    string sql = @"
-SELECT TOP 1000 
-    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
-    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-WHERE 1=1
-";
+// 安全 trim function
+const safeTrim = v => (v ?? '').toString().trim();
 
-    List<SqlParameter> parameters = new List<SqlParameter>();
+// 綁定 datalist autocomplete
+function bindUserIdTypeahead() {
+    $('#userIdInput').off('input').on('input', debounce(function () {
+        const kw = safeTrim(this.value);
+        console.log('[typeahead] input =', kw);
+        if (kw.length < 3) return;
 
-    if (!string.IsNullOrWhiteSpace(keyword))
-    {
-        sql += @"
- AND (
-    LTRIM(RTRIM([EMP_NO])) LIKE @KEYWORD COLLATE Chinese_Taiwan_Stroke_CI_AS
-    OR [EMP_NAME] LIKE @KEYWORD COLLATE Chinese_Taiwan_Stroke_CI_AS
- )";
-        parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
-    }
+        $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID })
+         .done(function (res) {
+             const list = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
+             console.log('[typeahead] result count =', list.length);
 
-    sql += " ORDER BY [EMP_NO]";
+             const rows = list.slice(0, 20);
+             const options = rows.map(emp =>
+                 `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
+             ).join('');
+             $('#empList').html(options);
+         });
+    }, 250));
 
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
+    $('#userIdInput').off('change blur').on('change blur', function () {
+        const empNo = safeTrim($(this).val());
+        console.log('[typeahead] change/blur empNo =', empNo);
+        if (!empNo) return;
+
+        $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID })
+         .done(function (r) {
+             const ok = (r && (r.success ?? true));
+             const emp = ok ? (r.data ?? r) : null;
+             if (emp) {
+                 $('#userName').val(emp.EMP_NAME || '');
+                 $('#userDept').val(emp.ORGAN_CAP || '');
+                 $('#userPost').val(emp.POST_NAME || '');
+             } else {
+                 $('#userName,#userDept,#userPost').val('');
+             }
+         });
+    });
+}
+
+// 在畫面初始化時執行一次
+$(document).ready(function () {
+    bindUserIdTypeahead();
+});
+
+// 或者在 openUserModal() 的最後再呼叫一次
+function openUserModal() {
+    $('#userModal').modal('show');
+    bindUserIdTypeahead(); // 確保每次開 modal 都綁
 }
