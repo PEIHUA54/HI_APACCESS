@@ -1,59 +1,27 @@
- 現在問題是 我輸入3B7  下拉選單沒出現3B750、3B751相關員工編號
-
- // 使用者 Modal：綁定 datalist
-  function bindUserIdTypeahead() {
-      $('#userIdInput').off('input').on('input', debounce(function () {
-          const kw = this.value.trim();
-          if (kw.length < 3) return;
-
-          $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID }, function (res) {
-              if (res.success && Array.isArray(res.data)) {
-                  const rows = res.data.slice(0, 20);
-                  const options = rows.map(emp =>
-                      `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
-                  ).join('');
-                  $('#empList').html(options);
-              }
-          });
-      }, 250));
-
-      $('#userIdInput').off('change blur').on('change blur', function () {
-          const empNo = this.value.trim();
-          if (!empNo) return;
-          $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
-              if (r.success && r.data) {
-                  const emp = r.data;
-                  $('#userName').val(emp.EMP_NAME || '');
-                  $('#userDept').val(emp.ORGAN_CAP || '');
-                  $('#userPost').val(emp.POST_NAME || '');
-              } else {
-                  $('#userName,#userDept,#userPost').val('');
-              }
-          });
-      });
-  }
-
-方法:
-        // 取得員工清單
-        public List<EmployeeModel> GetEmployeeList(string keyword = "")
-        {
-            string sql = @"
-SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+public List<EmployeeModel> GetEmployeeList(string keyword = "")
+{
+    string sql = @"
+SELECT TOP 1000 
+    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
+    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
 FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
 WHERE 1=1
 ";
 
-            List<SqlParameter> parameters = new List<SqlParameter>();
+    List<SqlParameter> parameters = new List<SqlParameter>();
 
-            if (!string.IsNullOrWhiteSpace(keyword))
-            {
-                sql += " AND ([EMP_NO] LIKE @KEYWORD OR [EMP_NAME] LIKE @KEYWORD)";
-                parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
-            }
+    if (!string.IsNullOrWhiteSpace(keyword))
+    {
+        sql += @"
+ AND (
+    LTRIM(RTRIM([EMP_NO])) LIKE @KEYWORD COLLATE Chinese_Taiwan_Stroke_CI_AS
+    OR [EMP_NAME] LIKE @KEYWORD COLLATE Chinese_Taiwan_Stroke_CI_AS
+ )";
+        parameters.Add(new SqlParameter("@KEYWORD", $"%{keyword}%"));
+    }
 
-            // TOP 1000
-            sql = "SELECT TOP 1000 * FROM (" + sql + ") as T ORDER BY [EMP_NO]";
+    sql += " ORDER BY [EMP_NO]";
 
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
-        }
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    return SVS_DBmanager.ConvertToList<EmployeeModel>(dt);
+}
