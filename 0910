@@ -1,15 +1,4 @@
-using HI_APACCESS_DLL.Factory;
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using Microsoft.IdentityModel.Tokens;
-using System;
-using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
-using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
-using static HI_APACCESS_DLL.Common;
+回傳的格式ParentGroupID要這樣=> "ParentGroupID": ["001", "002", "003", "008"]
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -116,7 +105,7 @@ WHERE A.SYS_ID=@SYS_ID
 SELECT APG_NO 
 FROM [HI-AUTOS].[dbo].[AP_GROUP]
 WHERE SYS_ID=@SYS_ID
-  AND (',' + LTRIM(RTRIM(PARENT_APG_NO)) + ',') LIKE '%,' + @MY_GID + ',%'
+  AND (';' + LTRIM(RTRIM(PARENT_APG_NO)) + ';') LIKE '%;' + @MY_GID + ';%'
 ";
 
                     using (var cmd2 = new SqlCommand(sqlChild, conn))
