@@ -1,4 +1,12 @@
-回傳的格式ParentGroupID要這樣=> "ParentGroupID": ["001", "002", "003", "008"]
+了解！你要的是把「母群組」回傳成真的 陣列（List<string>），而且資料庫現在用分號（可能還是全形 ；）分隔。下面是已修改好的 FGetUserData 片段：我把 ParentGroupID 的產生邏輯加強為同時支援半形分號 ;、全形分號 ；、甚至以前的逗號 ,/，，並自動 Trim、去重複，確保回傳像 "ParentGroupID": ["001","002","003","008"]。
+
+using HI_APACCESS_DLL.Factory;
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using static HI_APACCESS_DLL.Common;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -57,11 +65,11 @@ SELECT TOP 1
 FROM [HI-AUTOS].[dbo].[AP_GROUP] A
 LEFT JOIN [HI-AUTOS].[dbo].[AP_USER] B  
     ON A.APG_NO = B.APG_NO 
-    AND A.sys_id= B.sys_id 
+    AND A.SYS_ID = B.SYS_ID 
 LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M 
     ON B.U_ID = M.EMP_NO
 WHERE A.SYS_ID=@SYS_ID 
-    AND B.U_ID=@EMP_NO
+  AND B.U_ID=@EMP_NO;
 ";
 
                     using (var cmd = new SqlCommand(sqlMain, conn))
@@ -91,21 +99,26 @@ WHERE A.SYS_ID=@SYS_ID
                         return res;
                     }
 
-                    // 3-2 母群組：
+                    // 3-2 母群組：支援 ; 、；、, 、，，去空白、去重複
                     var parentList = new List<string>();
                     if (!string.IsNullOrWhiteSpace(parentRaw))
                     {
-                        foreach (var s in parentRaw.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
-                            parentList.Add(s.Trim());
+                        var seps = new[] { ';', '；', ',', '，' };
+                        parentList = parentRaw
+                            .Split(seps, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim())
+                            .Where(s => s.Length > 0)
+                            .Distinct()
+                            .ToList();
                     }
 
-                    // 3-3 子群組：
+                    // 3-3 子群組：資料庫欄位為分號分隔 → 用分號框住做精準比對
                     var childList = new List<string>();
                     string sqlChild = @"
 SELECT APG_NO 
 FROM [HI-AUTOS].[dbo].[AP_GROUP]
 WHERE SYS_ID=@SYS_ID
-  AND (';' + LTRIM(RTRIM(PARENT_APG_NO)) + ';') LIKE '%;' + @MY_GID + ';%'
+  AND (';' + LTRIM(RTRIM(PARENT_APG_NO)) + ';') LIKE '%;' + @MY_GID + ';%';
 ";
 
                     using (var cmd2 = new SqlCommand(sqlChild, conn))
@@ -127,11 +140,11 @@ WHERE SYS_ID=@SYS_ID
                     res.Msg = "成功";
                     res.Result = new GetUserDataModel.ResultData
                     {
-                        UserID = empNo,      // 回傳員編
+                        UserID = empNo,                 // 回傳員編
                         UserName = userName,
                         GroupID = groupId,
                         GroupName = groupName,
-                        ParentGroupID = parentList,
+                        ParentGroupID = parentList,     // ← 這裡就是 ["001","002","003",...]
                         ChildGroupID = childList,
                         SensitiveDataAccess = sensitive,
                         OrganName = organ,
@@ -149,3 +162,13 @@ WHERE SYS_ID=@SYS_ID
         }
     }
 }
+
+重點說明
+	•	母群組拆分：Split(seps) 支援 ;、；、,、， 四種分隔符。
+	•	Trim() 去除空白
+	•	Distinct() 去重複
+	•	回傳一定是 List<string>，序列化後就是 ["001","002",...]
+	•	子群組比對：資料庫欄位已改為分號分隔，所以用
+(';' + PARENT_APG_NO + ';') LIKE '%;' + @MY_GID + ';%' 做精準包含（避免 01 誤撞 001）。
+
+這樣改完，ParentGroupID 的 JSON 就會是你要的格式。
