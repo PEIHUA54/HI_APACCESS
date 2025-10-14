@@ -1,147 +1,60 @@
-這個問題是因為 `AccountController` 的 `RefreshSession` 方法在判斷 JWT token 登入時，檢查了 `Session["CurrentSystemId"]`，但一般登入的使用者沒有這個 Session 值，導致驗證失敗。
+  //// 原本的 RefreshSession 邏輯
+  //if (User.Identity.IsAuthenticated)
+  //{
+  //    return Content("success");
+  //}
+  //else
+  //{
+  //    return Content("lost");
+  //}
+  //string Status = "lost";
+  //var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+  //if (authCookie != null)
+  //{
+  //    var cookieValue = authCookie.Value;
+  //    if (!String.IsNullOrWhiteSpace(cookieValue))
+  //    {
+  //        var ticket = FormsAuthentication.Decrypt(cookieValue);
 
-請修改 `AccountController.cs` 中的 `RefreshSession` 方法：
+  //        //檢查Session遺失、不變、更新(剩餘時間小於30秒)
+  //        if (ticket.Expiration <= DateTime.Now)
+  //        {
+  //            Status = "lost";
+  //        }
+  //        else if (ticket.Expiration > DateTime.Now && ticket.Expiration <= DateTime.Now.AddSeconds(30))
+  //        {
+  //            VM_員工部門職稱 login = JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
+  //            var ticket_new = new FormsAuthenticationTicket(1,//版本
+  //                login.AD,//使用者名稱
+  //                DateTime.Now,//發行時間
+  //                DateTime.Now.AddMinutes(20),//有效期限
+  //                false,//是否將 Cookie 設定成 Session Cookie，如果是則會在瀏覽器關閉後移除
+  //                JsonConvert.SerializeObject(login),//將要記錄的使用者資訊轉換為 JSON 字串
+  //                FormsAuthentication.FormsCookiePath);//儲存 Cookie 的路徑
 
-```csharp
-[HttpPost]
-public ActionResult RefreshSession()
-{
-    // 檢查是否透過 JWT token 登入
-    string systemId = Session["CurrentSystemId"] as string;
-    
-    // 如果有 systemId，表示是透過 TOKEN 導向進來的
-    if (!string.IsNullOrEmpty(systemId))
-    {
-        // JWT token 使用者的 session 檢查
-        // 可以在這裡加入額外的驗證邏輯
-        return Content("success");
-    }
+  //            //將 Ticket 加密
+  //            var encTicket = FormsAuthentication.Encrypt(ticket_new);
 
-    // 一般登入使用者：檢查 Forms Authentication
-    if (User.Identity.IsAuthenticated)
-    {
-        return Content("success");
-    }
-    else
-    {
-        return Content("lost");
-    }
-}
-```
+  //            // 清空所有 Session 資料
+  //            Session.RemoveAll();
 
-**修改重點說明：**
+  //            //將 Ticket 寫入 Cookie
+  //            //Response.Cookies.Add(new HttpCookie(FormsAuthentication.FormsCookieName, encTicket));
+  //            HttpCookie sessionCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+  //            {
+  //                Secure = Request.IsSecureConnection,  //確保在htpps下啟用secure屬性
+  //                HttpOnly = true //防止客戶端腳本訪問 cookie
+  //            };
+  //            Response.Cookies.Add(sessionCookie);
 
-1. **原本的問題**：只要沒有 `CurrentSystemId` 就會往下走到 `User.Identity.IsAuthenticated` 檢查，但可能因為其他原因導致判斷失敗
-1. **修改後的邏輯**：
 
-- 有 `CurrentSystemId` → TOKEN 登入使用者 → 直接返回 success
-- 沒有 `CurrentSystemId` → 一般登入使用者 → 檢查 Forms Authentication
-- 都不符合 → 返回 lost
 
-**如果還是有問題，請檢查以下幾點：**
-
-### 1. 檢查 _Layout.cshtml 或 Main.cshtml 中的 Session 檢查腳本
-
-可能有類似這樣的程式碼：
-
-```javascript
-// 如果有這段程式碼，需要調整
-setInterval(function () {
-    $.ajax({
-        url: '@Url.Action("RefreshSession", "Account")',
-        type: 'POST',
-        success: function (result) {
-            if (result === "lost") {
-                alert("資料連線中斷，請重新登入");
-                window.location.href = '@Url.Action("Login", "Account")';
-            }
-        }
-    });
-}, 300000); // 每5分鐘檢查一次
-```
-
-### 2. 或者更完整的 RefreshSession 方法（推薦）
-
-```csharp
-[HttpPost]
-public ActionResult RefreshSession()
-{
-    try
-    {
-        // 檢查是否透過 JWT token 登入
-        string systemId = Session["CurrentSystemId"] as string;
-        string empNo = Session["CurrentEmpNo"] as string;
-
-        // JWT token 登入使用者
-        if (!string.IsNullOrEmpty(systemId) && !string.IsNullOrEmpty(empNo))
-        {
-            return Content("success");
-        }
-
-        // 一般登入使用者：檢查 Forms Authentication Cookie
-        var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
-        if (authCookie != null && !string.IsNullOrEmpty(authCookie.Value))
-        {
-            try
-            {
-                var ticket = FormsAuthentication.Decrypt(authCookie.Value);
-                if (ticket != null && !ticket.Expired)
-                {
-                    return Content("success");
-                }
-            }
-            catch
-            {
-                // Cookie 解密失敗
-                return Content("lost");
-            }
-        }
-
-        // 最後檢查 User.Identity
-        if (User != null && User.Identity != null && User.Identity.IsAuthenticated)
-        {
-            return Content("success");
-        }
-
-        return Content("lost");
-    }
-    catch (Exception ex)
-    {
-        // 記錄錯誤
-        System.Diagnostics.Debug.WriteLine("RefreshSession Error: " + ex.Message);
-        return Content("lost");
-    }
-}
-```
-
-### 3. 暫時的除錯方法
-
-如果你想先快速測試系統功能，可以暫時將 RefreshSession 改成：
-
-```csharp
-[HttpPost]
-public ActionResult RefreshSession()
-{
-    // 暫時先全部返回 success，方便測試
-    return Content("success");
-}
-```
-
-**等功能測試完成後，再改回正確的驗證邏輯。**
-
-### 4. 檢查 web.config 的 authentication 設定
-
-確認有正確設定 Forms Authentication：
-
-```xml
-<system.web>
-    <authentication mode="Forms">
-        <forms loginUrl="~/Account/Login" 
-               timeout="20" 
-               slidingExpiration="true" 
-               cookieless="UseCookies" />
-    </authentication>
-</system.web>
-```
-
-請先試試修改 `RefreshSession` 方法，如果還是有問題，告訴我完整的錯誤訊息或前端 console 的錯誤訊息，我再幫你進一步除錯！​​​​​​​​​​​​​​​​
+  //            Status = "refresh-OK-新的有效時間:" + ticket_new.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+  //        }
+  //        else
+  //        {
+  //            Status = "continue-OK-原本的有效時間:" + ticket.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+  //        }
+  //    }
+  //}
+  //return Content(Status);
