@@ -1,0 +1,435 @@
+HI_APACCESS站台
+新需求(目錄tree共三個功能)
+一.tree:系統申請
+1.1一進畫面 先列出可維護的系統清單
+依登入員編並且有在001群組的系統顯示
+[HI-AUTOS].[dbo].[AP_USER] 員工在此資料表 並且[APG_NO]群組為001
+[HI-APLOG].[dbo].[AP_SYS] 才可以根據此資料表的系統清單 顯示符合條件的系統
+可以再確認系統[HI-AUTOS].[dbo].[AP_GROUP]有在此資料表 且群組為001
+1.2 新增btn
+第一種情況新增=>系統ID、系統名稱 => 是系統完全沒有在[HI-APLOG].[dbo].[AP_SYS]這裏面
+1.2.1新增資料庫[HI-APLOG].[dbo].[AP_SYS] =>[SYS_ID]、[SYS_NAME]、[CREATE_TIME]、[CREATOR](登入的員工ID)
+1.2.2新增資料庫[HI-AUTOS].[dbo].[AP_GROUP] =>[SYS_ID]、[APG_NO](固定寫:001)、[APG_NAME](固定寫:管理員(資訊))、[CREATE_TIME]、[CREATOR](登入的員工ID)
+1.2.3新增資料庫[HI-AUTOS].[dbo].[AP_USER] =>[SYS_ID]、[APG_NO](固定寫:001)、[U_ID](登入的員工ID)、
+[U_NAME](從SELECT EMP_NO、 EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 根據U_ID取這個資料表EMP_NAME員工名稱)
+1.3
+第二種情況新增=>已經有系統id
+1.3.1更新資料庫[HI-APLOG].[dbo].[AP_SYS] =>[SYS_ID]、[SYS_NAME](更新名稱)、[EDIT_TIME]、[EDITOR](登入的員工ID)
+1.3.2新增資料庫[HI-AUTOS].[dbo].[AP_GROUP] =>[SYS_ID]、[APG_NO](固定寫:001)、[APG_NAME](固定寫:管理員(資訊))、[CREATE_TIME]、[CREATOR](登入的員工ID)
+1.3.3新增資料庫[HI-AUTOS].[dbo].[AP_USER] =>[SYS_ID]、[APG_NO](固定寫:001)、[U_ID](登入的員工ID)、
+[U_NAME](從SELECT EMP_NO、 EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 根據U_ID取這個資料表EMP_NAME員工名稱)
+1.4
+第三種情況新增=>[AP_SYS]已經有系統id、[AP_GROUP]也有001
+1.4.1更新資料庫[HI-APLOG].[dbo].[AP_SYS] =>[SYS_ID]、[SYS_NAME](更新名稱)、[EDIT_TIME]、[EDITOR](登入的員工ID)
+1.4.2新增資料庫[HI-AUTOS].[dbo].[AP_USER] =>[SYS_ID]、[APG_NO](固定寫:001)、[U_ID](登入的員工ID)、
+[U_NAME](從SELECT EMP_NO、 EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 根據U_ID取這個資料表EMP_NAME員工名稱)
+之後
+1. 完成之後不可刪除，只能修改系統名稱
+
+二.tree:權限設定
+一進頁面顯:
+可維護的系統(下拉選項(系統ID-系統名稱))
+依登入員編並且有在001群組的系統顯示
+[HI-AUTOS].[dbo].[AP_USER] 員工在此資料表 並且[APG_NO]群組為001
+[HI-APLOG].[dbo].[AP_SYS] 才可以根據此資料表的系統清單 顯示符合條件的系統
+可以再確認系統[HI-AUTOS].[dbo].[AP_GROUP]有在此資料表 且群組為001
+接下來就是根據員工選擇的系統ID導向到群組管理("GroupManagement", "AP")
+三.tree:功能頁面設定
+一進頁面顯:
+可維護的系統(下拉選項(系統ID-系統名稱))
+依登入員編並且有在001群組的系統顯示
+[HI-AUTOS].[dbo].[AP_USER] 員工在此資料表 並且[APG_NO]群組為001
+[HI-APLOG].[dbo].[AP_SYS] 才可以根據此資料表的系統清單 顯示符合條件的系統
+可以再確認系統[HI-AUTOS].[dbo].[AP_GROUP]有在此資料表 且群組為001
+接下來就是根據員工選擇的系統ID導向到頁面管理("PageManagement", "AP")
+
+注意:
+("GroupManagement", "AP")、("PageManagement", "AP")
+這兩個畫面功能已完成
+這個站台原本功能是由其他系統站台使用TOKEN(有寫DLL呼叫導向連接)導向過來的
+所以我一開始把Routeconfig寫這樣 是為了不讓站台取跑LOGIN畫面，不然正常要經過ACCOUNT/LOGIN進來
+RouteConfig:
+ public class RouteConfig
+ {
+     public static void RegisterRoutes(RouteCollection routes)
+     {
+         routes.IgnoreRoute("{resource}.axd/{*pathInfo}");
+
+         routes.MapRoute(
+             name: "Default",
+             url: "{controller}/{action}/{id}",
+             defaults: new { controller = "Home", action = "Index", id = UrlParameter.Optional }
+         );
+     }
+ }
+Homecontroller:
+  public ActionResult Index()
+  {
+      return null;
+  }
+兩個TOKEN:
+   [HttpGet]
+   [TokenAuthorize]
+   public ActionResult TokenEntry()
+   {
+       var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+       var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+       Session["CurrentSystemId"] = systemId;
+       Session["CurrentEmpNo"] = empNo;
+      
+       // 導向到群組管理
+       return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
+   }
+   [HttpGet]
+   [TokenAuthorize]
+   public ActionResult TokenEntry_FUNC()
+   {
+       var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+       var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+       Session["CurrentSystemId"] = systemId;
+       Session["CurrentEmpNo"] = empNo;
+
+       // 導向到頁面管理
+       return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
+   }
+兩個入口ACTION(APController):
+
+   // 群組管理頁面
+   public ActionResult GroupManagement(string systemId)
+   {
+       if (string.IsNullOrEmpty(systemId))
+       {
+           systemId = Session["CurrentSystemId"]?.ToString();
+       }
+       else
+       {
+           // 同步更新 Session
+           Session["CurrentSystemId"] = systemId;
+       }
+
+       ViewBag.SystemId = systemId;
+       ViewBag.Title = "群組權限管理 - " + systemId;
+       return View();
+   }
+
+   // 系統頁面設定
+   public ActionResult PageManagement(string systemId = null)
+   {
+       if (string.IsNullOrEmpty(systemId))
+       {
+           systemId = Session["CurrentSystemId"]?.ToString();
+       }
+
+       if (string.IsNullOrEmpty(systemId))
+       {
+           return Content("<h3>系統ID遺失，請重新透過權限管理連結進入</h3>");
+       }
+
+       ViewBag.SystemId = systemId;
+       ViewBag.Title = "系統頁面設定 - " + systemId;
+       return View();
+   }
+
+所以不變動原本的兩個TOKEN導向
+但是要完成新需求 兩者不干擾
+我需要進入站台之後 然後有以上新需求
+
+**程式碼:
+HomeController :
+namespace HI_APACCESS.Controllers
+{
+    public class HomeController : HI_APACCESSBaseController
+    {
+        readonly F_Main f_Main = new F_Main();
+
+        public ActionResult Index()
+        {
+            return null;
+        }
+
+        public ActionResult Main()
+        {
+
+            M_Main m_Main = new M_Main()
+            {
+                Main_Bodies = f_Main.Get_Bodies()
+            };
+
+            return View(m_Main);
+        }
+
+        public JsonResult Get_EmployeeInfo()
+        {
+            VM_Employee.VM_員工部門職稱 ret = SVS_員工基本資料.Get_員工基本資料(this.Emp_NO);
+            return Json(ret, JsonRequestBehavior.AllowGet);
+        }
+
+    }
+}
+
+AccountController :
+
+namespace HI_APACCESS.Controllers
+{
+    public class AccountController : HI_APACCESSBaseController
+    {
+        static ILogger log = SVS_Serilog._log;
+
+        [AllowAnonymous]
+        [HttpGet]
+        public ActionResult Login()
+        {
+            // 登入時清空所有 Session 資料
+            Session.RemoveAll();
+
+            string LOGIN_NAME = null;
+            var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+            if (authCookie != null)
+            {
+                var cookieValue = authCookie.Value;
+                if (!String.IsNullOrWhiteSpace(cookieValue))
+                {
+                    try
+                    {
+                        var ticket = FormsAuthentication.Decrypt(cookieValue);
+                        if (ticket.Expiration >= DateTime.Now)
+                        {
+                            LOGIN_NAME = ticket.Name;
+                        }
+                    }
+                    catch (CryptographicException cex)
+                    {
+                        log.Error<string>(cex, cex.Message, cex.StackTrace);
+                        FormsAuthentication.SignOut();
+                    }
+                    finally
+                    {
+                        Serilog.Log.CloseAndFlush();
+                    }
+                }
+            }
+
+            string AD = !string.IsNullOrEmpty(LOGIN_NAME) ? LOGIN_NAME : SVS_員工基本資料.Get_員工AD();
+            VM_員工部門職稱 login = SVS_員工基本資料.Get_員工基本資料(AD);
+            login.AD = AD;
+            return View(login);
+        }
+
+        [AllowAnonymous]
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult Login([Bind] VM_員工部門職稱 login, string ReturnUrl)
+        {
+            if (ModelState.IsValid)
+            {
+                FormsAuthentication.RedirectFromLoginPage(login.AD, true);
+
+                string str_員工AD = SVS_員工基本資料.Get_員工AD();
+                string str_員編 = SVS_員工基本資料.Get_員工編號(str_員工AD);
+                string AD = !string.IsNullOrEmpty(login.AD) ? login.AD : str_員工AD;
+
+                if (str_員工AD != login.AD && !SVS_Dictionary.List_測試站台登入者白名單.Contains(str_員編))
+                {
+                    AD = str_員工AD;
+                }
+
+                var encTicket = LoginTicket(AD);
+
+                //將 Ticket 寫入 Cookie
+                HttpCookie authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+                {
+                    Secure = Request.IsSecureConnection,  //確保在htpps下啟用secure屬性
+                    HttpOnly = true //防止客戶端腳本訪問 cookie
+                };
+                Response.Cookies.Add(authCookie);
+
+                if (String.IsNullOrEmpty(ReturnUrl) || ReturnUrl == "/")
+                {
+                    return RedirectToAction("Main", "Home");
+                }
+
+                //本地url驗證
+                if (!Url.IsLocalUrl(ReturnUrl))
+                {
+                    return RedirectToAction("Login", "Account");
+                }
+                //檢查是否為允許的路徑
+                string[] allowedPaths = new[]
+                {
+                        "/Main/",
+                        "/Home/",
+                         "/Account/",
+                    };
+
+                if (allowedPaths.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return RedirectToAction("Login", "Account", new { ReturnUrl = ReturnUrl });
+                }
+                return RedirectToAction("Login", "Account");
+            }
+            return View(login);
+        }
+
+        [AllowAnonymous]
+        [HttpGet]
+        public ActionResult Logout(string ReturnUrl)
+        {
+            Session.Abandon();
+            FormsAuthentication.SignOut();
+
+            if (String.IsNullOrEmpty(ReturnUrl))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+            //檢查是否為本地url
+            if (!Url.IsLocalUrl(ReturnUrl))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+            string[] allowedPaths = new string[]
+            {
+                "/Account/",
+                "/Login/",
+                "/Home"
+            };
+            if (allowedPaths.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                return RedirectToAction("Login", "Account", new { ReturnUrl = ReturnUrl });
+            }
+
+            return RedirectToAction("Login", "Account");
+
+        }
+
+        #region FormsAuthenticationTicket
+
+        private string LoginTicket(string AD)
+        {
+            VM_員工部門職稱 login = SVS_員工基本資料.Get_員工基本資料(AD);
+            login.AD = AD;
+            var ticket = new FormsAuthenticationTicket(1,//版本
+                login.AD,//使用者名稱
+                DateTime.Now,//發行時間
+                DateTime.Now.AddMinutes(20),//有效期限
+                false,//是否將 Cookie 設定成 Session Cookie，如果是則會在瀏覽器關閉後移除
+                JsonConvert.SerializeObject(login),//將要記錄的使用者資訊轉換為 JSON 字串
+                FormsAuthentication.FormsCookiePath);//儲存 Cookie 的路徑
+            var encTicket = FormsAuthentication.Encrypt(ticket);
+            return encTicket;
+        }
+
+
+        #endregion FormsAuthenticationTicket
+
+        #region Session TimeOut
+
+        #region 參考資料
+        //Session TimeOut  https://blog.darkthread.net/blog/prevent-aspnet-session-timeout/
+        #endregion 參考資料
+
+        [HttpPost]
+        public ActionResult RefreshSession()
+        {
+            // 檢查是否透過 JWT token 登入
+            string systemId = Session["CurrentSystemId"] as string;
+            if (!string.IsNullOrEmpty(systemId))
+            {
+                return Content("success"); // JWT 用戶直接回傳成功
+            }
+
+            if (User.Identity.IsAuthenticated)
+            {
+                return Content("success");
+            }
+            else
+            {
+                return Content("lost");
+            }
+        }
+
+        #endregion Session TimeOut
+
+    }
+}
+
+寫法參考
+舉例:
+  // 修改群組
+    private F_Common F_Common = new F_Common();
+  [HttpPost]
+  public JsonResult UpdateGroup(GroupModel model, string[] parentApgNos)
+  {
+      try
+      {
+          model.SYS_ID = CurrentSystemId;
+
+          if (parentApgNos != null && parentApgNos.Length > 0)
+          {
+              model.PARENT_APG_NO = string.Join(",", parentApgNos); // 將陣列轉換為逗號分隔的字串
+          }
+          else
+          {
+              model.PARENT_APG_NO = "";
+          }
+
+          if (ModelState.IsValid)
+          {
+              var result = F_Common.UpdateGroup(model, Emp_NO);
+              if (result == null || !result.Contains("fail"))
+              {
+                  return Json(new { success = true, message = "群組修改成功" });
+              }
+              else
+              {
+                  return Json(new { success = false, message = "群組修改失敗：" + result });
+              }
+          }
+          return Json(new { success = false, message = "資料驗證失敗" });
+      }
+      catch (Exception ex)
+      {
+          return Json(new { success = false, message = "修改群組發生錯誤：" + ex.Message });
+      }
+  }
+
+F_Common :用來寫sql的地方
+舉例
+ // 更新群組
+ public string UpdateGroup(GroupModel model, string editor)
+ {
+     string sql = @"
+     UPDATE [HI-AUTOS].[dbo].[AP_GROUP] 
+     SET [APG_NAME] = @APG_NAME, [PARENT_APG_NO] = @PARENT_APG_NO , [EDITOR] = @EDITOR, [EDIT_TIME] = GETDATE()
+     WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO";
+
+     List<SqlParameter> parameters = new List<SqlParameter>
+ {
+     new SqlParameter("@SYS_ID", _sysId),
+     new SqlParameter("@APG_NO", model.APG_NO),
+     new SqlParameter("@APG_NAME", model.APG_NAME),
+     new SqlParameter("@PARENT_APG_NO", model.PARENT_APG_NO ?? ""),
+     new SqlParameter("@EDITOR", editor)
+ };
+
+     return SVS_DBmanager.ExecuteSQL(sql, parameters);  //寫入、修改、刪除用ExecuteSQL
+ }
+
+       // 取得所有群組
+       public List<GroupModel> GetAllGroups()
+       {
+           string sql = @"
+           SELECT [SYS_ID], [APG_NO], [APG_NAME], [PARENT_APG_NO], [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+           FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+           WHERE [SYS_ID] = @SYS_ID
+           ORDER BY [APG_NO]";
+
+           List<SqlParameter> parameters = new List<SqlParameter>
+       {
+           new SqlParameter("@SYS_ID", _sysId)
+       };
+
+           DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);  //查詢用QueryBySQL
+           return SVS_DBmanager.ConvertToList<GroupModel>(dt);
+       }
