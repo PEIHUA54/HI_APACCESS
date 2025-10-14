@@ -1,3 +1,297 @@
+你說得對！三種情況確實可以合併成一個更清晰的流程。讓我重構這部分程式碼：
+
+## 修改後的 SYSController.cs
+
+```csharp
+using HI_APACCESS.Factories;
+using HI_APACCESS.Models.M_SYS;
+using System;
+using System.Web.Mvc;
+
+namespace HI_APACCESS.Controllers
+{
+    public class SYSController : HI_APACCESSBaseController
+    {
+        private F_SYS F_SYS = new F_SYS();
+
+        // 申請系統
+        public ActionResult SYS_APPLY()
+        {
+            return View();
+        }
+
+        // 取得可維護的系統清單
+        [HttpPost]
+        public JsonResult GetMaintainableSystems()
+        {
+            try
+            {
+                var systems = F_SYS.GetMaintainableSystems(Emp_NO);
+                return Json(new { success = true, data = systems });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得系統清單失敗：" + ex.Message });
+            }
+        }
+
+        // 系統申請(新增/修改) - 重構版
+        [HttpPost]
+        public JsonResult ApplySystem(M_SYS_Apply model)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return Json(new { success = false, message = "資料驗證失敗" });
+                }
+
+                string empNo = Emp_NO;
+                string empName = F_SYS.GetEmployeeName(empNo);
+
+                if (string.IsNullOrEmpty(empName))
+                {
+                    return Json(new { success = false, message = "無法取得員工姓名" });
+                }
+
+                // 執行系統申請流程
+                string result = ProcessSystemApply(model.SYS_ID, model.SYS_NAME, empNo, empName);
+
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "系統申請成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "系統申請失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "系統申請發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 統一的系統申請處理流程
+        private string ProcessSystemApply(string sysId, string sysName, string empNo, string empName)
+        {
+            string result = null;
+
+            // 步驟1: 檢查系統是否存在於 AP_SYS
+            bool systemExists = F_SYS.CheckSystemExistsInApSys(sysId);
+
+            if (!systemExists)
+            {
+                // 系統不存在 -> 新增系統
+                result = F_SYS.InsertSystemToApSys(sysId, sysName, empNo);
+                if (result != null && result.Contains("fail")) return result;
+            }
+            else
+            {
+                // 系統存在 -> 更新系統名稱
+                result = F_SYS.UpdateSystemName(sysId, sysName, empNo);
+                if (result != null && result.Contains("fail")) return result;
+            }
+
+            // 步驟2: 檢查是否有 001 群組
+            bool group001Exists = F_SYS.CheckSystemHasGroup001(sysId);
+
+            if (!group001Exists)
+            {
+                // 001 群組不存在 -> 新增 001 群組
+                result = F_SYS.InsertGroup001(sysId, empNo);
+                if (result != null && result.Contains("fail")) return result;
+            }
+
+            // 步驟3: 檢查使用者是否已在 001 群組
+            bool userExists = F_SYS.CheckUserInGroup001(sysId, empNo);
+
+            if (!userExists)
+            {
+                // 使用者不存在 -> 新增使用者到 001 群組
+                result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
+                if (result != null && result.Contains("fail")) return result;
+            }
+
+            return result;
+        }
+
+        // 修改系統名稱
+        [HttpPost]
+        public JsonResult UpdateSystemName(string sysId, string sysName)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId) || string.IsNullOrEmpty(sysName))
+                {
+                    return Json(new { success = false, message = "系統ID和系統名稱不可為空" });
+                }
+
+                string result = F_SYS.UpdateSystemName(sysId, sysName, Emp_NO);
+
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "系統名稱修改成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "系統名稱修改失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改系統名稱發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 2. 權限設定頁面
+        [HttpGet]
+        public ActionResult SYS_PERMISSION_SET()
+        {
+            return View();
+        }
+
+        // 取得可維護系統選項(下拉選單用)
+        [HttpPost]
+        public JsonResult GetSystemOptions()
+        {
+            try
+            {
+                var options = F_SYS.GetMaintainableSystemOptions(Emp_NO);
+                return Json(new { success = true, data = options });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得系統選項失敗：" + ex.Message });
+            }
+        }
+
+        // 導向群組管理
+        [HttpPost]
+        public JsonResult RedirectToGroupManagement(string sysId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId))
+                {
+                    return Json(new { success = false, message = "請選擇系統" });
+                }
+
+                // 更新Session
+                Session["CurrentSystemId"] = sysId;
+
+                return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "導向失敗：" + ex.Message });
+            }
+        }
+
+        // 3. 功能頁面設定頁面
+        [HttpGet]
+        public ActionResult SYS_FUNC_SET()
+        {
+            return View();
+        }
+
+        // 導向頁面管理
+        [HttpPost]
+        public JsonResult RedirectToPageManagement(string sysId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId))
+                {
+                    return Json(new { success = false, message = "請選擇系統" });
+                }
+
+                // 更新Session
+                Session["CurrentSystemId"] = sysId;
+
+                return Json(new { success = true, redirectUrl = Url.Action("PageManagement", "AP", new { systemId = sysId }) });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "導向失敗：" + ex.Message });
+            }
+        }
+    }
+}
+```
+
+## 重構後的流程說明
+
+### **統一的 `ProcessSystemApply` 方法：**
+
+```csharp
+private string ProcessSystemApply(string sysId, string sysName, string empNo, string empName)
+{
+    // ✅ 步驟1: 處理系統
+    if (!系統存在)
+        → 新增系統
+    else
+        → 更新系統名稱
+    
+    // ✅ 步驟2: 處理 001 群組
+    if (!001群組存在)
+        → 新增 001 群組
+    
+    // ✅ 步驟3: 處理使用者
+    if (!使用者存在於001群組)
+        → 新增使用者到 001 群組
+    
+    return result;
+}
+```
+
+## 優點
+
+### **1. 邏輯更清晰**
+
+- 不需要判斷三種情況
+- 按照固定順序執行：系統 → 群組 → 使用者
+- 每一步都先檢查再決定是否執行
+
+### **2. 程式碼更簡潔**
+
+- 刪除了 `ProcessScenario1`、`ProcessScenario2`、`ProcessScenario3` 三個方法
+- 只保留一個 `ProcessSystemApply` 方法
+- 減少重複程式碼
+
+### **3. 維護更容易**
+
+- 新增或修改邏輯時，只需要改一個地方
+- 不用擔心三種情況的邏輯不一致
+
+### **4. 執行結果一樣**
+
+無論原本是哪種情況，最終結果都是：
+
+- ✅ AP_SYS 有該系統（新增或更新）
+- ✅ AP_GROUP 有 001 群組
+- ✅ AP_USER 有該員工在 001 群組
+
+## 對照表（原本三種情況 vs 重構後）
+
+|原本情況                |執行步驟                  |重構後執行步驟                         |
+|--------------------|----------------------|--------------------------------|
+|**情況1**: 系統不存在      |新增系統 → 新增群組 → 新增使用者   |① 新增系統 → ② 新增群組 → ③ 新增使用者       |
+|**情況2**: 系統存在，無001群組|更新名稱 → 新增群組 → 新增使用者   |① 更新名稱 → ② 新增群組 → ③ 新增使用者       |
+|**情況3**: 系統存在，有001群組|更新名稱 → (跳過) → 檢查並新增使用者|① 更新名稱 → ② (已存在，跳過) → ③ 檢查並新增使用者|
+
+結果完全相同，但邏輯更統一！
+
+## 測試建議
+
+測試時可以驗證這些情境：
+
+1. **全新系統** - 驗證三個資料表都有正確新增
+1. **系統存在但無群組** - 驗證名稱更新、群組和使用者新增
+1. **系統和群組都存在** - 驗證名稱更新、使用者新增（如不存在）
+1. **所有都存在** - 驗證只更新名稱，不重複新增
+
+這樣的重構是不是更符合你的想法？😊​​​​​​​​​​​​​​​​
 好的！我看到你的現有結構了。讓我根據你的寫法風格，完成三個 View 頁面。
 
 ## 1. SYS_APPLY.cshtml (完整版)
