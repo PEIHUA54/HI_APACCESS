@@ -1,39 +1,147 @@
-    // ===== 功能2 測試 =====
-    // 取得群組人員清單
-    public ActionResult Test_GetGroupAllUser()
+這個問題是因為 `AccountController` 的 `RefreshSession` 方法在判斷 JWT token 登入時，檢查了 `Session["CurrentSystemId"]`，但一般登入的使用者沒有這個 Session 值，導致驗證失敗。
+
+請修改 `AccountController.cs` 中的 `RefreshSession` 方法：
+
+```csharp
+[HttpPost]
+public ActionResult RefreshSession()
+{
+    // 檢查是否透過 JWT token 登入
+    string systemId = Session["CurrentSystemId"] as string;
+    
+    // 如果有 systemId，表示是透過 TOKEN 導向進來的
+    if (!string.IsNullOrEmpty(systemId))
     {
-        var req = new POSFILE_APPLY.Models.M_AP.GetGroupAllUserRequestModel
-        {
-            SysID = "HI_POSIMG",
-            GroupID = "001",
-            IsIncludeChildGroups = true,
-            Environment = "TEST"
-        };
-
-        string json_input = JsonConvert.SerializeObject(req);
-        string response = new APACCESS().GetGroupAllUser(json_input);
-        var res = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetGroupAllUserResponseModel>(response);
-
-        return Content($"<pre>{JsonConvert.SerializeObject(res, Formatting.Indented)}</pre>", "text/html");
+        // JWT token 使用者的 session 檢查
+        // 可以在這裡加入額外的驗證邏輯
+        return Content("success");
     }
 
-        // ===== 功能2 =====
-        public class GetGroupAllUserRequestModel
-        {
-            public string SysID { get; set; }
-            public string GroupID { get; set; }
-            public bool IsIncludeChildGroups { get; set; }
-            public string Environment { get; set; }
+    // 一般登入使用者：檢查 Forms Authentication
+    if (User.Identity.IsAuthenticated)
+    {
+        return Content("success");
+    }
+    else
+    {
+        return Content("lost");
+    }
+}
+```
+
+**修改重點說明：**
+
+1. **原本的問題**：只要沒有 `CurrentSystemId` 就會往下走到 `User.Identity.IsAuthenticated` 檢查，但可能因為其他原因導致判斷失敗
+1. **修改後的邏輯**：
+
+- 有 `CurrentSystemId` → TOKEN 登入使用者 → 直接返回 success
+- 沒有 `CurrentSystemId` → 一般登入使用者 → 檢查 Forms Authentication
+- 都不符合 → 返回 lost
+
+**如果還是有問題，請檢查以下幾點：**
+
+### 1. 檢查 _Layout.cshtml 或 Main.cshtml 中的 Session 檢查腳本
+
+可能有類似這樣的程式碼：
+
+```javascript
+// 如果有這段程式碼，需要調整
+setInterval(function () {
+    $.ajax({
+        url: '@Url.Action("RefreshSession", "Account")',
+        type: 'POST',
+        success: function (result) {
+            if (result === "lost") {
+                alert("資料連線中斷，請重新登入");
+                window.location.href = '@Url.Action("Login", "Account")';
+            }
         }
-        public class GetGroupAllUserResponseModel
+    });
+}, 300000); // 每5分鐘檢查一次
+```
+
+### 2. 或者更完整的 RefreshSession 方法（推薦）
+
+```csharp
+[HttpPost]
+public ActionResult RefreshSession()
+{
+    try
+    {
+        // 檢查是否透過 JWT token 登入
+        string systemId = Session["CurrentSystemId"] as string;
+        string empNo = Session["CurrentEmpNo"] as string;
+
+        // JWT token 登入使用者
+        if (!string.IsNullOrEmpty(systemId) && !string.IsNullOrEmpty(empNo))
         {
-            public string Result_code { get; set; }
-            public string Msg { get; set; }
-            public ResultData Result { get; set; }
-            public class ResultData
+            return Content("success");
+        }
+
+        // 一般登入使用者：檢查 Forms Authentication Cookie
+        var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+        if (authCookie != null && !string.IsNullOrEmpty(authCookie.Value))
+        {
+            try
             {
-                [JsonProperty("UserIDList")]
-                public List<string> UserIDList { get; set; }
+                var ticket = FormsAuthentication.Decrypt(authCookie.Value);
+                if (ticket != null && !ticket.Expired)
+                {
+                    return Content("success");
+                }
+            }
+            catch
+            {
+                // Cookie 解密失敗
+                return Content("lost");
             }
         }
 
+        // 最後檢查 User.Identity
+        if (User != null && User.Identity != null && User.Identity.IsAuthenticated)
+        {
+            return Content("success");
+        }
+
+        return Content("lost");
+    }
+    catch (Exception ex)
+    {
+        // 記錄錯誤
+        System.Diagnostics.Debug.WriteLine("RefreshSession Error: " + ex.Message);
+        return Content("lost");
+    }
+}
+```
+
+### 3. 暫時的除錯方法
+
+如果你想先快速測試系統功能，可以暫時將 RefreshSession 改成：
+
+```csharp
+[HttpPost]
+public ActionResult RefreshSession()
+{
+    // 暫時先全部返回 success，方便測試
+    return Content("success");
+}
+```
+
+**等功能測試完成後，再改回正確的驗證邏輯。**
+
+### 4. 檢查 web.config 的 authentication 設定
+
+確認有正確設定 Forms Authentication：
+
+```xml
+<system.web>
+    <authentication mode="Forms">
+        <forms loginUrl="~/Account/Login" 
+               timeout="20" 
+               slidingExpiration="true" 
+               cookieless="UseCookies" />
+    </authentication>
+</system.web>
+```
+
+請先試試修改 `RefreshSession` 方法，如果還是有問題，告訴我完整的錯誤訊息或前端 console 的錯誤訊息，我再幫你進一步除錯！​​​​​​​​​​​​​​​​
