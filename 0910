@@ -1,398 +1,163 @@
-參考
+using HI_APACCESS.Service;
+using HI_APACCESS.ViewModels;
+using Newtonsoft.Json;
+using Serilog;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Web.Mvc;
+using System.Web.Security;
+using System.IO;
+using System.Text.RegularExpressions;
+using HI_APACCESS.Factory.F_AP;
+using HI_APACCESS.AttributeFilter;
+
 namespace HI_APACCESS.Controllers
 {
-    public class SYSController : HI_APACCESSBaseController
+    [AP_LOG]
+    [AP_LOG_Exception]
+    public abstract class HI_APACCESSBaseController : Controller
     {
-        private F_SYS F_SYS = new F_SYS();
+        private FormsAuthenticationTicket ticket;
+        private string str_AD_Form;
+        private string str_UserData_Form;
+        private string AD;
+        public string Emp_NO_原始;
+        public string Emp_NO;
+        private VM_Employee.VM_員工部門職稱 Emp_Data;
+        public string APG_NO;
+        public List<VM_Employee.WebTree_Node> WebTrees;
 
-        // 申請系統
-        public ActionResult SYS_APPLY()
+        public HI_APACCESSBaseController()
         {
-            return View();
+            this.Emp_NO_原始 = SVS_員工基本資料.Get_員工編號(SVS_員工基本資料.Get_員工AD());
+            this.Emp_NO = SVS_員工基本資料.Get_員工編號(this.AD).ToUpper().Trim();
         }
 
-        // 取得可維護的系統清單
-        [HttpPost]
-        public JsonResult GetMaintainableSystems()
+        private void GetTicket()
         {
-            try
+            this.ticket = null;
+            var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+            if (authCookie != null && !string.IsNullOrWhiteSpace(authCookie.Value))
             {
-                var systems = F_SYS.GetMaintainableSystems(Emp_NO);
-                return Json(new { success = true, data = systems });
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "取得系統清單失敗：" + ex.Message });
-            }
-        }
-
-        // 系統申請(新增/修改)
-        [HttpPost]
-        public JsonResult ApplySystem(M_SYS_Apply model)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
+                var decryptedTicket = FormsAuthentication.Decrypt(authCookie.Value);
+                if (decryptedTicket.Expiration >= DateTime.Now)
                 {
-                    return Json(new { success = false, message = "資料驗證失敗" });
+                    this.ticket = decryptedTicket;
+                    this.str_AD_Form = this.ticket?.Name;
+                    this.str_UserData_Form = this.ticket?.UserData;
+                    this.AD = !string.IsNullOrEmpty(str_AD_Form) ? str_AD_Form : SVS_員工基本資料.Get_員工AD();
+                    this.Emp_NO = SVS_員工基本資料.Get_員工編號(this.AD).ToUpper().Trim();
+                    this.Emp_Data = !string.IsNullOrEmpty(this.str_UserData_Form) ? JsonConvert.DeserializeObject<VM_Employee.VM_員工部門職稱>(this.str_UserData_Form) : SVS_員工基本資料.Get_員工基本資料(this.Emp_NO_原始);
+                    this.APG_NO = this.Emp_Data?.APG_NO ?? string.Empty;
+                    this.WebTrees = string.IsNullOrEmpty(this.APG_NO) ? new List<VM_Employee.WebTree_Node>() : SVS_員工基本資料.Get_Tree(this.APG_NO);
                 }
-
-                string empNo = Emp_NO;
-                string empName = F_SYS.GetEmployeeName(empNo);
-
-                if (string.IsNullOrEmpty(empName))
-                {
-                    return Json(new { success = false, message = "無法取得員工姓名" });
-                }
-
-                // 檢查系統是否存在於AP_SYS
-                bool existsInApSys = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
-                bool hasGroup001 = false;
-
-                if (existsInApSys)
-                {
-                    // 檢查是否有001群組
-                    hasGroup001 = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
-                }
-
-                // 判斷三種情況
-                int scenario = 0;
-                string result = null;
-
-                if (!existsInApSys)
-                {
-                    // 情況1: 系統完全不存在
-                    scenario = 1;
-                    result = ProcessScenario1(model.SYS_ID, model.SYS_NAME, empNo, empName);
-                }
-                else if (existsInApSys && !hasGroup001)
-                {
-                    // 情況2: 系統存在但沒有001群組
-                    scenario = 2;
-                    result = ProcessScenario2(model.SYS_ID, model.SYS_NAME, empNo, empName);
-                }
-                else if (existsInApSys && hasGroup001)
-                {
-                    // 情況3: 系統存在且有001群組
-                    scenario = 3;
-                    result = ProcessScenario3(model.SYS_ID, model.SYS_NAME, empNo, empName);
-                }
-
-                if (result == null || !result.Contains("fail"))
-                {
-                    return Json(new { success = true, message = "系統申請成功", scenario = scenario });
-                }
-                else
-                {
-                    return Json(new { success = false, message = "系統申請失敗：" + result });
-                }
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "系統申請發生錯誤：" + ex.Message });
             }
         }
 
-        // 情況1: 新增系統、群組、使用者
-        private string ProcessScenario1(string sysId, string sysName, string empNo, string empName)
+        protected override void HandleUnknownAction(string actionName)
         {
-            // 1.2.1 新增到AP_SYS
-            string result = F_SYS.InsertSystemToApSys(sysId, sysName, empNo);
-            if (result != null && result.Contains("fail")) return result;
-
-            // 1.2.2 新增001群組
-            result = F_SYS.InsertGroup001(sysId, empNo);
-            if (result != null && result.Contains("fail")) return result;
-
-            // 1.2.3 新增使用者到001群組
-            result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
-            return result;
+            this.Redirect("/?wrongView=" + actionName).ExecuteResult(this.ControllerContext);
         }
 
-        // 情況2: 更新系統名稱、新增群組、新增使用者
-        private string ProcessScenario2(string sysId, string sysName, string empNo, string empName)
+        protected override void OnException(ExceptionContext filterContext)
         {
-            // 1.3.1 更新系統名稱
-            string result = F_SYS.UpdateSystemName(sysId, sysName, empNo);
-            if (result != null && result.Contains("fail")) return result;
+            base.OnException(filterContext);
 
-            // 1.3.2 新增001群組
-            result = F_SYS.InsertGroup001(sysId, empNo);
-            if (result != null && result.Contains("fail")) return result;
+            var exception = filterContext.Exception;
+            var user = filterContext.RequestContext.HttpContext.User;
 
-            // 1.3.3 新增使用者到001群組
-            result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
-            return result;
-        }
-
-        // 情況3: 更新系統名稱、新增使用者(如果不存在)
-        private string ProcessScenario3(string sysId, string sysName, string empNo, string empName)
-        {
-            // 1.4.1 更新系統名稱
-            string result = F_SYS.UpdateSystemName(sysId, sysName, empNo);
-            if (result != null && result.Contains("fail")) return result;
-
-            // 1.4.2 檢查使用者是否已存在,不存在才新增
-            bool userExists = F_SYS.CheckUserInGroup001(sysId, empNo);
-            if (!userExists)
+            if ((exception is CryptographicException)
+                || (exception is HttpAntiForgeryException && (user == null || !user.Identity.IsAuthenticated)))
             {
-                result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
+                HandleAuthenticationException(filterContext);
+                return;
             }
-            return result;
-        }
 
-        // 修改系統名稱
-        [HttpPost]
-        public JsonResult UpdateSystemName(string sysId, string sysName)
-        {
-            try
+            if (exception is HttpAntiForgeryException)
             {
-                if (string.IsNullOrEmpty(sysId) || string.IsNullOrEmpty(sysName))
+                var action = filterContext.RequestContext.RouteData.Values["action"] as string;
+                var controller = filterContext.RequestContext.RouteData.Values["controller"] as string;
+                if (action == "Login" && controller == "Account" && user != null && user.Identity.IsAuthenticated)
                 {
-                    return Json(new { success = false, message = "系統ID和系統名稱不可為空" });
-                }
-
-                string result = F_SYS.UpdateSystemName(sysId, sysName, Emp_NO);
-
-                if (result == null || !result.Contains("fail"))
-                {
-                    return Json(new { success = true, message = "系統名稱修改成功" });
-                }
-                else
-                {
-                    return Json(new { success = false, message = "系統名稱修改失敗：" + result });
+                    HandleAuthenticationException(filterContext);
+                    return;
                 }
             }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "修改系統名稱發生錯誤：" + ex.Message });
-            }
+
+            ILogger log = SVS_Serilog._log;
+            log.Error<string>(exception, exception.Message, exception.StackTrace);
         }
 
-
-        // 2. 權限設定頁面
-        [HttpGet]
-        public ActionResult SYS_PERMISSION_SET()
+        private void HandleAuthenticationException(ExceptionContext filterContext)
         {
-            return View();
+            filterContext.ExceptionHandled = true;
+            Session.Abandon();
+            FormsAuthentication.SignOut();
+            filterContext.Result = new RedirectResult(Url.Action("Login", "Account"));
         }
 
-
-        // 取得可維護系統選項(下拉選單用)
-        [HttpPost]
-        public JsonResult GetSystemOptions()
+        private static string[] List_排除清單_ctrl => Array.ConvertAll(new string[] { "Account", "Home", "SYSTEM_SET", "AP" ,"SYS" }, x => x.ToUpper());
+        private static string[] List_排除清單_action => Array.ConvertAll(new string[]
         {
-            try
-            {
-                var options = F_SYS.GetMaintainableSystemOptions(Emp_NO);
-                return Json(new { success = true, data = options });
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "取得系統選項失敗：" + ex.Message });
-            }
-        }
+          "Login", "Logout", "RefreshSession", "Main" //其他
+          ,"PageManagement","GroupManagement","Index","TokenEntry","TokenEntry_FUNC","Entry","Entry_FUNC"
+          ,"SYS_APPLY","SYS_FUNC_SET","SYS_PERMISSION_SET"
 
-        // 導向群組管理
-        [HttpPost]
-        public JsonResult RedirectToGroupManagement(string sysId)
+        }, x => x.ToUpper());
+
+        //頁面權限統一控管，沒有權限就導去公佈欄頁面
+        //參考： https://stackoverflow.com/questions/18913600/add-a-default-parameter-to-all-actions 
+        protected override void OnActionExecuting(ActionExecutingContext filterContext)
         {
-            try
+            base.OnActionExecuting(filterContext);
+            GetTicket();
+            if (filterContext.ActionDescriptor is ReflectedActionDescriptor actionDescriptor)
             {
-                if (string.IsNullOrEmpty(sysId))
+                string ReturnType = actionDescriptor.MethodInfo.ReturnType.Name;
+                string ctrlName = filterContext.ActionDescriptor.ControllerDescriptor.ControllerName.ToUpper();
+                string actionName = filterContext.ActionDescriptor.ActionName.ToUpper();
+
+                if (ctrlName == "AP" || ctrlName == "HOME" ||
+                    new[] { "PAGEMANAGEMENT", "GROUPMANAGEMENT", "TokenEntry", "TokenEntry_FUNC", "INDEX" }.Contains(actionName))
                 {
-                    return Json(new { success = false, message = "請選擇系統" });
+                    return; // 直接通過，不做權限檢查
                 }
 
-                // 更新Session
-                Session["CurrentSystemId"] = sysId;
-
-                return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "導向失敗：" + ex.Message });
-            }
-        }
-
-        // 3. 功能頁面設定頁面
-        [HttpGet]
-        public ActionResult SYS_FUNC_SET()
-        {
-            return View();
-        }
-
-        // 導向頁面管理
-        [HttpPost]
-        public JsonResult RedirectToPageManagement(string sysId)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(sysId))
+                if (ReturnType == "ActionResult"
+                    && filterContext.HttpContext.Request.HttpMethod == "GET"
+                    && !filterContext.HttpContext.Request.IsAjaxRequest())
                 {
-                    return Json(new { success = false, message = "請選擇系統" });
+                    var _List_排除清單_ctrl = List_排除清單_ctrl.Select(x => x.ToUpper()).ToArray();
+                    var _List_排除清單_action = List_排除清單_action.Select(x => x.ToUpper()).ToArray();
+
+                    if (WebTrees != null
+                        && !_List_排除清單_ctrl.Contains(ctrlName)
+                        && !WebTrees.Any(x => string.IsNullOrEmpty(x.PARENT_ID) && x.FUNC_ID == ctrlName))
+                    {
+                        filterContext.Result = new RedirectResult(Url.Action("Main", "Home"));
+                        return;
+                    }
                 }
-
-                // 更新Session
-                Session["CurrentSystemId"] = sysId;
-
-                return Json(new { success = true, redirectUrl = Url.Action("PageManagement", "AP", new { systemId = sysId }) });
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "導向失敗：" + ex.Message });
             }
         }
-    }
-}
+        protected string CurrentSystemId
+        {
+            get
+            {
+                return Session["CurrentSystemId"] as string;
+            }
+        }
 
-VIEW:
-SYS_APPLY:
-@model IEnumerable<HI_APACCESS.Models.M_SYS.M_SYS>
-
-@using HI_APACCESS.Service;
-
-@{
-    ViewBag.Title = "系統申請管理";
-    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
-    var emp_APG_NO = controller.APG_NO;
-    var emp_no = controller.Emp_NO;
-    var ctrlName = ViewContext.RouteData.Values["controller"].ToString();
-}
-
-<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
-<link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css","CSS")" />
-
-<style>
-    .tb-workonroad a {
-        text-decoration: none;
-        color: #ffffff;
-        display: block;
-    }
-
-    .tb-workonroad thead tr {
-        background-color: #E6CCB2;
-    }
-</style>
-
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">系統申請管理New</div>
-</section>
-
-<div>
-    <div>
-        <div style="overflow-y: auto; height: 835px; overflow-x: auto; ">
-            <section class="form-data" id="table-border">
-                <table id="promTable" class="table table-bordered">
-                    <thead style="position:sticky; top:-0.1px; z-index:2;">
-                        <tr>
-                            <th style="width:100px;">@Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_insert", "新增", "submit", new { @class = "btn btn-green loadingButton", onclick = $"location.href='{Url.Action("Info_Insert", "PosImage")}'" })</th>
-                            @*<th>@Html.DisplayNameFor(x => x.FILE_NAME)</th>*@
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        @if (Model != null && Model.Any())
-                        {
-                            foreach (var item in Model)
-                            {
-                                <tr>
-                                    <td>
-                                        <div class=" d-flex">
-                                            @Html.Hi_Btn("INFO_LIST", emp_APG_NO, "", "btn_update", "修改", "submit", new { @class = "btn btn-blue loadingButton", onclick = $"location.href='{Url.Action("Info_Update", "PosImage")}?filename='" })
-                                        </div>
-                                    </td>
-                                    @*<td>@item.FILE_NAME</td>*@
-                                </tr>
-                            }
-                        }
-                        else
-                        {
-                            <tr>
-                                <td colspan="16" style="text-align:center; font-weight:600;">查無資料</td>
-                            </tr>
-
-                        }
-
-                    </tbody>
-                </table>
-            </section>
-        </div>
-    </div>
-</div>
-
-
-@section Scripts{
-    <script>
-        $(document).ready(function () {
-            initPage();
-
-        });
-    </script>
-}
-
-SYS_SYS_PERMISSION_SET:
-SYS_FUNC_SET:
-
-Model:
-namespace HI_APACCESS.Models.M_SYS
-{
-    // 系統清單
-    public class M_SYS
-    {
-        [Display(Name = "系統ID")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        public string SYS_NAME { get; set; }
-
-        [Display(Name = "建立人員")]
-        public string CREATOR { get; set; }
-
-        [Display(Name = "建立日期")]
-        public DateTime? CREATE_TIME { get; set; }
-
-        [Display(Name = "修改人員")]
-        public string EDITOR { get; set; }
-
-        [Display(Name = "修改日期")]
-        public DateTime? EDIT_TIME { get; set; }
-    }
-
-    // 系統申請/修改
-    public class M_SYS_Apply
-    {
-        [Display(Name = "系統ID")]
-        [Required(ErrorMessage = "系統ID為必填")]
-        [StringLength(50, ErrorMessage = "系統ID長度不可超過50字元")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        [Required(ErrorMessage = "系統名稱為必填")]
-        [StringLength(100, ErrorMessage = "系統名稱長度不可超過100字元")]
-        public string SYS_NAME { get; set; }
-
-        public string Action { get; set; } // "Add" or "Edit"
-    }
-
-    // 可維護系統下拉選項
-    public class M_SYS_Option
-    {
-        [Display(Name = "系統ID")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        public string SYS_NAME { get; set; }
-
-        public string DisplayText => $"{SYS_ID} - {SYS_NAME}";
-    }
-
-    // 系統申請結果
-    public class M_SYS_ApplyResult
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; }
-        public int Scenario { get; set; } // 1, 2, or 3 (對應三種新增情況)
+        protected F_AP GetAPService()
+        {
+            string currentSystemId = Session["CurrentSystemId"] as string;
+            if (string.IsNullOrEmpty(currentSystemId)) // 使用變數
+            {
+                throw new InvalidOperationException("系統ID遺失，請重新登入");
+            }
+            return new F_AP(currentSystemId); // 使用變數
+        }
     }
 }
