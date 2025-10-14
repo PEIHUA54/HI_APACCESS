@@ -1,60 +1,220 @@
-  //// 原本的 RefreshSession 邏輯
-  //if (User.Identity.IsAuthenticated)
-  //{
-  //    return Content("success");
-  //}
-  //else
-  //{
-  //    return Content("lost");
-  //}
-  //string Status = "lost";
-  //var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
-  //if (authCookie != null)
-  //{
-  //    var cookieValue = authCookie.Value;
-  //    if (!String.IsNullOrWhiteSpace(cookieValue))
-  //    {
-  //        var ticket = FormsAuthentication.Decrypt(cookieValue);
+了解了！你需要整合原本的 Ticket 更新邏輯和新的 TOKEN 登入邏輯。讓我幫你完整重寫 `RefreshSession` 方法：
 
-  //        //檢查Session遺失、不變、更新(剩餘時間小於30秒)
-  //        if (ticket.Expiration <= DateTime.Now)
-  //        {
-  //            Status = "lost";
-  //        }
-  //        else if (ticket.Expiration > DateTime.Now && ticket.Expiration <= DateTime.Now.AddSeconds(30))
-  //        {
-  //            VM_員工部門職稱 login = JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
-  //            var ticket_new = new FormsAuthenticationTicket(1,//版本
-  //                login.AD,//使用者名稱
-  //                DateTime.Now,//發行時間
-  //                DateTime.Now.AddMinutes(20),//有效期限
-  //                false,//是否將 Cookie 設定成 Session Cookie，如果是則會在瀏覽器關閉後移除
-  //                JsonConvert.SerializeObject(login),//將要記錄的使用者資訊轉換為 JSON 字串
-  //                FormsAuthentication.FormsCookiePath);//儲存 Cookie 的路徑
+```csharp
+[HttpPost]
+public ActionResult RefreshSession()
+{
+    // 1. 先檢查是否透過 JWT token 登入（TOKEN 導向進來的使用者）
+    string systemId = Session["CurrentSystemId"] as string;
+    string empNo = Session["CurrentEmpNo"] as string;
 
-  //            //將 Ticket 加密
-  //            var encTicket = FormsAuthentication.Encrypt(ticket_new);
+    if (!string.IsNullOrEmpty(systemId) && !string.IsNullOrEmpty(empNo))
+    {
+        // TOKEN 使用者直接回傳成功，不需要檢查 Forms Authentication
+        return Content("success");
+    }
 
-  //            // 清空所有 Session 資料
-  //            Session.RemoveAll();
+    // 2. 一般登入使用者：檢查並更新 Forms Authentication Ticket
+    string Status = "lost";
+    var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+    
+    if (authCookie != null)
+    {
+        var cookieValue = authCookie.Value;
+        if (!String.IsNullOrWhiteSpace(cookieValue))
+        {
+            try
+            {
+                var ticket = FormsAuthentication.Decrypt(cookieValue);
 
-  //            //將 Ticket 寫入 Cookie
-  //            //Response.Cookies.Add(new HttpCookie(FormsAuthentication.FormsCookieName, encTicket));
-  //            HttpCookie sessionCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
-  //            {
-  //                Secure = Request.IsSecureConnection,  //確保在htpps下啟用secure屬性
-  //                HttpOnly = true //防止客戶端腳本訪問 cookie
-  //            };
-  //            Response.Cookies.Add(sessionCookie);
+                if (ticket != null)
+                {
+                    // 檢查 Ticket 是否過期
+                    if (ticket.Expiration <= DateTime.Now)
+                    {
+                        Status = "lost";
+                    }
+                    // 剩餘時間小於等於30秒，需要更新 Ticket
+                    else if (ticket.Expiration > DateTime.Now && ticket.Expiration <= DateTime.Now.AddSeconds(30))
+                    {
+                        VM_員工部門職稱 login = JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
+                        
+                        var ticket_new = new FormsAuthenticationTicket(
+                            1,  // 版本
+                            login.AD,  // 使用者名稱
+                            DateTime.Now,  // 發行時間
+                            DateTime.Now.AddMinutes(20),  // 有效期限
+                            false,  // 是否將 Cookie 設定成 Session Cookie
+                            JsonConvert.SerializeObject(login),  // 使用者資訊
+                            FormsAuthentication.FormsCookiePath  // Cookie 路徑
+                        );
 
+                        // 將 Ticket 加密
+                        var encTicket = FormsAuthentication.Encrypt(ticket_new);
 
+                        // 將新 Ticket 寫入 Cookie
+                        HttpCookie sessionCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+                        {
+                            Secure = Request.IsSecureConnection,
+                            HttpOnly = true
+                        };
+                        Response.Cookies.Add(sessionCookie);
 
-  //            Status = "refresh-OK-新的有效時間:" + ticket_new.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
-  //        }
-  //        else
-  //        {
-  //            Status = "continue-OK-原本的有效時間:" + ticket.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
-  //        }
-  //    }
-  //}
-  //return Content(Status);
+                        Status = "success";  // 前端只需要知道成功即可
+                        // 如果需要除錯：Status = "refresh-OK-新的有效時間:" + ticket_new.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+                    }
+                    else
+                    {
+                        Status = "success";  // 前端只需要知道成功即可
+                        // 如果需要除錯：Status = "continue-OK-原本的有效時間:" + ticket.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Ticket 解密失敗
+                log.Error<string>(ex, "RefreshSession Decrypt Error: " + ex.Message, ex.StackTrace);
+                Status = "lost";
+            }
+            finally
+            {
+                Serilog.Log.CloseAndFlush();
+            }
+        }
+    }
+
+    return Content(Status);
+}
+```
+
+## 關鍵修改說明
+
+### 1. **兩種登入方式的判斷順序**
+
+```csharp
+// 先檢查 TOKEN 登入
+if (!string.IsNullOrEmpty(systemId) && !string.IsNullOrEmpty(empNo))
+{
+    return Content("success");
+}
+
+// 再處理一般登入的 Ticket 邏輯
+```
+
+### 2. **回傳值統一為 “success”**
+
+原本的除錯訊息（如 “refresh-OK-新的有效時間”）對前端來說都是成功狀態，統一回傳 `"success"` 讓前端判斷更簡單。如果需要除錯，可以保留原本的詳細訊息。
+
+### 3. **GetTicket 的使用方式**
+
+如果你需要在其他地方使用 Ticket 資料（例如取得目錄樹），可以新增一個 Helper 方法：
+
+```csharp
+// 在 AccountController 或 HI_APACCESSBaseController 中新增
+protected VM_員工部門職稱 GetTicketData()
+{
+    // 先檢查是否為 TOKEN 登入
+    string systemId = Session["CurrentSystemId"] as string;
+    string empNo = Session["CurrentEmpNo"] as string;
+
+    if (!string.IsNullOrEmpty(systemId) && !string.IsNullOrEmpty(empNo))
+    {
+        // TOKEN 使用者，從 Session 取得資料
+        // 這裡可能需要額外查詢資料庫取得完整的員工資訊
+        return new VM_員工部門職稱
+        {
+            員編 = empNo,
+            AD = empNo  // 根據實際需求調整
+        };
+    }
+
+    // 一般登入使用者，從 Cookie Ticket 取得
+    var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+    if (authCookie != null && !string.IsNullOrEmpty(authCookie.Value))
+    {
+        try
+        {
+            var ticket = FormsAuthentication.Decrypt(authCookie.Value);
+            if (ticket != null && !ticket.Expired)
+            {
+                return JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    return null;
+}
+```
+
+### 4. **在 HI_APACCESSBaseController 中確保 Emp_NO 可用**
+
+如果你的 `HI_APACCESSBaseController` 中有 `Emp_NO` 屬性，確保它能支援兩種登入方式：
+
+```csharp
+public abstract class HI_APACCESSBaseController : Controller
+{
+    // 取得登入員工編號
+    protected string Emp_NO
+    {
+        get
+        {
+            // 先檢查 TOKEN 登入
+            string empNo = Session["CurrentEmpNo"] as string;
+            if (!string.IsNullOrEmpty(empNo))
+            {
+                return empNo;
+            }
+
+            // 一般登入：從 Ticket 取得
+            var ticketData = GetTicketData();
+            return ticketData?.員編 ?? "";
+        }
+    }
+
+    protected VM_員工部門職稱 GetTicketData()
+    {
+        var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+        if (authCookie != null && !string.IsNullOrEmpty(authCookie.Value))
+        {
+            try
+            {
+                var ticket = FormsAuthentication.Decrypt(authCookie.Value);
+                if (ticket != null && !ticket.Expired)
+                {
+                    return JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
+}
+```
+
+## 測試步驟
+
+### 1. **一般登入測試**
+
+- 透過 `/Account/Login` 正常登入
+- 確認可以進入 Main 頁面
+- 確認 RefreshSession 回傳 “success”
+- 確認 Ticket 在剩餘30秒時會自動更新
+
+### 2. **TOKEN 登入測試**
+
+- 透過其他系統的 TOKEN 導向進入
+- 確認 Session 有 `CurrentSystemId` 和 `CurrentEmpNo`
+- 確認 RefreshSession 直接回傳 “success”
+- 確認可以正常使用 GroupManagement 和 PageManagement
+
+### 3. **新功能測試**
+
+- 一般登入後進入三個新功能頁面
+- 確認 `Emp_NO` 可以正確取得
+- 確認資料庫操作正常
+
+這樣修改後，兩種登入方式應該可以並存且不會互相干擾了！有任何問題再告訴我。​​​​​​​​​​​​​​​​
