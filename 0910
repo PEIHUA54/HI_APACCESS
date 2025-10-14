@@ -1,174 +1,1069 @@
-了解！你要的是把「母群組」回傳成真的 陣列（List<string>），而且資料庫現在用分號（可能還是全形 ；）分隔。下面是已修改好的 FGetUserData 片段：我把 ParentGroupID 的產生邏輯加強為同時支援半形分號 ;、全形分號 ；、甚至以前的逗號 ,/，，並自動 Trim、去重複，確保回傳像 "ParentGroupID": ["001","002","003","008"]。
+完美!我現在開始幫你生成完整的程式碼。
 
-using HI_APACCESS_DLL.Factory;
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
+## 1. Model - M_SYS.cs
+
+```csharp
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using static HI_APACCESS_DLL.Common;
+using System.ComponentModel.DataAnnotations;
 
-namespace HI_APACCESS_DLL.Factory
+namespace HI_APACCESS.Models
 {
-    internal class FGetUserData
+    // 系統清單模型
+    public class M_SYS
     {
-        internal GetUserDataModel.GetUserDataResponse Execute(string sysId, string userAd, string environment)
-        {
-            var res = new GetUserDataModel.GetUserDataResponse();
+        public string SYS_ID { get; set; }
+        public string SYS_NAME { get; set; }
+        public string CREATOR { get; set; }
+        public DateTime? CREATE_TIME { get; set; }
+        public string EDITOR { get; set; }
+        public DateTime? EDIT_TIME { get; set; }
+    }
 
+    // 系統申請/修改模型
+    public class M_SYS_Apply
+    {
+        [Required(ErrorMessage = "系統ID為必填")]
+        [StringLength(50, ErrorMessage = "系統ID長度不可超過50字元")]
+        public string SYS_ID { get; set; }
+
+        [Required(ErrorMessage = "系統名稱為必填")]
+        [StringLength(100, ErrorMessage = "系統名稱長度不可超過100字元")]
+        public string SYS_NAME { get; set; }
+
+        public string Action { get; set; } // "Add" or "Edit"
+    }
+
+    // 可維護系統下拉選項模型
+    public class M_SYS_Option
+    {
+        public string SYS_ID { get; set; }
+        public string SYS_NAME { get; set; }
+        public string DisplayText => $"{SYS_ID} - {SYS_NAME}";
+    }
+
+    // 系統申請結果模型
+    public class M_SYS_ApplyResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int Scenario { get; set; } // 1, 2, or 3 (對應三種新增情況)
+    }
+}
+```
+
+## 2. F_SYS.cs (資料存取層)
+
+```csharp
+using HI_APACCESS.Models;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+
+namespace HI_APACCESS.Factories
+{
+    public class F_SYS
+    {
+        // 取得登入員工可維護的系統清單(001群組)
+        public List<M_SYS> GetMaintainableSystems(string empNo)
+        {
+            string sql = @"
+                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME], s.[CREATOR], s.[CREATE_TIME], s.[EDITOR], s.[EDIT_TIME]
+                FROM [HI-APLOG].[dbo].[AP_SYS] s
+                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
+                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+                WHERE u.[U_ID] = @EMP_NO 
+                  AND u.[APG_NO] = '001' 
+                  AND g.[APG_NO] = '001'
+                ORDER BY s.[SYS_ID]";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", empNo)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<M_SYS>(dt);
+        }
+
+        // 取得可維護系統選項(用於下拉選單)
+        public List<M_SYS_Option> GetMaintainableSystemOptions(string empNo)
+        {
+            string sql = @"
+                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME]
+                FROM [HI-APLOG].[dbo].[AP_SYS] s
+                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
+                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+                WHERE u.[U_ID] = @EMP_NO 
+                  AND u.[APG_NO] = '001' 
+                  AND g.[APG_NO] = '001'
+                ORDER BY s.[SYS_ID]";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", empNo)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<M_SYS_Option>(dt);
+        }
+
+        // 檢查系統是否存在於AP_SYS
+        public bool CheckSystemExistsInApSys(string sysId)
+        {
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM [HI-APLOG].[dbo].[AP_SYS] 
+                WHERE [SYS_ID] = @SYS_ID";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
+        }
+
+        // 檢查系統是否有001群組
+        public bool CheckSystemHasGroup001(string sysId)
+        {
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001'";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
+        }
+
+        // 取得員工姓名
+        public string GetEmployeeName(string empNo)
+        {
+            string sql = @"
+                SELECT EMP_NAME 
+                FROM [HILIFE_DB3].[DB_SHARE].[dbo].[M1EMP_MAST] 
+                WHERE EMP_NO = @EMP_NO";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", empNo)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            if (dt.Rows.Count > 0)
+            {
+                return dt.Rows[0]["EMP_NAME"].ToString();
+            }
+            return "";
+        }
+
+        // 新增系統到AP_SYS
+        public string InsertSystemToApSys(string sysId, string sysName, string creator)
+        {
+            string sql = @"
+                INSERT INTO [HI-APLOG].[dbo].[AP_SYS] 
+                ([SYS_ID], [SYS_NAME], [CREATE_TIME], [CREATOR])
+                VALUES (@SYS_ID, @SYS_NAME, GETDATE(), @CREATOR)";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId),
+                new SqlParameter("@SYS_NAME", sysName),
+                new SqlParameter("@CREATOR", creator)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 更新系統名稱
+        public string UpdateSystemName(string sysId, string sysName, string editor)
+        {
+            string sql = @"
+                UPDATE [HI-APLOG].[dbo].[AP_SYS] 
+                SET [SYS_NAME] = @SYS_NAME, [EDIT_TIME] = GETDATE(), [EDITOR] = @EDITOR
+                WHERE [SYS_ID] = @SYS_ID";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId),
+                new SqlParameter("@SYS_NAME", sysName),
+                new SqlParameter("@EDITOR", editor)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 新增001群組
+        public string InsertGroup001(string sysId, string creator)
+        {
+            string sql = @"
+                INSERT INTO [HI-AUTOS].[dbo].[AP_GROUP] 
+                ([SYS_ID], [APG_NO], [APG_NAME], [CREATE_TIME], [CREATOR])
+                VALUES (@SYS_ID, '001', N'管理員(資訊)', GETDATE(), @CREATOR)";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId),
+                new SqlParameter("@CREATOR", creator)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 新增使用者到001群組
+        public string InsertUserToGroup001(string sysId, string empNo, string empName)
+        {
+            string sql = @"
+                INSERT INTO [HI-AUTOS].[dbo].[AP_USER] 
+                ([SYS_ID], [APG_NO], [U_ID], [U_NAME])
+                VALUES (@SYS_ID, '001', @U_ID, @U_NAME)";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId),
+                new SqlParameter("@U_ID", empNo),
+                new SqlParameter("@U_NAME", empName)
+            };
+
+            return SVS_DBmanager.ExecuteSQL(sql, parameters);
+        }
+
+        // 檢查使用者是否已在001群組
+        public bool CheckUserInGroup001(string sysId, string empNo)
+        {
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM [HI-AUTOS].[dbo].[AP_USER] 
+                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001' AND [U_ID] = @U_ID";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId),
+                new SqlParameter("@U_ID", empNo)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
+        }
+    }
+}
+```
+
+## 3. SYSController.cs
+
+```csharp
+using HI_APACCESS.Factories;
+using HI_APACCESS.Models;
+using System;
+using System.Collections.Generic;
+using System.Web.Mvc;
+
+namespace HI_APACCESS.Controllers
+{
+    public class SYSController : HI_APACCESSBaseController
+    {
+        private F_SYS F_SYS = new F_SYS();
+
+        // 1. 系統申請頁面
+        [HttpGet]
+        public ActionResult SystemApply()
+        {
+            ViewBag.Title = "系統申請";
+            return View();
+        }
+
+        // 取得可維護的系統清單(DataTable用)
+        [HttpPost]
+        public JsonResult GetMaintainableSystems()
+        {
             try
             {
-                // 0) 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                var systems = F_SYS.GetMaintainableSystems(Emp_NO);
+                return Json(new { success = true, data = systems });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得系統清單失敗：" + ex.Message });
+            }
+        }
+
+        // 系統申請(新增/修改)
+        [HttpPost]
+        public JsonResult ApplySystem(M_SYS_Apply model)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
                 {
-                    res.Result_code = Codes.ENV_ERROR;
-                    res.Msg = "環境錯誤，只接受 TEST 或 PROD";
-                    return res;
+                    return Json(new { success = false, message = "資料驗證失敗" });
                 }
 
-                // 1) 系統授權檢查
-                var authorized = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorized.Contains(sysId))
+                string empNo = Emp_NO;
+                string empName = F_SYS.GetEmployeeName(empNo);
+
+                if (string.IsNullOrEmpty(empName))
                 {
-                    res.Result_code = Codes.SYS_UNAUTHORIZED;
-                    res.Msg = "系統未授權";
-                    return res;
+                    return Json(new { success = false, message = "無法取得員工姓名" });
                 }
 
-                // 2) AD → 員編
-                string empNo = FIdentity.GetEmpNoByAD(userAd, environment);
+                // 檢查系統是否存在於AP_SYS
+                bool existsInApSys = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
+                bool hasGroup001 = false;
 
-                // 3) 查使用者基本＋群組（用員編）
-                string groupId = null;
-                string groupName = null;
-                bool sensitive = false;
-                string userName = null;
-                string parentRaw = null;
-                string organ = null;
-                string post = null;
-
-                using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                if (existsInApSys)
                 {
-                    conn.Open();
+                    // 檢查是否有001群組
+                    hasGroup001 = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
+                }
 
-                    // 3-1 主要資料
-                    string sqlMain = @"
-SELECT TOP 1
-    B.U_ID           AS UserID,
-    B.U_NAME         AS UserName,
-    A.APG_NO         AS GroupID,
-    A.APG_NAME       AS GroupName,
-    A.PARENT_APG_NO  AS ParentRaw,
-    A.SENSITIVE_DATA_ACCESS AS SensitiveDataAccess,
-    M.ORGAN_CAP      AS OrganName,
-    M.POST_NAME      AS PostName
-FROM [HI-AUTOS].[dbo].[AP_GROUP] A
-LEFT JOIN [HI-AUTOS].[dbo].[AP_USER] B  
-    ON A.APG_NO = B.APG_NO 
-    AND A.SYS_ID = B.SYS_ID 
-LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M 
-    ON B.U_ID = M.EMP_NO
-WHERE A.SYS_ID=@SYS_ID 
-  AND B.U_ID=@EMP_NO;
-";
+                // 判斷三種情況
+                int scenario = 0;
+                string result = null;
 
-                    using (var cmd = new SqlCommand(sqlMain, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                if (!existsInApSys)
+                {
+                    // 情況1: 系統完全不存在
+                    scenario = 1;
+                    result = ProcessScenario1(model.SYS_ID, model.SYS_NAME, empNo, empName);
+                }
+                else if (existsInApSys && !hasGroup001)
+                {
+                    // 情況2: 系統存在但沒有001群組
+                    scenario = 2;
+                    result = ProcessScenario2(model.SYS_ID, model.SYS_NAME, empNo, empName);
+                }
+                else if (existsInApSys && hasGroup001)
+                {
+                    // 情況3: 系統存在且有001群組
+                    scenario = 3;
+                    result = ProcessScenario3(model.SYS_ID, model.SYS_NAME, empNo, empName);
+                }
 
-                        using (var r = cmd.ExecuteReader())
-                        {
-                            if (r.Read())
-                            {
-                                userName = r["UserName"]?.ToString();
-                                groupId = r["GroupID"]?.ToString();
-                                groupName = r["GroupName"]?.ToString();
-                                parentRaw = r["ParentRaw"]?.ToString();
-                                sensitive = r["SensitiveDataAccess"] != DBNull.Value && Convert.ToBoolean(r["SensitiveDataAccess"]);
-                                organ = r["OrganName"]?.ToString();
-                                post = r["PostName"]?.ToString();
-                            }
-                        }
-                    }
-
-                    if (string.IsNullOrWhiteSpace(groupId))
-                    {
-                        res.Result_code = Codes.NO_PERMISSION;
-                        res.Msg = "查無權限";
-                        return res;
-                    }
-
-                    // 3-2 母群組：支援 ; 、；、, 、，，去空白、去重複
-                    var parentList = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(parentRaw))
-                    {
-                        var seps = new[] { ';', '；', ',', '，' };
-                        parentList = parentRaw
-                            .Split(seps, StringSplitOptions.RemoveEmptyEntries)
-                            .Select(s => s.Trim())
-                            .Where(s => s.Length > 0)
-                            .Distinct()
-                            .ToList();
-                    }
-
-                    // 3-3 子群組：資料庫欄位為分號分隔 → 用分號框住做精準比對
-                    var childList = new List<string>();
-                    string sqlChild = @"
-SELECT APG_NO 
-FROM [HI-AUTOS].[dbo].[AP_GROUP]
-WHERE SYS_ID=@SYS_ID
-  AND (';' + LTRIM(RTRIM(PARENT_APG_NO)) + ';') LIKE '%;' + @MY_GID + ';%';
-";
-
-                    using (var cmd2 = new SqlCommand(sqlChild, conn))
-                    {
-                        cmd2.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd2.Parameters.AddWithValue("@MY_GID", groupId);
-
-                        using (var r2 = cmd2.ExecuteReader())
-                        {
-                            while (r2.Read())
-                            {
-                                childList.Add(r2["APG_NO"].ToString());
-                            }
-                        }
-                    }
-
-                    // 4) 回應
-                    res.Result_code = Codes.SUCCESS;
-                    res.Msg = "成功";
-                    res.Result = new GetUserDataModel.ResultData
-                    {
-                        UserID = empNo,                 // 回傳員編
-                        UserName = userName,
-                        GroupID = groupId,
-                        GroupName = groupName,
-                        ParentGroupID = parentList,     // ← 這裡就是 ["001","002","003",...]
-                        ChildGroupID = childList,
-                        SensitiveDataAccess = sensitive,
-                        OrganName = organ,
-                        PostName = post
-                    };
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "系統申請成功", scenario = scenario });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "系統申請失敗：" + result });
                 }
             }
             catch (Exception ex)
             {
-                res.Result_code = Codes.SYSTEM_ERROR;
-                res.Msg = "系統錯誤：" + ex.Message;
+                return Json(new { success = false, message = "系統申請發生錯誤：" + ex.Message });
             }
+        }
 
-            return res;
+        // 情況1: 新增系統、群組、使用者
+        private string ProcessScenario1(string sysId, string sysName, string empNo, string empName)
+        {
+            // 1.2.1 新增到AP_SYS
+            string result = F_SYS.InsertSystemToApSys(sysId, sysName, empNo);
+            if (result != null && result.Contains("fail")) return result;
+
+            // 1.2.2 新增001群組
+            result = F_SYS.InsertGroup001(sysId, empNo);
+            if (result != null && result.Contains("fail")) return result;
+
+            // 1.2.3 新增使用者到001群組
+            result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
+            return result;
+        }
+
+        // 情況2: 更新系統名稱、新增群組、新增使用者
+        private string ProcessScenario2(string sysId, string sysName, string empNo, string empName)
+        {
+            // 1.3.1 更新系統名稱
+            string result = F_SYS.UpdateSystemName(sysId, sysName, empNo);
+            if (result != null && result.Contains("fail")) return result;
+
+            // 1.3.2 新增001群組
+            result = F_SYS.InsertGroup001(sysId, empNo);
+            if (result != null && result.Contains("fail")) return result;
+
+            // 1.3.3 新增使用者到001群組
+            result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
+            return result;
+        }
+
+        // 情況3: 更新系統名稱、新增使用者(如果不存在)
+        private string ProcessScenario3(string sysId, string sysName, string empNo, string empName)
+        {
+            // 1.4.1 更新系統名稱
+            string result = F_SYS.UpdateSystemName(sysId, sysName, empNo);
+            if (result != null && result.Contains("fail")) return result;
+
+            // 1.4.2 檢查使用者是否已存在,不存在才新增
+            bool userExists = F_SYS.CheckUserInGroup001(sysId, empNo);
+            if (!userExists)
+            {
+                result = F_SYS.InsertUserToGroup001(sysId, empNo, empName);
+            }
+            return result;
+        }
+
+        // 修改系統名稱
+        [HttpPost]
+        public JsonResult UpdateSystemName(string sysId, string sysName)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId) || string.IsNullOrEmpty(sysName))
+                {
+                    return Json(new { success = false, message = "系統ID和系統名稱不可為空" });
+                }
+
+                string result = F_SYS.UpdateSystemName(sysId, sysName, Emp_NO);
+
+                if (result == null || !result.Contains("fail"))
+                {
+                    return Json(new { success = true, message = "系統名稱修改成功" });
+                }
+                else
+                {
+                    return Json(new { success = false, message = "系統名稱修改失敗：" + result });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改系統名稱發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 2. 權限設定頁面
+        [HttpGet]
+        public ActionResult PermissionSetting()
+        {
+            ViewBag.Title = "權限設定";
+            return View();
+        }
+
+        // 取得可維護系統選項(下拉選單用)
+        [HttpPost]
+        public JsonResult GetSystemOptions()
+        {
+            try
+            {
+                var options = F_SYS.GetMaintainableSystemOptions(Emp_NO);
+                return Json(new { success = true, data = options });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得系統選項失敗：" + ex.Message });
+            }
+        }
+
+        // 導向群組管理
+        [HttpPost]
+        public JsonResult RedirectToGroupManagement(string sysId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId))
+                {
+                    return Json(new { success = false, message = "請選擇系統" });
+                }
+
+                // 更新Session
+                Session["CurrentSystemId"] = sysId;
+
+                return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "導向失敗：" + ex.Message });
+            }
+        }
+
+        // 3. 功能頁面設定頁面
+        [HttpGet]
+        public ActionResult FunctionPageSetting()
+        {
+            ViewBag.Title = "功能頁面設定";
+            return View();
+        }
+
+        // 導向頁面管理
+        [HttpPost]
+        public JsonResult RedirectToPageManagement(string sysId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(sysId))
+                {
+                    return Json(new { success = false, message = "請選擇系統" });
+                }
+
+                // 更新Session
+                Session["CurrentSystemId"] = sysId;
+
+                return Json(new { success = true, redirectUrl = Url.Action("PageManagement", "AP", new { systemId = sysId }) });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "導向失敗：" + ex.Message });
+            }
         }
     }
 }
+```
 
-重點說明
-	•	母群組拆分：Split(seps) 支援 ;、；、,、， 四種分隔符。
-	•	Trim() 去除空白
-	•	Distinct() 去重複
-	•	回傳一定是 List<string>，序列化後就是 ["001","002",...]
-	•	子群組比對：資料庫欄位已改為分號分隔，所以用
-(';' + PARENT_APG_NO + ';') LIKE '%;' + @MY_GID + ';%' 做精準包含（避免 01 誤撞 001）。
+## 4. Views
 
-這樣改完，ParentGroupID 的 JSON 就會是你要的格式。
+### SystemApply.cshtml
+
+```html
+@{
+    ViewBag.Title = "系統申請";
+}
+
+<div class="container-fluid mt-3">
+    <div class="card">
+        <div class="card-header">
+            <h4 class="mb-0">系統申請</h4>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <button type="button" class="btn btn-primary" id="btnAdd">
+                    <i class="fas fa-plus"></i> 新增系統
+                </button>
+            </div>
+
+            <table id="systemTable" class="table table-striped table-bordered" style="width:100%">
+                <thead>
+                    <tr>
+                        <th>系統ID</th>
+                        <th>系統名稱</th>
+                        <th>建立者</th>
+                        <th>建立時間</th>
+                        <th>修改者</th>
+                        <th>修改時間</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 新增/修改Modal -->
+<div class="modal fade" id="systemModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">新增系統</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="systemForm">
+                    <div class="form-group">
+                        <label for="sysId">系統ID <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sysId" name="SYS_ID" required maxlength="50">
+                        <small class="form-text text-muted">系統ID不可超過50字元</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="sysName">系統名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sysName" name="SYS_NAME" required maxlength="100">
+                        <small class="form-text text-muted">系統名稱不可超過100字元</small>
+                    </div>
+                    <input type="hidden" id="actionType" name="Action" value="Add">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="btnSave">儲存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        var table;
+
+        $(document).ready(function () {
+            // 初始化DataTable
+            initDataTable();
+
+            // 載入資料
+            loadSystemData();
+
+            // 新增按鈕
+            $('#btnAdd').click(function () {
+                resetForm();
+                $('#modalTitle').text('新增系統');
+                $('#sysId').prop('readonly', false);
+                $('#actionType').val('Add');
+                $('#systemModal').modal('show');
+            });
+
+            // 儲存按鈕
+            $('#btnSave').click(function () {
+                saveSystem();
+            });
+        });
+
+        // 初始化DataTable
+        function initDataTable() {
+            table = $('#systemTable').DataTable({
+                columns: [
+                    { data: 'SYS_ID' },
+                    { data: 'SYS_NAME' },
+                    { data: 'CREATOR' },
+                    {
+                        data: 'CREATE_TIME',
+                        render: function (data) {
+                            return data ? formatDateTime(data) : '';
+                        }
+                    },
+                    { data: 'EDITOR' },
+                    {
+                        data: 'EDIT_TIME',
+                        render: function (data) {
+                            return data ? formatDateTime(data) : '';
+                        }
+                    },
+                    {
+                        data: null,
+                        orderable: false,
+                        render: function (data, type, row) {
+                            return '<button class="btn btn-sm btn-warning btn-edit" data-sysid="' + row.SYS_ID + '" data-sysname="' + row.SYS_NAME + '"><i class="fas fa-edit"></i> 修改</button>';
+                        }
+                    }
+                ],
+                language: {
+                    url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/zh-HANT.json'
+                },
+                order: [[0, 'asc']]
+            });
+
+            // 修改按鈕事件
+            $('#systemTable').on('click', '.btn-edit', function () {
+                var sysId = $(this).data('sysid');
+                var sysName = $(this).data('sysname');
+                editSystem(sysId, sysName);
+            });
+        }
+
+        // 載入系統資料
+        function loadSystemData() {
+            $.ajax({
+                url: '@Url.Action("GetMaintainableSystems", "SYS")',
+                type: 'POST',
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        table.clear();
+                        table.rows.add(response.data);
+                        table.draw();
+                    } else {
+                        alert('載入失敗：' + response.message);
+                    }
+                },
+                error: function () {
+                    alert('載入系統資料時發生錯誤');
+                }
+            });
+        }
+
+        // 儲存系統
+        function saveSystem() {
+            var formData = {
+                SYS_ID: $('#sysId').val().trim(),
+                SYS_NAME: $('#sysName').val().trim(),
+                Action: $('#actionType').val()
+            };
+
+            if (!formData.SYS_ID || !formData.SYS_NAME) {
+                alert('系統ID和系統名稱為必填');
+                return;
+            }
+
+            $.ajax({
+                url: '@Url.Action("ApplySystem", "SYS")',
+                type: 'POST',
+                data: formData,
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        alert(response.message);
+                        $('#systemModal').modal('hide');
+                        loadSystemData();
+                    } else {
+                        alert(response.message);
+                    }
+                },
+                error: function () {
+                    alert('儲存時發生錯誤');
+                }
+            });
+        }
+
+        // 編輯系統
+        function editSystem(sysId, sysName) {
+            resetForm();
+            $('#modalTitle').text('修改系統名稱');
+            $('#sysId').val(sysId).prop('readonly', true);
+            $('#sysName').val(sysName);
+            $('#actionType').val('Edit');
+            $('#systemModal').modal('show');
+        }
+
+        // 重置表單
+        function resetForm() {
+            $('#systemForm')[0].reset();
+            $('#sysId').prop('readonly', false);
+        }
+
+        // 格式化日期時間
+        function formatDateTime(dateString) {
+            if (!dateString) return '';
+            var date = new Date(dateString);
+            var year = date.getFullYear();
+            var month = ('0' + (date.getMonth() + 1)).slice(-2);
+            var day = ('0' + date.getDate()).slice(-2);
+            var hours = ('0' + date.getHours()).slice(-2);
+            var minutes = ('0' + date.getMinutes()).slice(-2);
+            var seconds = ('0' + date.getSeconds()).slice(-2);
+            return year + '-' + month + '-' + day + ' ' + hours + ':' + minutes + ':' + seconds;
+        }
+    </script>
+}
+```
+
+### PermissionSetting.cshtml
+
+```html
+@{
+    ViewBag.Title = "權限設定";
+}
+
+<div class="container-fluid mt-3">
+    <div class="card">
+        <div class="card-header">
+            <h4 class="mb-0">權限設定</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="systemSelect">可維護的系統 <span class="text-danger">*</span></label>
+                        <select class="form-control" id="systemSelect">
+                            <option value="">請選擇系統</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-12">
+                    <button type="button" class="btn btn-primary" id="btnGo">
+                        <i class="fas fa-arrow-right"></i> 進入群組管理
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            // 載入系統選項
+            loadSystemOptions();
+
+            // 進入按鈕
+            $('#btnGo').click(function () {
+                var sysId = $('#systemSelect').val();
+                if (!sysId) {
+                    alert('請選擇系統');
+                    return;
+                }
+
+                $.ajax({
+                    url: '@Url.Action("RedirectToGroupManagement", "SYS")',
+                    type: 'POST',
+                    data: { sysId: sysId },
+                    dataType: 'json',
+                    success: function (response) {​​​​​​​​​​​​​​​​
+```javascript
+                        if (response.success) {
+                            window.location.href = response.redirectUrl;
+                        } else {
+                            alert(response.message);
+                        }
+                    },
+                    error: function () {
+                        alert('導向時發生錯誤');
+                    }
+                });
+            });
+        });
+
+        // 載入系統選項
+        function loadSystemOptions() {
+            $.ajax({
+                url: '@Url.Action("GetSystemOptions", "SYS")',
+                type: 'POST',
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        var select = $('#systemSelect');
+                        select.empty();
+                        select.append('<option value="">請選擇系統</option>');
+                        
+                        $.each(response.data, function (index, item) {
+                            select.append($('<option></option>')
+                                .val(item.SYS_ID)
+                                .text(item.SYS_ID + ' - ' + item.SYS_NAME));
+                        });
+                    } else {
+                        alert('載入系統選項失敗：' + response.message);
+                    }
+                },
+                error: function () {
+                    alert('載入系統選項時發生錯誤');
+                }
+            });
+        }
+    </script>
+}
+```
+
+### FunctionPageSetting.cshtml
+
+```html
+@{
+    ViewBag.Title = "功能頁面設定";
+}
+
+<div class="container-fluid mt-3">
+    <div class="card">
+        <div class="card-header">
+            <h4 class="mb-0">功能頁面設定</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label for="systemSelect">可維護的系統 <span class="text-danger">*</span></label>
+                        <select class="form-control" id="systemSelect">
+                            <option value="">請選擇系統</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-12">
+                    <button type="button" class="btn btn-primary" id="btnGo">
+                        <i class="fas fa-arrow-right"></i> 進入頁面管理
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            // 載入系統選項
+            loadSystemOptions();
+
+            // 進入按鈕
+            $('#btnGo').click(function () {
+                var sysId = $('#systemSelect').val();
+                if (!sysId) {
+                    alert('請選擇系統');
+                    return;
+                }
+
+                $.ajax({
+                    url: '@Url.Action("RedirectToPageManagement", "SYS")',
+                    type: 'POST',
+                    data: { sysId: sysId },
+                    dataType: 'json',
+                    success: function (response) {
+                        if (response.success) {
+                            window.location.href = response.redirectUrl;
+                        } else {
+                            alert(response.message);
+                        }
+                    },
+                    error: function () {
+                        alert('導向時發生錯誤');
+                    }
+                });
+            });
+        });
+
+        // 載入系統選項
+        function loadSystemOptions() {
+            $.ajax({
+                url: '@Url.Action("GetSystemOptions", "SYS")',
+                type: 'POST',
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        var select = $('#systemSelect');
+                        select.empty();
+                        select.append('<option value="">請選擇系統</option>');
+                        
+                        $.each(response.data, function (index, item) {
+                            select.append($('<option></option>')
+                                .val(item.SYS_ID)
+                                .text(item.SYS_ID + ' - ' + item.SYS_NAME));
+                        });
+                    } else {
+                        alert('載入系統選項失敗：' + response.message);
+                    }
+                },
+                error: function () {
+                    alert('載入系統選項時發生錯誤');
+                }
+            });
+        }
+    </script>
+}
+```
+
+## 5. 路由設定建議
+
+如果需要在 RouteConfig.cs 中添加明確的路由規則（可選）：
+
+```csharp
+public class RouteConfig
+{
+    public static void RegisterRoutes(RouteCollection routes)
+    {
+        routes.IgnoreRoute("{resource}.axd/{*pathInfo}");
+
+        // SYS 專用路由(可選)
+        routes.MapRoute(
+            name: "SystemManagement",
+            url: "SYS/{action}/{id}",
+            defaults: new { controller = "SYS", action = "SystemApply", id = UrlParameter.Optional }
+        );
+
+        routes.MapRoute(
+            name: "Default",
+            url: "{controller}/{action}/{id}",
+            defaults: new { controller = "Home", action = "Index", id = UrlParameter.Optional }
+        );
+    }
+}
+```
+
+## 6. 使用說明
+
+### 目錄樹設定範例（供參考）
+
+如果你的目錄樹是在 Main.cshtml 或其他地方設定，可以這樣加入：
+
+```html
+<!-- 系統管理目錄 -->
+<li class="nav-item">
+    <a href="#" class="nav-link">
+        <i class="fas fa-cog"></i>
+        <span>系統管理</span>
+    </a>
+    <ul class="nav-submenu">
+        <li>
+            <a href="@Url.Action("SystemApply", "SYS")">系統申請</a>
+        </li>
+        <li>
+            <a href="@Url.Action("PermissionSetting", "SYS")">權限設定</a>
+        </li>
+        <li>
+            <a href="@Url.Action("FunctionPageSetting", "SYS")">功能頁面設定</a>
+        </li>
+    </ul>
+</li>
+```
+
+## 7. 重要提醒
+
+### 資料庫注意事項：
+
+1. **確認資料表欄位長度**：請確保以下欄位長度符合你的資料庫設定
+
+- `SYS_ID`: varchar(50)
+- `SYS_NAME`: nvarchar(100)
+- `U_NAME`: nvarchar(50)
+
+1. **NULL 處理**：確認以下欄位是否允許 NULL
+
+- `EDIT_TIME`
+- `EDITOR`
+- `PARENT_APG_NO`
+
+1. **資料庫連線字串**：確認 `SVS_DBmanager` 能正確連接到三個資料庫：
+
+- `HI-APLOG`
+- `HI-AUTOS`
+- `HILIFE_DB3`
+
+### 功能流程：
+
+**系統申請流程**：
+
+- 進入頁面 → 顯示可維護系統列表
+- 點擊新增 → 輸入系統ID和名稱
+- 系統自動判斷三種情況並執行對應操作
+- 完成後重新載入列表
+
+**權限設定流程**：
+
+- 進入頁面 → 下拉選單顯示可維護系統
+- 選擇系統 → 點擊進入
+- 導向到 GroupManagement 並帶入 systemId
+
+**功能頁面設定流程**：
+
+- 進入頁面 → 下拉選單顯示可維護系統
+- 選擇系統 → 點擊進入
+- 導向到 PageManagement 並帶入 systemId
+
+### 安全性考量：
+
+所有 Action 都繼承自 `HI_APACCESSBaseController`，確保需要登入才能訪問。Session 中的 `CurrentSystemId` 會在導向時更新，與原本 TOKEN 導向機制並存。
+
+-----
+
+## 測試建議
+
+1. **測試情況1**：完全新系統
+
+- 輸入從未存在的 SYS_ID
+- 驗證三個資料表都正確新增
+
+1. **測試情況2**：系統存在但無001群組
+
+- 先在 AP_SYS 新增一筆系統
+- 執行申請，驗證群組和使用者正確新增
+
+1. **測試情況3**：系統和群組都存在
+
+- 執行申請，驗證只更新名稱和新增使用者（如不存在）
+
+1. **測試權限控制**：
+
+- 用不在001群組的員工登入
+- 驗證看不到任何系統
+
+1. **測試導向功能**：
+
+- 從權限設定導向 GroupManagement
+- 從功能頁面設定導向 PageManagement
+- 驗證 Session 正確更新
+
+所有程式碼都可以直接貼上使用，記得根據你的實際資料庫結構調整欄位長度和 NULL 設定！​​​​​​​​​​​​​​​​
