@@ -1,10 +1,8 @@
 using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace HI_APACCESS_DLL.Factory
 {
@@ -39,51 +37,61 @@ namespace HI_APACCESS_DLL.Factory
                 {
                     conn.Open();
 
-                    // 群組清單
+                    // === 群組清單 ===
                     var groupIds = new List<string> { groupId };
 
                     if (isIncludeChildGroups)
                     {
-                        string sqlChild = @"SELECT APG_NO 
-                                            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-                                            WHERE SYS_ID=@SysID AND PARENT_APG_NO=@GroupID";
+                        // 修正：PARENT_APG_NO 可能是 "001;002;003" 或含全形分號
+                        // 用 token 包邊比對，抓到所有「父清單包含 groupId」的群組編號
+                        string sqlChild = @"
+SELECT APG_NO
+FROM [HI-AUTOS].[dbo].[AP_GROUP]
+WHERE SYS_ID = @SysID
+  AND (';' + REPLACE(LTRIM(RTRIM(PARENT_APG_NO)),'；',';') + ';') LIKE '%;' + @MY_GID + ';%';";
 
                         using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
                         {
                             cmd.Parameters.AddWithValue("@SysID", sysId);
-                            cmd.Parameters.AddWithValue("@GroupID", groupId);
+                            cmd.Parameters.AddWithValue("@MY_GID", groupId);
 
                             using (var reader = cmd.ExecuteReader())
                             {
                                 while (reader.Read())
                                 {
-                                    groupIds.Add(reader["APG_NO"].ToString());
+                                    var gid = reader["APG_NO"]?.ToString();
+                                    if (!string.IsNullOrWhiteSpace(gid))
+                                        groupIds.Add(gid.Trim());
                                 }
                             }
                         }
                     }
 
-                    // 取使用者清單
+                    // 去重複、去空白
+                    groupIds = groupIds
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .Distinct()
+                        .ToList();
+
+                    // === 取使用者清單 ===
                     string sqlUser = $@"
 SELECT DISTINCT 
     U.U_ID   AS UserID,
     U.U_NAME AS UserName,
-    ISNULL((E.EMP_DOM_ID), '') AS UserAD
+    ISNULL(E.EMP_DOM_ID,'') AS UserAD
 FROM [HI-AUTOS].[dbo].[AP_USER] U
 LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
-    ON E.EMP_ID = U.U_ID
-WHERE U.SYS_ID = @SysID 
+       ON E.EMP_ID = U.U_ID
+WHERE U.SYS_ID = @SysID
   AND U.APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
-ORDER BY U.U_ID
-";
+ORDER BY U.U_ID;";
 
                     using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
                     {
                         cmd.Parameters.AddWithValue("@SysID", sysId);
                         for (int i = 0; i < groupIds.Count; i++)
-                        {
                             cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
-                        }
 
                         using (var reader = cmd.ExecuteReader())
                         {
@@ -100,6 +108,7 @@ ORDER BY U.U_ID
                     }
                 }
 
+                // === 回傳 ===
                 if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
