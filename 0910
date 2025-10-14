@@ -1,303 +1,205 @@
-當然可以！用 Razor 語法在伺服器端直接生成 Table 是更簡單直接的做法。讓我改寫成你參考的那種風格：
+你說得很有道理！如果系統、群組、使用者都已經存在了，確實不應該再執行任何操作，應該給一個明確的提示訊息。
 
-## 修改 SYSController.cs
+## 我的建議訊息
+
+幾個選項給你參考：
+
+### **選項1：簡潔明確**
+
+```
+"此系統已完成申請，您已具有管理權限"
+```
+
+### **選項2：更詳細**
+
+```
+"此系統已存在且您已是管理員，無需重複申請"
+```
+
+### **選項3：提示可以做什麼**
+
+```
+"您已是此系統的管理員，如需修改系統名稱，請點擊修改按鈕"
+```
+
+### **選項4：最簡短**
+
+```
+"此系統您已具有管理權限"
+```
+
+**我個人推薦選項1**，因為：
+
+- ✅ 清楚說明狀態（已完成申請）
+- ✅ 告知使用者權限（已有管理權限）
+- ✅ 長度適中，不會太囉嗦
+
+## 修改後的 Controller 程式碼
 
 ```csharp
-// 申請系統
-public ActionResult SYS_APPLY()
+// 系統申請(新增/修改)
+[HttpPost]
+public JsonResult ApplySystem(M_SYS_Apply model)
 {
     try
     {
-        var systems = F_SYS.GetMaintainableSystems(Emp_NO);
-        return View(systems);
+        if (!ModelState.IsValid)
+        {
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+
+        string empNo = Emp_NO;
+        string empName = F_SYS.GetEmployeeName(empNo);
+
+        if (string.IsNullOrEmpty(empName))
+        {
+            return Json(new { success = false, message = "無法取得員工姓名" });
+        }
+
+        // 👇 新增：檢查是否全部都已存在
+        bool systemExists = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
+        bool group001Exists = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
+        bool userExists = F_SYS.CheckUserInGroup001(model.SYS_ID, empNo);
+
+        if (systemExists && group001Exists && userExists)
+        {
+            // 全部都存在，不執行任何操作，直接回傳訊息
+            return Json(new { 
+                success = false, 
+                message = "此系統已完成申請，您已具有管理權限" 
+            });
+        }
+
+        // 執行系統申請流程
+        string result = ProcessSystemApply(model.SYS_ID, model.SYS_NAME, empNo, empName);
+
+        if (result == null || !result.Contains("fail"))
+        {
+            string successMessage = model.Action == "Add" ? "系統申請成功" : "系統修改成功";
+            return Json(new { success = true, message = successMessage });
+        }
+        else
+        {
+            string failMessage = model.Action == "Add" ? "系統申請失敗：" : "系統修改失敗：";
+            return Json(new { success = false, message = failMessage + result });
+        }
     }
     catch (Exception ex)
     {
-        // 發生錯誤時回傳空清單
-        return View(new List<M_SYS>());
+        return Json(new { success = false, message = "系統處理發生錯誤：" + ex.Message });
     }
 }
 ```
 
-## 修改 SYS_APPLY.cshtml
+## 但是有個問題要討論
 
-```html
-@model IEnumerable<HI_APACCESS.Models.M_SYS.M_SYS>
+**如果系統、群組、使用者都存在，但使用者想要「修改系統名稱」呢？**
 
-@using HI_APACCESS.Service;
+這時候有兩種處理方式：
 
-@{
-    ViewBag.Title = "系統申請管理";
-    HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
-    var emp_APG_NO = controller.APG_NO;
-    var emp_no = controller.Emp_NO;
-    var ctrlName = ViewContext.RouteData.Values["controller"].ToString();
-}
-
-<link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
-<link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css","CSS")" />
-
-<style>
-    .tb-workonroad a {
-        text-decoration: none;
-        color: #ffffff;
-        display: block;
-    }
-
-    .tb-workonroad thead tr {
-        background-color: #E6CCB2;
-    }
-
-    #systemTable {
-        width: 100%;
-    }
-
-        #systemTable th, #systemTable td {
-            text-align: center;
-            vertical-align: middle;
-        }
-</style>
-
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">系統申請管理</div>
-</section>
-
-<div>
-    <div>
-        <div style="overflow-y: auto; height: 835px; overflow-x: auto;">
-            <section class="form-data" id="table-border">
-                <table id="systemTable" class="table table-bordered">
-                    <thead style="position:sticky; top:-0.1px; z-index:2;">
-                        <tr>
-                            <th style="width:100px;">
-                                <button type="button" class="btn btn-green" id="btnAdd">
-                                    <i class="fas fa-plus"></i> 新增
-                                </button>
-                            </th>
-                            <th style="width:150px;">系統ID</th>
-                            <th style="width:200px;">系統名稱</th>
-                            <th style="width:100px;">建立人員</th>
-                            <th style="width:150px;">建立日期</th>
-                            <th style="width:100px;">修改人員</th>
-                            <th style="width:150px;">修改日期</th>
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        @if (Model != null && Model.Any())
-                        {
-                            foreach (var item in Model)
-                            {
-                                <tr>
-                                    <td>
-                                        <button type="button" class="btn btn-sm btn-warning btn-edit" 
-                                                data-sysid="@item.SYS_ID" 
-                                                data-sysname="@item.SYS_NAME">
-                                            <i class="fas fa-edit"></i> 修改
-                                        </button>
-                                    </td>
-                                    <td>@item.SYS_ID</td>
-                                    <td>@item.SYS_NAME</td>
-                                    <td>@item.CREATOR</td>
-                                    <td>@(item.CREATE_TIME?.ToString("yyyy-MM-dd HH:mm:ss"))</td>
-                                    <td>@item.EDITOR</td>
-                                    <td>@(item.EDIT_TIME?.ToString("yyyy-MM-dd HH:mm:ss"))</td>
-                                </tr>
-                            }
-                        }
-                        else
-                        {
-                            <tr>
-                                <td colspan="7" style="text-align:center; font-weight:600;">查無資料</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </section>
-        </div>
-    </div>
-</div>
-
-<!-- 新增/修改 Modal -->
-<div class="modal fade" id="systemModal" tabindex="-1" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="modalTitle">新增系統</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <form id="systemForm">
-                    <div class="form-group">
-                        <label for="sysId">系統ID <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="sysId" name="SYS_ID" required maxlength="50">
-                        <small class="form-text text-muted">系統ID不可超過50字元</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="sysName">系統名稱 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="sysName" name="SYS_NAME" required maxlength="100">
-                        <small class="form-text text-muted">系統名稱不可超過100字元</small>
-                    </div>
-                    <input type="hidden" id="actionType" name="Action" value="Add">
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" id="btnSave">儲存</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-@section Scripts{
-    <script>
-        $(document).ready(function () {
-            initPage();
-        });
-
-        function initPage() {
-            // 新增按鈕事件
-            $('#btnAdd').off('click').on('click', function () {
-                resetForm();
-                $('#modalTitle').text('新增系統');
-                $('#sysId').prop('readonly', false);
-                $('#actionType').val('Add');
-                $('#systemModal').modal('show');
-            });
-
-            // 修改按鈕事件
-            $('.btn-edit').off('click').on('click', function () {
-                var sysId = $(this).data('sysid');
-                var sysName = $(this).data('sysname');
-                editSystem(sysId, sysName);
-            });
-
-            // 儲存按鈕事件
-            $('#btnSave').off('click').on('click', function () {
-                saveSystem();
-            });
-        }
-
-        // 儲存系統
-        function saveSystem() {
-            var formData = {
-                SYS_ID: $('#sysId').val().trim(),
-                SYS_NAME: $('#sysName').val().trim(),
-                Action: $('#actionType').val()
-            };
-
-            if (!formData.SYS_ID || !formData.SYS_NAME) {
-                alert('系統ID和系統名稱為必填');
-                return;
-            }
-
-            $.ajax({
-                url: '@Url.Action("ApplySystem", "SYS")',
-                type: 'POST',
-                data: formData,
-                dataType: 'json',
-                success: function (response) {
-                    if (response.success) {
-                        alert(response.message);
-                        $('#systemModal').modal('hide');
-                        // 重新載入頁面以顯示更新後的資料
-                        location.reload();
-                    } else {
-                        alert(response.message);
-                    }
-                },
-                error: function () {
-                    alert('儲存時發生錯誤');
-                }
-            });
-        }
-
-        // 編輯系統
-        function editSystem(sysId, sysName) {
-            resetForm();
-            $('#modalTitle').text('修改系統名稱');
-            $('#sysId').val(sysId).prop('readonly', true);
-            $('#sysName').val(sysName);
-            $('#actionType').val('Edit');
-            $('#systemModal').modal('show');
-        }
-
-        // 重置表單
-        function resetForm() {
-            $('#systemForm')[0].reset();
-            $('#sysId').prop('readonly', false);
-        }
-    </script>
-}
-```
-
-## 主要改變
-
-### **1. Controller 改成回傳 Model**
+### **方案A：區分新增和修改的邏輯**
 
 ```csharp
-public ActionResult SYS_APPLY()
+// 👇 只有「新增」時才檢查是否全部存在
+if (model.Action == "Add")
 {
-    var systems = F_SYS.GetMaintainableSystems(Emp_NO);
-    return View(systems);  // 直接把資料傳給 View
-}
-```
-
-### **2. View 用 Razor 語法生成表格**
-
-```html
-@if (Model != null && Model.Any())
-{
-    foreach (var item in Model)
+    if (systemExists && group001Exists && userExists)
     {
-        <tr>
-            <td>...</td>
-            <td>@item.SYS_ID</td>
-            <td>@item.SYS_NAME</td>
-            ...
-        </tr>
+        return Json(new { 
+            success = false, 
+            message = "此系統已完成申請，您已具有管理權限" 
+        });
+    }
+}
+
+// 執行系統申請流程
+string result = ProcessSystemApply(model.SYS_ID, model.SYS_NAME, empNo, empName);
+```
+
+這樣的話：
+
+- 點「新增」時輸入已存在的系統 → 顯示「已完成申請」
+- 點「修改」時 → 可以更新系統名稱
+
+### **方案B：更新系統名稱時也檢查**
+
+```csharp
+// 檢查現有的系統名稱是否和要更新的一樣
+if (systemExists && group001Exists && userExists)
+{
+    // 如果名稱也一樣，就不需要更新
+    var currentSystemName = F_SYS.GetSystemName(model.SYS_ID); // 需要新增這個方法
+    if (currentSystemName == model.SYS_NAME)
+    {
+        return Json(new { 
+            success = false, 
+            message = "此系統已完成申請，您已具有管理權限，且系統名稱無異動" 
+        });
     }
 }
 ```
 
-### **3. JavaScript 簡化**
+## 我的建議
 
-- 移除 `loadSystemData()` 和 `renderSystemTable()` 函數
-- 移除 `formatDateTime()` 函數（改用 Razor 的 `ToString()` 格式化）
-- 只保留必要的事件綁定和 Modal 操作
+**推薦使用方案A**，因為：
 
-### **4. 儲存成功後重新載入頁面**
+1. **新增時**：如果全部都存在 → 擋掉，提示「已完成申請」
+1. **修改時**：允許更新系統名稱 → 這是合理的需求
 
-```javascript
-if (response.success) {
-    alert(response.message);
-    $('#systemModal').modal('hide');
-    location.reload();  // 重新載入整個頁面
-}
-```
-
-## 優點
-
-✅ **程式碼更簡潔** - JavaScript 從 100+ 行減少到 50 行左右  
-✅ **符合 MVC 架構** - 資料在伺服器端處理，View 只負責呈現  
-✅ **效能更好** - 第一次載入就有完整資料，不需要額外 AJAX 請求  
-✅ **維護更容易** - 不需要在 JS 中拼接 HTML  
-✅ **SEO 友善** - 資料直接在 HTML 中，搜尋引擎可以索引
-
-## 可以刪除的 Controller Action
-
-因為不再需要 AJAX 載入資料，可以刪除這個 Action：
+完整程式碼：
 
 ```csharp
-// ❌ 可以刪除
 [HttpPost]
-public JsonResult GetMaintainableSystems()
+public JsonResult ApplySystem(M_SYS_Apply model)
 {
-    // ...
+    try
+    {
+        if (!ModelState.IsValid)
+        {
+            return Json(new { success = false, message = "資料驗證失敗" });
+        }
+
+        string empNo = Emp_NO;
+        string empName = F_SYS.GetEmployeeName(empNo);
+
+        if (string.IsNullOrEmpty(empName))
+        {
+            return Json(new { success = false, message = "無法取得員工姓名" });
+        }
+
+        // 檢查是否全部都已存在
+        bool systemExists = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
+        bool group001Exists = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
+        bool userExists = F_SYS.CheckUserInGroup001(model.SYS_ID, empNo);
+
+        // 只有在「新增」模式下，才檢查是否重複申請
+        if (model.Action == "Add" && systemExists && group001Exists && userExists)
+        {
+            return Json(new { 
+                success = false, 
+                message = "此系統已完成申請，您已具有管理權限" 
+            });
+        }
+
+        // 執行系統申請流程
+        string result = ProcessSystemApply(model.SYS_ID, model.SYS_NAME, empNo, empName);
+
+        if (result == null || !result.Contains("fail"))
+        {
+            string successMessage = model.Action == "Add" ? "系統申請成功" : "系統修改成功";
+            return Json(new { success = true, message = successMessage });
+        }
+        else
+        {
+            string failMessage = model.Action == "Add" ? "系統申請失敗：" : "系統修改失敗：";
+            return Json(new { success = false, message = failMessage + result });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "系統處理發生錯誤：" + ex.Message });
+    }
 }
 ```
 
-這樣寫是不是更符合你的習慣？😊​​​​​​​​​​​​​​​​
+你覺得這樣處理如何？😊​​​​​​​​​​​​​​​​
