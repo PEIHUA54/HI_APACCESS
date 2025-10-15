@@ -1,95 +1,84 @@
-沒問題！我用你「原本的 JS 介面與同一個 Action 名稱」來改，邏輯是兩段式：
-	•	先打 DeleteFunction 檢查
-	•	沒權限 → 直接刪除並回傳成功
-	•	有權限 → 回傳 needConfirm=true 與訊息
-	•	前端收到 needConfirm 後 confirm()，同樣再呼叫 同一個 DeleteFunction，但帶 confirm=true，後端才會真的清掉頁面＋所有相關權限/按鈕。
+可以！核心就是「只有當 PARENT_ID !== 'HOME' 時，才強制檢查 VIEW_H / VIEW_HB 必填」。若是 HOME 則可留空或填寫都行；送到後端時，如果是空字串就傳 null，避免存成空白。
 
-⸻
+把你的 savePage() 換成下面這版（其餘程式不動）：
 
-Controller（沿用同一 Action 名稱）
+function savePage() {
+    const funcId   = ($('#funcId').val()    || '').trim();
+    const funcName = ($('#funcName').val()  || '').trim();
+    const parentId = ($('#parentId').val()  || '');      // 可能為 'HOME' 或其他
+    const sortNo   = ($('#sortNo').val()    || null);
+    const isShow   = ($('#isShow').val()    || 'Y');
+    const memo     = ($('#memo').val()      || null);
 
-[HttpPost]
-public JsonResult DeleteFunction(string func_id, string sysID, bool confirm = false)
-{
-    try
-    {
-        var service = GetAPService();
+    // 先把 Controller / Action 取出並安全 trim
+    const viewHRaw  = $('#viewH').val();
+    const viewHBRaw = $('#viewHB').val();
+    const viewH  = (viewHRaw  == null ? '' : viewHRaw).trim();
+    const viewHB = (viewHBRaw == null ? '' : viewHBRaw).trim();
 
-        // 第一次：只檢查
-        bool hasPermissions = !service.CanDeleteFunction(func_id);
-        if (hasPermissions && !confirm)
-        {
-            return Json(new
-            {
-                success = false,
-                needConfirm = true,
-                message = "該頁面已有權限設定，將會清除此頁面所有相關權限設定及按鈕設定，確定要刪除嗎?"
-            });
-        }
-
-        // 真的刪（無權限 or 已經二次確認）
-        var result = service.DeleteFunction(func_id);
-        if (result == null || !result.Contains("fail"))
-        {
-            return Json(new { success = true, message = "頁面刪除成功" });
-        }
-        else
-        {
-            return Json(new { success = false, message = "頁面刪除失敗：" + result });
-        }
+    // 基本必填
+    if (!funcId || !funcName) {
+        alert('請輸入頁面ID和頁面名稱');
+        return;
     }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
-    }
-}
 
-
-⸻
-
-JS（你的原函式，內部微調）
-
-function deletePage(funcId, funcName) {
-    // 第一次呼叫：先檢查是否有權限設定
-    $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
-        // 有權限 → 顯示你要的提示訊息，再次呼叫同一 Action，但帶 confirm=true
-        if (response.needConfirm) {
-            if (confirm(response.message)) {
-                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID, confirm: true }, function (res2) {
-                    alert(res2.message);
-
-                    if (res2.success) {
-                        // 如果刪的是目前選中的頁面，清空右側 UI
-                        if (currentSelectedPage === funcId) {
-                            currentSelectedPage = '';
-                            $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
-                            $('#addButtonBtn').prop('disabled', true);
-                            $('#buttonSection').removeClass('hide-add-button');
-                        }
-                        loadPages();
-                    }
-                });
-            }
+    // 只有非 HOME 的子頁面才強制檢查必填
+    if (parentId !== 'HOME') {
+        if (!viewH || !viewHB) {
+            alert('請輸入CONTROLLER名稱和ACTION名稱');
             return;
         }
+    }
 
-        // 沒有權限設定 → 直接刪除完成
-        alert(response.message);
+    // 新增頁面時檢查上層是否選擇
+    if (!isPageEditMode && !parentId) {
+        alert('請選擇上層ID');
+        return;
+    }
 
+    // 組裝送出的資料：
+    // - 若欄位為空字串就送 null（避免存成空白），否則送實際值
+    const formData = {
+        FUNC_ID : funcId,
+        FUNC_NA : funcName,
+        PARENT_ID: parentId || null,
+        SORT_NO : sortNo,
+        IS_SHOW : isShow,
+        MEMO    : memo,
+
+        // HOME 可空：空字串就傳 null；若有填也照實送出
+        VIEW_H  : viewH  === '' ? null : viewH,
+        VIEW_HB : viewHB === '' ? null : viewHB
+    };
+
+    let url, postData;
+    if (isPageEditMode) {
+        url = '@Url.Action("UpdateFunction", "AP")';
+        postData = Object.assign({}, formData, { originalFuncId: originalFuncId });
+    } else {
+        url = '@Url.Action("AddFunction", "AP")';
+        postData = formData;
+    }
+
+    $.post(url, postData, function (response) {
         if (response.success) {
-            if (currentSelectedPage === funcId) {
-                currentSelectedPage = '';
-                $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
-                $('#addButtonBtn').prop('disabled', true);
-                $('#buttonSection').removeClass('hide-add-button');
-            }
+            alert(response.message);
+            $('#pageModal').modal('hide');
             loadPages();
+            if (isPageEditMode) {
+                setTimeout(function () {
+                    currentSelectedPage = formData.FUNC_ID;
+                    renderPageListHierarchical();
+                }, 500);
+            }
+        } else {
+            alert(response.message);
         }
     });
 }
 
-重點：
-	•	仍然只有 一支 DeleteFunction
-	•	只多帶一個 confirm（預設 false）參數，避免再多開新 Action
-	•	提示內容完全照你指定的文案
-	•	其餘前端 UI 行為維持你原本寫法（刪除後刷新、清空右側等）
+為什麼這樣改
+	•	使用 val() || '' 搭配 .trim()，避免 null 觸發「Cannot read properties of null (reading ‘trim’)」。
+	•	以 parentId !== 'HOME' 判斷是否要強制檢查必填。
+	•	送出時把空字串轉成 null，資料庫會更乾淨（也符合你不要「寫死 null」、但空白時自動給 null 的需求）。
+	•	若是 HOME，就算兩欄為空也可送出；若有填也會照實儲存。
