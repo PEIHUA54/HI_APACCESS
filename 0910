@@ -1,109 +1,81 @@
-internal class FGetTree
-{
-    internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment, bool onlyIsShow)
-    {
-        var response = new GetTreeModel.GetTreeResponse();
+   
+現在這個站台也要有自己的兩個導向，通過呼叫DLL來產出來
+但是
+ <script>
+                   window.open('{response_.Url}', '_blank');
+                   window.location.href='{Url.Action("Main", "Home")}';
+                </script>";
+有成功產出來RESPONSE 0000 有TOKEN 但是會導向到Url.Action("Main", "Home")
+我要的是再一個網頁
 
+ // 權限管理導向 URL
+    public ActionResult AP_ACCESS_SYS()
+    {
         try
         {
-            // 1) 環境檢查
-            if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+            var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
             {
-                response.Result_code = Common.Codes.ENV_ERROR;
-                response.Msg = "環境錯誤，只接受 TEST、PROD 或 DEV";
-                return response;
-            }
+                SysID = "HI_APACCESS",
+                Type = "2",
+                Environment = "DEV"
+            };
 
-            // 2) 系統授權檢查
-            var authorized = FCommon.GetAuthorizedSystemsList(environment);
-            if (!authorized.Contains(sysId))
+            string json_input = JsonConvert.SerializeObject(req_para);
+            string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
+            HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
+
+            if (response_.Result_code == "0000")
             {
-                response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                response.Msg = "系統未授權";
-                return response;
-            }
-
-            var resultList = new List<GetTreeModel.ResultData>();
-
-            using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-            {
-                conn.Open();
-
-                // 3) 基礎 SQL（不含 IS_SHOW 篩選）
-                var sb = new StringBuilder(@"
-SELECT
-    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
-         WHEN a.PARENT_ID <> 'HOME' THEN '1'
-    END AS LEVEL,
-    a.FUNC_ID,
-    a.FUNC_NA,
-    a.VIEW_H AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
-    a.SORT_NO,
-    a.PARENT_ID,
-    a.MEMO,
-    a.IS_SHOW
-FROM [HI-AUTOS].[dbo].[AP_FUNC] a
-LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
-  ON a.FUNC_ID = b.FUNC_ID 
- AND a.SYS_ID  = b.SYS_ID
-WHERE a.SYS_ID = @SysID
-  AND b.APG_NO = @GroupID
-");
-
-                // 3-1) 只有當 onlyIsShow = true 才加上 IS_SHOW='Y'
-                if (onlyIsShow)
-                {
-                    sb.AppendLine("  AND a.IS_SHOW = 'Y'");
-                }
-
-                // 3-2) 排序：先顯示 IS_SHOW='Y'，再依 SORT_NO
-                sb.AppendLine("ORDER BY CASE WHEN a.IS_SHOW='Y' THEN 0 ELSE 1 END, a.SORT_NO;");
-
-                using (var cmd = new SqlCommand(sb.ToString(), conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@GroupID", groupId);
-
-                    using (var r = cmd.ExecuteReader())
-                    {
-                        while (r.Read())
-                        {
-                            resultList.Add(new GetTreeModel.ResultData
-                            {
-                                FuncID     = r["FUNC_ID"].ToString(),
-                                FuncName   = r["FUNC_NA"].ToString(),
-                                Controller = r["CONTROLLER"].ToString(),
-                                Action     = r["ACTION"].ToString(),
-                                Sort       = Convert.ToInt32(r["SORT_NO"]),
-                                ParentID   = r["PARENT_ID"].ToString(),
-                                Level      = r["LEVEL"].ToString(),
-                                Memo       = r["MEMO"]?.ToString()
-                            });
-                        }
-                    }
-                }
-            }
-
-            // 4) 結果
-            if (resultList.Count == 0)
-            {
-                response.Result_code = Common.Codes.NO_PERMISSION;
-                response.Msg = "查無權限";
+                string script = $@"
+                <script>
+                   window.open('{response_.Url}', '_blank');
+                   window.location.href='{Url.Action("Main", "Home")}';
+                </script>";
+                return Content(script, "text/html");
             }
             else
             {
-                response.Result_code = Common.Codes.SUCCESS;
-                response.Msg = "成功";
-                response.Result = resultList;
+                return Content($"<script>alert('取得權限管理連結失敗：{response_.Msg}');</script>", "text/html");
             }
         }
         catch (Exception ex)
         {
-            response.Result_code = Common.Codes.SYSTEM_ERROR;
-            response.Msg = "系統錯誤：" + ex.Message;
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
         }
-
-        return response;
     }
-}
+
+    // 系統頁面管理導向
+    public ActionResult AP_ACCESS_SYS_FUNC()
+    {
+        try
+        {
+            var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
+            {
+                SysID = "HI_APACCESS",
+                Type = "1",
+                Environment = "DEV"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req_para);
+            string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
+            HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
+
+            if (response_.Result_code == "0000")
+            {
+                string script = $@"
+                <script>
+                   window.open('{response_.Url}', '_blank');                       
+                   window.location.href='{Url.Action("Main", "Home")}';
+                </script>";
+                return Content(script, "text/html");
+            }
+            else
+            {
+                return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.Msg}');</script>", "text/html");
+            }
+        }
+        catch (Exception ex)
+        {
+            return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+        }
+    }
