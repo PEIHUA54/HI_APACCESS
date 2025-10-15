@@ -1,133 +1,286 @@
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+切換按鈕
+了解！你需要在 `GroupManagement` 頁面判斷是從哪種方式進來的，只有從站台進來才顯示「切換系統」按鈕。
 
-namespace HI_APACCESS_DLL.Factory
+## 解決方案
+
+### **判斷邏輯**
+
+- **TOKEN 進來**：Session 有 `CurrentSystemId` 和 `CurrentEmpNo`，且是透過 `TokenEntry` 進來
+- **站台進來**：Session 有 `CurrentSystemId`，但是透過 `SYS_PERMISSION_SET` 導向過來的
+
+我們可以加一個標記來區分！
+
+## 修改方案
+
+### **1. 修改 SYSController.cs - 導向時加上標記**
+
+```csharp
+// 導向群組管理
+[HttpPost]
+public JsonResult RedirectToGroupManagement(string sysId)
 {
-    internal class FGetGroupAllUser
+    try
     {
-        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        if (string.IsNullOrEmpty(sysId))
         {
-            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
-
-            try
-            {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
-                    return response;
-                }
-
-                // 2. 系統授權檢查
-                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorizedSystems.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
-                }
-
-                var resultList = new List<GetGroupAllUserModel.ResultData>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    // === 群組清單 ===
-                    var groupIds = new List<string> { groupId };
-
-                    if (isIncludeChildGroups)
-                    {
-                        // 修正：PARENT_APG_NO 可能是 "001;002;003" 或含全形分號
-                        // 用 token 包邊比對，抓到所有「父清單包含 groupId」的群組編號
-                        string sqlChild = @"
-SELECT APG_NO
-FROM [HI-AUTOS].[dbo].[AP_GROUP]
-WHERE SYS_ID = @SysID
-  AND (';' + REPLACE(LTRIM(RTRIM(PARENT_APG_NO)),'；',';') + ';') LIKE '%;' + @MY_GID + ';%';";
-
-                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@SysID", sysId);
-                            cmd.Parameters.AddWithValue("@MY_GID", groupId);
-
-                            using (var reader = cmd.ExecuteReader())
-                            {
-                                while (reader.Read())
-                                {
-                                    var gid = reader["APG_NO"]?.ToString();
-                                    if (!string.IsNullOrWhiteSpace(gid))
-                                        groupIds.Add(gid.Trim());
-                                }
-                            }
-                        }
-                    }
-
-                    // 去重複、去空白
-                    groupIds = groupIds
-                        .Where(s => !string.IsNullOrWhiteSpace(s))
-                        .Select(s => s.Trim())
-                        .Distinct()
-                        .ToList();
-
-                    // === 取使用者清單 ===
-                    string sqlUser = $@"
-SELECT DISTINCT 
-    U.U_ID   AS UserID,
-    U.U_NAME AS UserName,
-    ISNULL(E.EMP_DOM_ID,'') AS UserAD
-FROM [HI-AUTOS].[dbo].[AP_USER] U
-LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
-       ON E.EMP_ID = U.U_ID
-WHERE U.SYS_ID = @SysID
-  AND U.APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
-ORDER BY U.U_ID;";
-
-                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
-                        for (int i = 0; i < groupIds.Count; i++)
-                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
-
-                        using (var reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                resultList.Add(new GetGroupAllUserModel.ResultData
-                                {
-                                    UserID = reader["UserID"].ToString(),
-                                    UserName = reader["UserName"].ToString(),
-                                    UserAD = reader["UserAD"].ToString(),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // === 回傳 ===
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無人員";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
-            }
-
-            return response;
+            return Json(new { success = false, message = "請選擇系統" });
         }
+
+        // 更新Session
+        Session["CurrentSystemId"] = sysId;
+        Session["FromInternalSite"] = true; // 👈 加上標記，表示從站台內部進來
+
+        return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "導向失敗：" + ex.Message });
     }
 }
+
+// 導向頁面管理
+[HttpPost]
+public JsonResult RedirectToPageManagement(string sysId)
+{
+    try
+    {
+        if (string.IsNullOrEmpty(sysId))
+        {
+            return Json(new { success = false, message = "請選擇系統" });
+        }
+
+        // 更新Session
+        Session["CurrentSystemId"] = sysId;
+        Session["FromInternalSite"] = true; // 👈 加上標記
+
+        return Json(new { success = true, redirectUrl = Url.Action("PageManagement", "AP", new { systemId = sysId }) });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "導向失敗：" + ex.Message });
+    }
+}
+```
+
+### **2. 修改 HomeController.cs - TOKEN 進來時清除標記**
+
+```csharp
+[HttpGet]
+[TokenAuthorize]
+public ActionResult TokenEntry()
+{
+    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+    Session["CurrentSystemId"] = systemId;
+    Session["CurrentEmpNo"] = empNo;
+    Session["FromInternalSite"] = false; // 👈 標記為 TOKEN 進來，不是站台內部
+    
+    // 導向到群組管理
+    return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
+}
+
+[HttpGet]
+[TokenAuthorize]
+public ActionResult TokenEntry_FUNC()
+{
+    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
+
+    Session["CurrentSystemId"] = systemId;
+    Session["CurrentEmpNo"] = empNo;
+    Session["FromInternalSite"] = false; // 👈 標記為 TOKEN 進來
+    
+    // 導向到頁面管理
+    return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
+}
+```
+
+### **3. 修改 APController.cs - 傳遞標記到 View**
+
+```csharp
+// 群組管理頁面
+public ActionResult GroupManagement(string systemId)
+{
+    if (string.IsNullOrEmpty(systemId))
+    {
+        systemId = Session["CurrentSystemId"]?.ToString();
+    }
+    else
+    {
+        // 同步更新 Session
+        Session["CurrentSystemId"] = systemId;
+    }
+
+    // 👇 判斷是否從站台內部進來
+    bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
+
+    ViewBag.SystemId = systemId;
+    ViewBag.Title = "群組權限管理 - " + systemId;
+    ViewBag.ShowSwitchButton = isFromInternalSite; // 👈 傳遞給 View
+
+    return View();
+}
+
+// 系統頁面設定
+public ActionResult PageManagement(string systemId = null)
+{
+    if (string.IsNullOrEmpty(systemId))
+    {
+        systemId = Session["CurrentSystemId"]?.ToString();
+    }
+
+    if (string.IsNullOrEmpty(systemId))
+    {
+        return Content("<h3>系統ID遺失，請重新透過權限管理連結進入</h3>");
+    }
+
+    // 👇 判斷是否從站台內部進來
+    bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
+
+    ViewBag.SystemId = systemId;
+    ViewBag.Title = "系統頁面設定 - " + systemId;
+    ViewBag.ShowSwitchButton = isFromInternalSite; // 👈 傳遞給 View
+
+    return View();
+}
+```
+
+### **4. 修改 GroupManagement.cshtml - 加入切換按鈕**
+
+在頁面頂部加入切換按鈕（只有從站台進來才顯示）：
+
+```html
+@{
+    ViewBag.Title = ViewBag.Title ?? "群組權限管理";
+    var systemId = ViewBag.SystemId as string;
+    var showSwitchButton = ViewBag.ShowSwitchButton != null && (bool)ViewBag.ShowSwitchButton;
+}
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">@ViewBag.Title</div>
+</section>
+
+<!-- 👇 只有從站台進來才顯示切換系統按鈕 -->
+@if (showSwitchButton)
+{
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <button type="button" class="btn btn-info" id="btnSwitchSystem">
+                <i class="fas fa-exchange-alt"></i> 切換系統
+            </button>
+        </div>
+    </div>
+}
+
+<!-- 原本的群組管理內容 -->
+<div class="container-fluid">
+    <!-- ... 原本的內容 ... -->
+</div>
+
+@section Scripts {
+    <script>
+        // 原本的 script...
+
+        @if (showSwitchButton)
+        {
+            <text>
+            // 切換系統按鈕事件
+            $('#btnSwitchSystem').click(function() {
+                if (confirm('確定要切換系統嗎？')) {
+                    window.location.href = '@Url.Action("SYS_PERMISSION_SET", "SYS")';
+                }
+            });
+            </text>
+        }
+    </script>
+}
+```
+
+### **5. 同樣修改 PageManagement.cshtml**
+
+```html
+@{
+    ViewBag.Title = ViewBag.Title ?? "系統頁面設定";
+    var systemId = ViewBag.SystemId as string;
+    var showSwitchButton = ViewBag.ShowSwitchButton != null && (bool)ViewBag.ShowSwitchButton;
+}
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">@ViewBag.Title</div>
+</section>
+
+<!-- 👇 只有從站台進來才顯示切換系統按鈕 -->
+@if (showSwitchButton)
+{
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <button type="button" class="btn btn-info" id="btnSwitchSystem">
+                <i class="fas fa-exchange-alt"></i> 切換系統
+            </button>
+        </div>
+    </div>
+}
+
+<!-- 原本的頁面管理內容 -->
+<div class="container-fluid">
+    <!-- ... 原本的內容 ... -->
+</div>
+
+@section Scripts {
+    <script>
+        // 原本的 script...
+
+        @if (showSwitchButton)
+        {
+            <text>
+            // 切換系統按鈕事件
+            $('#btnSwitchSystem').click(function() {
+                if (confirm('確定要切換系統嗎？')) {
+                    window.location.href = '@Url.Action("SYS_FUNC_SET", "SYS")';
+                }
+            });
+            </text>
+        }
+    </script>
+}
+```
+
+## 流程圖
+
+```
+【TOKEN 進來】
+TokenEntry 
+  ↓
+Session["FromInternalSite"] = false
+  ↓
+GroupManagement 
+  ↓
+ViewBag.ShowSwitchButton = false
+  ↓
+❌ 不顯示「切換系統」按鈕
+
+【站台進來】
+SYS_PERMISSION_SET (選擇系統)
+  ↓
+Session["FromInternalSite"] = true
+  ↓
+GroupManagement
+  ↓
+ViewBag.ShowSwitchButton = true
+  ↓
+✅ 顯示「切換系統」按鈕
+  ↓
+點擊按鈕 → 導向回 SYS_PERMISSION_SET
+```
+
+## 優點
+
+✅ **清楚區分來源** - 用 Session 標記區分  
+✅ **安全可靠** - TOKEN 使用者看不到切換按鈕  
+✅ **使用者體驗好** - 站台使用者可以輕鬆切換系統  
+✅ **不影響現有功能** - TOKEN 導向流程完全不受影響
+
+這樣就可以完美區分兩種進入方式了！🎯​​​​​​​​​​​​​​​​
