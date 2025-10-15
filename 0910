@@ -1,66 +1,99 @@
-報錯誤訊息
-Uncaught TypeError: Cannot read properties of null (reading 'trim')
+你這個報錯是因為 formData.VIEW_H / formData.VIEW_HB 為 null，直接呼叫 .trim() 會噴錯。
+同時你的規則是：PARENT_ID = ‘HOME’ 時可不填；否則必填。
+把判斷條件與 UI 狀態一起改好即可。
 
-js:
- if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
-                alert('請輸入CONTROLLER名稱和ACTION名稱');
-                return;
+把 savePage() 與欄位啟停改成下面這版：
+
+// 依據是否為 HOME 切換欄位必填/外觀
+function toggleViewFieldsRequired() {
+    const parentId = ($('#parentId').val() || '').trim();
+    const isHome = parentId === 'HOME';
+
+    // HOME：不必填、灰掉、清空
+    if (isHome) {
+        $('#viewH, #viewHB')
+            .prop('disabled', true)
+            .val('')
+            .attr('placeholder', 'HOME 不需填寫');
+    } else {
+        // 子頁面：必填
+        $('#viewH, #viewHB')
+            .prop('disabled', false)
+            .attr('placeholder', '');
+    }
+}
+
+// 父頁面選擇改變時同步處理
+$(document).on('change', '#parentId', toggleViewFieldsRequired);
+
+// 開啟 modal 後也跑一次，確保狀態正確
+$('#pageModal').on('shown.bs.modal', toggleViewFieldsRequired);
+
+function savePage() {
+    const formData = {
+        FUNC_ID : ($('#funcId').val()   || '').trim(),
+        FUNC_NA : ($('#funcName').val() || '').trim(),
+        PARENT_ID: ($('#parentId').val() || '').trim() || null,
+        SORT_NO  : ($('#sortNo').val()   || '').trim() || null,
+        IS_SHOW  : ($('#isShow').val()   || 'Y'),
+        MEMO   : ($('#memo').val()   || '').trim() || null,
+        // 這兩個可能是空 → 先給空字串再 trim，避免 null.trim() 錯誤
+        VIEW_H : ($('#viewH').val()  || '').trim(),
+        VIEW_HB: ($('#viewHB').val() || '').trim()
+    };
+
+    if (!formData.FUNC_ID || !formData.FUNC_NA) {
+        alert('請輸入頁面ID和頁面名稱');
+        return;
+    }
+
+    // 只有非 HOME（=子頁面）才強制檢核 VIEW_H / VIEW_HB
+    const needView = (formData.PARENT_ID && formData.PARENT_ID !== 'HOME');
+    if (needView && (!formData.VIEW_H || !formData.VIEW_HB)) {
+        alert('子頁面需填 CONTROLLER 名稱與 ACTION 名稱');
+        return;
+    }
+
+    // HOME 的話把空字串轉成 null，後端會更乾淨
+    if (!needView) {
+        formData.VIEW_H = null;
+        formData.VIEW_HB = null;
+    }
+
+    // 新增時上層必選
+    if (!isPageEditMode && !formData.PARENT_ID) {
+        alert('請選擇上層ID');
+        return;
+    }
+
+    let url, postData;
+    if (isPageEditMode) {
+        url = '@Url.Action("UpdateFunction", "AP")';
+        postData = Object.assign({}, formData, { originalFuncId: originalFuncId });
+    } else {
+        url = '@Url.Action("AddFunction", "AP")';
+        postData = formData;
+    }
+
+    $.post(url, postData, function (response) {
+        if (response.success) {
+            alert(response.message);
+            $('#pageModal').modal('hide');
+            loadPages();
+            if (isPageEditMode) {
+                setTimeout(function () {
+                    currentSelectedPage = formData.FUNC_ID;
+                    renderPageListHierarchical();
+                }, 500);
             }
+        } else {
+            alert(response.message);
+        }
+    });
+}
 
-但因為我要修改儲存的是
-PARENT_ID=HOME就不用填寫VIEW_H、VIEW_HB NULL即可
-不是HOME就需要寫VIEW_H、VIEW_HB
-
- function savePage() {
-     const formData = {
-         FUNC_ID: $('#funcId').val(),
-         FUNC_NA: $('#funcName').val(),
-         PARENT_ID: $('#parentId').val() || null,
-         SORT_NO: $('#sortNo').val() || null,
-         IS_SHOW: $('#isShow').val(),
-         MEMO: $('#memo').val() || null,
-         VIEW_H: $('#viewH').val() || null,      // 新增
-         VIEW_HB: $('#viewHB').val() || null     // 新增
-     };
-
-     if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
-         alert('請輸入頁面ID和頁面名稱');
-         return;
-     }
-
-     if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
-         alert('請輸入CONTROLLER名稱和ACTION名稱');
-         return;
-     }
-
-     // 新增頁面時檢查上層ID是否為必填
-     if (!isPageEditMode && !formData.PARENT_ID) {
-         alert('請選擇上層ID');
-         return;
-     }
-
-     let url, postData;
-     if (isPageEditMode) {
-         url = '@Url.Action("UpdateFunction", "AP")';
-         postData = Object.assign(formData, { originalFuncId: originalFuncId });
-     } else {
-         url = '@Url.Action("AddFunction", "AP")';
-         postData = formData;
-     }
-
-     $.post(url, postData, function (response) {
-         if (response.success) {
-             alert(response.message);
-             $('#pageModal').modal('hide');
-             loadPages();
-             if (isPageEditMode) {
-                 setTimeout(function () {
-                     currentSelectedPage = formData.FUNC_ID;
-                     renderPageListHierarchical();
-                 }, 500);
-             }
-         } else {
-             alert(response.message);
-         }
-     });
- }
+重點修改：
+	1.	.trim() 前一律用 ($('#xxx').val() || '').trim()，避免 null.trim()。
+	2.	以 parentId === 'HOME' 決定是否檢核 VIEW_H / VIEW_HB。
+	3.	HOME 時自動將兩欄 disable + 清空 + placeholder；子頁面恢復可輸入。
+	4.	送出前若是 HOME，把空字串轉回 null，資料更乾淨。
