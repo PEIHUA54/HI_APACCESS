@@ -1,99 +1,564 @@
-你這個報錯是因為 formData.VIEW_H / formData.VIEW_HB 為 null，直接呼叫 .trim() 會噴錯。
-同時你的規則是：PARENT_ID = ‘HOME’ 時可不填；否則必填。
-把判斷條件與 UI 狀態一起改好即可。
+@section Scripts {
+    <script>
+        let currentSelectedPage = '';
+        let isPageEditMode = false;
+        let isButtonEditMode = false;
+        let originalFuncId = '';
+        let allPages = [];
+        const currentSysID = '@Session["CurrentSystemId"]';
 
-把 savePage() 與欄位啟停改成下面這版：
-
-// 依據是否為 HOME 切換欄位必填/外觀
-function toggleViewFieldsRequired() {
-    const parentId = ($('#parentId').val() || '').trim();
-    const isHome = parentId === 'HOME';
-
-    // HOME：不必填、灰掉、清空
-    if (isHome) {
-        $('#viewH, #viewHB')
-            .prop('disabled', true)
-            .val('')
-            .attr('placeholder', 'HOME 不需填寫');
-    } else {
-        // 子頁面：必填
-        $('#viewH, #viewHB')
-            .prop('disabled', false)
-            .attr('placeholder', '');
-    }
-}
-
-// 父頁面選擇改變時同步處理
-$(document).on('change', '#parentId', toggleViewFieldsRequired);
-
-// 開啟 modal 後也跑一次，確保狀態正確
-$('#pageModal').on('shown.bs.modal', toggleViewFieldsRequired);
-
-function savePage() {
-    const formData = {
-        FUNC_ID : ($('#funcId').val()   || '').trim(),
-        FUNC_NA : ($('#funcName').val() || '').trim(),
-        PARENT_ID: ($('#parentId').val() || '').trim() || null,
-        SORT_NO  : ($('#sortNo').val()   || '').trim() || null,
-        IS_SHOW  : ($('#isShow').val()   || 'Y'),
-        MEMO   : ($('#memo').val()   || '').trim() || null,
-        // 這兩個可能是空 → 先給空字串再 trim，避免 null.trim() 錯誤
-        VIEW_H : ($('#viewH').val()  || '').trim(),
-        VIEW_HB: ($('#viewHB').val() || '').trim()
-    };
-
-    if (!formData.FUNC_ID || !formData.FUNC_NA) {
-        alert('請輸入頁面ID和頁面名稱');
-        return;
-    }
-
-    // 只有非 HOME（=子頁面）才強制檢核 VIEW_H / VIEW_HB
-    const needView = (formData.PARENT_ID && formData.PARENT_ID !== 'HOME');
-    if (needView && (!formData.VIEW_H || !formData.VIEW_HB)) {
-        alert('子頁面需填 CONTROLLER 名稱與 ACTION 名稱');
-        return;
-    }
-
-    // HOME 的話把空字串轉成 null，後端會更乾淨
-    if (!needView) {
-        formData.VIEW_H = null;
-        formData.VIEW_HB = null;
-    }
-
-    // 新增時上層必選
-    if (!isPageEditMode && !formData.PARENT_ID) {
-        alert('請選擇上層ID');
-        return;
-    }
-
-    let url, postData;
-    if (isPageEditMode) {
-        url = '@Url.Action("UpdateFunction", "AP")';
-        postData = Object.assign({}, formData, { originalFuncId: originalFuncId });
-    } else {
-        url = '@Url.Action("AddFunction", "AP")';
-        postData = formData;
-    }
-
-    $.post(url, postData, function (response) {
-        if (response.success) {
-            alert(response.message);
-            $('#pageModal').modal('hide');
+        $(document).ready(function () {
             loadPages();
-            if (isPageEditMode) {
-                setTimeout(function () {
-                    currentSelectedPage = formData.FUNC_ID;
+        });
+
+        // 載入所有頁面
+        function loadPages() {
+            $('#pageList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+            $.get('@Url.Action("GetAllFunctions", "AP")', function (response) {
+                if (response.success) {
+                    allPages = response.data;
                     renderPageListHierarchical();
+                } else {
+                    $('#pageList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 載入父頁面下拉選單
+        function loadParentPageOptions() {
+            $.get('@Url.Action("GetParentPageSelectList", "AP")', { sysID: currentSysID } ,function (response) {
+                let options = '';
+
+                if (Array.isArray(response)) {
+                    response.forEach(function (item) {
+                        options += `<option value="${item.value}">${item.text}</option>`;
+                    });
+                } else {
+                    console.log('父頁面資料格式錯誤:', response);
+                    options = '<option value="">-- 載入失敗 --</option>';
+                }
+
+                $('#parentId').html(options);
+                // 新增頁面時預設選擇 HOME
+                if (!isPageEditMode) {
+                    $('#parentId').val('HOME');
+                }
+            }).fail(function () {
+                $('#parentId').html('<option value="">-- 載入失敗 --</option>');
+            });
+        }
+
+        // 階層式渲染頁面列表
+        function renderPageListHierarchical() {
+            let html = '';
+
+
+            if (allPages.length === 0) {
+                html = '<div class="no-data">尚未建立任何頁面<br><button type="button" class="btn btn-primary btn-sm mt-2" onclick="openPageModal()">新增第一個頁面</button></div>';
+            } else {
+                // 顯示操作提示
+                $('#sortHint').show();
+
+                // 建立所有 FUNC_ID 的集合，用於判斷父子關係
+                const allFuncIds = new Set(allPages.map(p => p.FUNC_ID));
+
+                // 分離父頁面和子頁面，並按排序號排序
+                const parentPages = allPages.filter(p =>
+                    !p.PARENT_ID ||
+                    p.PARENT_ID === '' ||
+                    !allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                const childPages = allPages.filter(p =>
+                    p.PARENT_ID &&
+                    p.PARENT_ID !== '' &&
+                    allFuncIds.has(p.PARENT_ID)
+                ).sort((a, b) => {
+                    const aSort = parseInt(a.SORT_NO) || 999;
+                    const bSort = parseInt(b.SORT_NO) || 999;
+                    return aSort - bSort;
+                });
+
+                // 先顯示沒有父級的頁面
+                parentPages.forEach(function (parentPage, parentIndex) {
+                    html += renderPageItem(parentPage, false, parentIndex, parentPages.length);
+
+                    // 顯示其子頁面
+                    const children = childPages.filter(c => c.PARENT_ID === parentPage.FUNC_ID);
+                    children.forEach(function (childPage, childIndex) {
+                        html += renderPageItem(childPage, true, childIndex, children.length, parentPage.FUNC_ID);
+                    });
+                });
+            }
+
+            $('#pageList').html(html);
+        }
+
+        // 渲染單個頁面項目
+        function renderPageItem(page, isChild, index, totalCount, parentId = null) {
+            const isSelected = page.FUNC_ID === currentSelectedPage;
+            const selectedClass = isSelected ? 'selected' : '';
+            const hierarchyClass = isChild ? 'child-page-item' : 'parent-page-item';
+
+            // 檢查是否為隱藏頁面
+            const isHidden = page.IS_SHOW === 'N';
+            const hiddenClass = isHidden ? 'hidden-page' : '';
+
+            const showBadge = page.IS_SHOW === 'Y' ?
+                '<span class="badge badge-success badge-sm">顯示</span>' :
+                '<span class="badge badge-secondary badge-sm">隱藏</span>';
+
+            // 計算顯示的排序號
+            let displaySortNo = page.SORT_NO || 'N/A';
+            if (isChild && parentId) {
+                const parentPage = allPages.find(p => p.FUNC_ID === parentId);
+                const parentSort = parentPage ? (parentPage.SORT_NO || '1') : '1';
+                const childSort = page.SORT_NO || '1';
+                displaySortNo = `${parentSort}-${childSort}`;
+            }
+
+            // 排序控制按鈕 - 隱藏頁面不顯示排序箭頭
+            let sortControls = '';
+            if (!isHidden) {
+                if (isChild) {
+                    // 子頁面排序控制
+                    sortControls = `
+                <div class="sort-controls">
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'up', '${parentId}')"
+                            ${index === 0 ? 'disabled' : ''} title="上移">
+                        <i class="fas fa-chevron-up"></i>
+                    </button>
+                    <button type="button" class="sort-btn" onclick="event.stopPropagation(); moveItem('${page.FUNC_ID}', 'down', '${parentId}')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="下移">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>`;
+                } else {
+                    // 父頁面排序控制
+                    sortControls = `
+                <div class="group-sort-controls">
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'up')"
+                            ${index === 0 ? 'disabled' : ''} title="整組上移">
+                        <i class="fas fa-angle-double-up"></i> 組上移
+                    </button>
+                    <button type="button" class="group-sort-btn" onclick="event.stopPropagation(); moveGroup('${page.FUNC_ID}', 'down')"
+                            ${index === totalCount - 1 ? 'disabled' : ''} title="整組下移">
+                        <i class="fas fa-angle-double-down"></i> 組下移
+                    </button>
+                </div>`;
+                }
+            }
+
+            return `
+    <div class="page-item ${selectedClass} ${hierarchyClass} ${hiddenClass}" onclick="selectPage('${page.FUNC_ID}', '${page.FUNC_NA}', ${isChild})">
+        <div class="item-header">
+            <div class="item-title">${page.FUNC_NA}</div>
+            <div class="item-actions">
+                ${showBadge}
+                <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="event.stopPropagation(); editPage('${page.FUNC_ID}')">
+                    <i class="fas fa-edit"></i>修改
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="event.stopPropagation(); deletePage('${page.FUNC_ID}', '${page.FUNC_NA}')">
+                    <i class="fas fa-trash"></i>刪除
+                </button>
+            </div>
+        </div>
+        <div class="item-info">
+            <div>
+                頁面ID: ${page.FUNC_ID}
+                ${page.PARENT_ID ? ' | 上層: ' + page.PARENT_ID : ''}
+                ${page.MEMO ? '<br>備註: ' + page.MEMO : ''}
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span class="sort-info">排序: ${displaySortNo}</span>
+                ${sortControls}
+            </div>
+        </div>
+    </div>`;
+        }
+
+        // 移動單個項目
+        function moveItem(funcId, direction, parentId) {
+            $.post('@Url.Action("MoveItem", "AP")', {
+                funcId: funcId,
+                direction: direction,
+                parentId: parentId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                            }
+                        }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 移動整組
+        function moveGroup(funcId, direction) {
+            $.post('@Url.Action("MoveGroup", "AP")', {
+                funcId: funcId,
+                direction: direction,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    loadPages(); // 重新載入頁面
+                    // 保持選中狀態
+                    setTimeout(function () {
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                                selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                            }
+                        }
+                    }, 300);
+                } else {
+                    alert('移動失敗：' + response.message);
+                }
+            });
+        }
+
+        // 選擇頁面
+        function selectPage(funcId, funcName, isChild) {
+            currentSelectedPage = funcId;
+            renderPageListHierarchical(); // 重新渲染以顯示選中狀態
+
+            $('#buttonSection').removeClass('hide-add-button');
+            loadButtons(funcId, funcName);
+            $('#addButtonBtn').prop('disabled', false);
+        }
+
+        // 載入按鈕
+        function loadButtons(funcId, funcName) {
+            $('#buttonList').html('<div class="no-data"><i class="fas fa-spinner fa-spin"></i><br>載入中…</div>');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            },
+                function (response) {
+                if (response.success) {
+                    renderButtonList(response.data, funcName);
+                } else {
+                    $('#buttonList').html('<div class="no-data text-danger">載入失敗</div>');
+                }
+            });
+        }
+
+        // 渲染按鈕列表
+        function renderButtonList(buttons, funcName) {
+            let html = '';
+
+            if (buttons.length === 0) {
+                html = `
+            <div class="no-data">
+                頁面 "${funcName}" 尚未定義按鈕
+                <br>
+            </div>`;
+            } else {
+                buttons.forEach(function (btn) {
+                    html += `
+                <div class="button-item">
+                    <div class="item-header">
+                        <div class="item-title">${btn.BTN_NAME}</div>
+                        <div class="item-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="editButton('${btn.FUNC_ID}', '${btn.BTNSEQ}')">
+                                <i class="fas fa-edit"></i>修改
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="deleteButton('${btn.FUNC_ID}', '${btn.BTNSEQ}', '${btn.BTN_NAME}')">
+                                <i class="fas fa-trash"></i>刪除
+                            </button>
+                        </div>
+                    </div>
+                    <div class="item-info">
+                        <div class="button-details">
+                            <span class="detail-item">按鈕ID: ${btn.BTNID}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">序號: ${btn.BTNSEQ}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Controller: ${btn.CONTROLLER || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Action: ${btn.ACTION || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">LOC: ${btn.LOC || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">OnClick: ${btn.ONCLICK || ' '}</span>
+                        </div>
+                  </div>
+                </div>`;
+                });
+            }
+
+            $('#buttonList').html(html);
+        }
+
+        // 頁面管理函數
+        function openPageModal() {
+            isPageEditMode = false;
+            $('#pageModalTitle').text('新增頁面');
+            $('#pageForm')[0].reset();
+            $('#isShow').val('Y');
+            $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
+            $('#viewH').val('');
+            $('#viewHB').val('');
+
+            // 載入父頁面選項
+            loadParentPageOptions();
+            $('#pageModal').modal('show');
+        }
+
+        function editPage(funcId) {
+            isPageEditMode = true;
+            originalFuncId = funcId; // 儲存原始ID
+            $('#pageModalTitle').text('修改頁面');
+
+            const page = allPages.find(p => p.FUNC_ID === funcId);
+            if (page) {
+                $('#funcId').val(page.FUNC_ID).prop('readonly', false);
+                $('#funcName').val(page.FUNC_NA);
+                $('#sortNo').val(page.SORT_NO || '');
+                $('#isShow').val(page.IS_SHOW || 'Y');
+                $('#memo').val(page.MEMO || '');
+                $('#viewH').val(page.VIEW_H || '');
+                $('#viewHB').val(page.VIEW_HB || '');
+
+                // 載入父頁面選項
+                loadParentPageOptions();
+                setTimeout(function () {
+                    $('#parentId').val(page.PARENT_ID || '');
+                }, 300);
+                $('#pageModal').modal('show');
+            }
+        }
+
+        function savePage() {
+            const formData = {
+                FUNC_ID: $('#funcId').val(),
+                FUNC_NA: $('#funcName').val(),
+                PARENT_ID: $('#parentId').val() || null,
+                SORT_NO: $('#sortNo').val() || null,
+                IS_SHOW: $('#isShow').val(),
+                MEMO: $('#memo').val() || null,
+                VIEW_H: $('#viewH').val() || null,      // 新增
+                VIEW_HB: $('#viewHB').val() || null     // 新增
+            };
+
+            if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
+                alert('請輸入頁面ID和頁面名稱');
+                return;
+            }
+
+                if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
+                    alert('請輸入CONTROLLER名稱和ACTION名稱');
+                    return;
+                }
+
+            // 新增頁面時檢查上層ID是否為必填
+            if (!isPageEditMode && !formData.PARENT_ID) {
+                alert('請選擇上層ID');
+                return;
+            }
+
+            let url, postData;
+            if (isPageEditMode) {
+                url = '@Url.Action("UpdateFunction", "AP")';
+                postData = Object.assign(formData, { originalFuncId: originalFuncId });
+            } else {
+                url = '@Url.Action("AddFunction", "AP")';
+                postData = formData;
+            }
+
+            $.post(url, postData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#pageModal').modal('hide');
+                    loadPages();
+                    if (isPageEditMode) {
+                        setTimeout(function () {
+                            currentSelectedPage = formData.FUNC_ID;
+                            renderPageListHierarchical();
+                        }, 500);
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deletePage(funcId, funcName) {
+            if (confirm(`確定要刪除頁面 "${funcName}" 嗎？\n注意：這將同時刪除該頁面的所有按鈕定義！`)) {
+                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+                        // 如果刪除的是當前選中的頁面，清空選擇
+                        if (currentSelectedPage === funcId) {
+                            currentSelectedPage = '';
+                            $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
+                            $('#addButtonBtn').prop('disabled', true);
+                            $('#buttonSection').removeClass('hide-add-button');
+                        }
+
+                        // 自動重新載入頁面列表
+                        loadPages();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 按鈕管理函數
+        function openButtonModal() {
+            if (!currentSelectedPage) return;
+
+
+            isButtonEditMode = false;
+            $('#buttonModalTitle').text('新增按鈕');
+            $('#buttonForm')[0].reset();
+            $('#buttonFuncId').val(currentSelectedPage);
+
+            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+            $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : currentSelectedPage);
+
+            // 取得下一個按鈕序號
+            $.get('@Url.Action("GetNextButtonSeq", "AP")', { func_id: currentSelectedPage, sysID: currentSysID }, function (response) {
+                if (response.success) {
+                    $('#buttonBtnSeq').val(response.data);
+                    $('#btnSeqDisplay').val(response.data);
+                }
+            });
+
+            $('#buttonModal').modal('show');
+        }
+
+        function editButton(funcId, btnSeq) {
+            isButtonEditMode = true;
+            $('#buttonModalTitle').text('修改按鈕');
+
+
+            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+                func_id: funcId,
+                sysID: currentSysID
+            }, function (response) {
+                if (response.success) {
+                    const button = response.data.find(b => b.BTNSEQ === btnSeq);
+                    if (button) {
+                        $('#buttonFuncId').val(button.FUNC_ID);
+                        $('#buttonBtnSeq').val(button.BTNSEQ);
+                        $('#btnSeqDisplay').val(button.BTNSEQ);
+                        $('#btnId').val(button.BTNID);
+                        $('#btnName').val(button.BTN_NAME);
+                        $('#controller').val(button.CONTROLLER || '');
+                        $('#action').val(button.ACTION || '');
+                        $('#loc').val(button.LOC || '');
+                        $('#onclick').val(button.ONCLICK || '');
+
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === funcId);
+                        $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : funcId);
+
+                        $('#buttonModal').modal('show');
+                    }
+                }
+            });
+
+        }
+
+        function saveButton() {
+            const formData = {
+                FUNC_ID: $('#buttonFuncId').val(),
+                BTNSEQ: $('#buttonBtnSeq').val(),
+                BTNID: $('#btnId').val(),
+                BTN_NAME: $('#btnName').val(),
+                CONTROLLER: $('#controller').val() || null,
+                ACTION: $('#action').val() || null,
+                LOC: $('#loc').val() || null,
+                ONCLICK: $('#onclick').val() || null
+            };
+
+
+            if (!formData.BTNID.trim() || !formData.BTN_NAME.trim()) {
+                alert('請輸入按鈕ID和按鈕名稱');
+                return;
+            }
+
+            const url = isButtonEditMode ? '@Url.Action("UpdateButton", "AP")' : '@Url.Action("AddButton", "AP")';
+
+            $.post(url, formData, function (response) {
+                if (response.success) {
+                    alert(response.message);
+                    $('#buttonModal').modal('hide');
+
+                    // 自動重新載入按鈕列表
+                    if (currentSelectedPage) {
+                        const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                        if (selectedPageData) {
+                            loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                        }
+                    }
+                } else {
+                    alert(response.message);
+                }
+            });
+        }
+
+        function deleteButton(funcId, btnSeq, btnName) {
+            if (confirm(`確定要刪除按鈕 "${btnName}" 嗎？`)) {
+                $.post('@Url.Action("DeleteButton", "AP")', {
+                    func_id: funcId,
+                    btnseq: btnSeq,
+                    sysID: currentSysID
+                }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
+
+
+                        // 自動重新載入按鈕列表
+                        if (currentSelectedPage) {
+                            const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                            if (selectedPageData) {
+                                loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                            }
+                        }
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
+
+        // 重新載入
+        function refreshData() {
+            // 重新載入頁面列表
+            loadPages();
+
+            // 如果有選中的頁面，重新載入其按鈕
+            if (currentSelectedPage) {
+                setTimeout(function () {
+                    const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                    if (selectedPageData) {
+                        const isChild = selectedPageData.PARENT_ID && allPages.some(p => p.FUNC_ID === selectedPageData.PARENT_ID);
+                        selectPage(currentSelectedPage, selectedPageData.FUNC_NA, isChild);
+                    }
                 }, 500);
             }
-        } else {
-            alert(response.message);
         }
-    });
-}
 
-重點修改：
-	1.	.trim() 前一律用 ($('#xxx').val() || '').trim()，避免 null.trim()。
-	2.	以 parentId === 'HOME' 決定是否檢核 VIEW_H / VIEW_HB。
-	3.	HOME 時自動將兩欄 disable + 清空 + placeholder；子頁面恢復可輸入。
-	4.	送出前若是 HOME，把空字串轉回 null，資料更乾淨。
+    </script>
+}
