@@ -1,12 +1,16 @@
-我了解問題了！你想要在**新分頁開啟 TOKEN URL** 的同時，**當前頁面停留在原本的位置**，而不是導向到 Main 頁面。
+了解了！問題可能出在幾個地方，讓我幫你 debug：
 
-問題在於 `window.location.href` 會立即改變當前頁面，導致使用者體驗不佳。
+## 問題分析
 
-## 解決方案
+### **可能原因1：Script 執行時機問題**
 
-有幾種方式可以處理：
+`window.open()` 可能因為瀏覽器的彈出視窗封鎖或執行順序問題沒有成功開啟。
 
-### **方案A：只開新分頁，當前頁面不動（推薦）**
+### **可能原因2：兩個導向同時執行**
+
+`window.open()` 還沒完成，`window.location.href` 就已經執行了。
+
+## 解決方案：加強版方案A
 
 ```csharp
 // 權限管理導向 URL
@@ -27,26 +31,73 @@ public ActionResult AP_ACCESS_SYS()
 
         if (response_.Result_code == "0000")
         {
-            // 👇 只開新分頁，當前頁面關閉自己（回到上一頁的效果）
+            // 👇 改進版：確保新視窗開啟後才處理當前頁面
             string script = $@"
-            <script>
-               window.open('{response_.Url}', '_blank');
-               window.close(); // 關閉當前分頁
-               // 如果無法關閉（因為不是由 script 開啟的），則返回上一頁
-               if (!window.closed) {{
-                   window.history.back();
-               }}
-            </script>";
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>導向中...</title>
+            </head>
+            <body>
+                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
+                    <h3>正在開啟權限管理頁面...</h3>
+                    <p>如果未自動開啟，請檢查瀏覽器彈出視窗設定</p>
+                </div>
+                <script>
+                    (function() {{
+                        // 開啟新視窗
+                        var newWindow = window.open('{response_.Url}', '_blank');
+                        
+                        // 等待一下讓新視窗開啟
+                        setTimeout(function() {{
+                            // 檢查新視窗是否成功開啟
+                            if (newWindow) {{
+                                // 成功開啟，關閉當前視窗或返回上一頁
+                                window.close();
+                                // 如果無法關閉（不是由 script 開啟的視窗），則返回上一頁
+                                setTimeout(function() {{
+                                    if (!window.closed) {{
+                                        window.history.back();
+                                    }}
+                                }}, 100);
+                            }} else {{
+                                // 未成功開啟，顯示連結讓使用者手動點擊
+                                alert('請允許彈出視窗，或點擊確定後手動開啟連結');
+                                window.location.href = '{response_.Url}';
+                            }}
+                        }}, 500);
+                    }})();
+                </script>
+            </body>
+            </html>";
             return Content(script, "text/html");
         }
         else
         {
-            return Content($"<script>alert('取得權限管理連結失敗：{response_.Msg}'); window.history.back();</script>", "text/html");
+            return Content($@"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <script>
+                    alert('取得權限管理連結失敗：{response_.Msg}');
+                    window.history.back();
+                </script>
+            </body>
+            </html>", "text/html");
         }
     }
     catch (Exception ex)
     {
-        return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}'); window.history.back();</script>", "text/html");
+        return Content($@"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <script>
+                alert('導向權限管理系統發生錯誤：{ex.Message}');
+                window.history.back();
+            </script>
+        </body>
+        </html>", "text/html");
     }
 }
 
@@ -69,114 +120,116 @@ public ActionResult AP_ACCESS_SYS_FUNC()
         if (response_.Result_code == "0000")
         {
             string script = $@"
-            <script>
-               window.open('{response_.Url}', '_blank');
-               window.close();
-               if (!window.closed) {{
-                   window.history.back();
-               }}
-            </script>";
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>導向中...</title>
+            </head>
+            <body>
+                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
+                    <h3>正在開啟頁面功能管理...</h3>
+                    <p>如果未自動開啟，請檢查瀏覽器彈出視窗設定</p>
+                </div>
+                <script>
+                    (function() {{
+                        var newWindow = window.open('{response_.Url}', '_blank');
+                        
+                        setTimeout(function() {{
+                            if (newWindow) {{
+                                window.close();
+                                setTimeout(function() {{
+                                    if (!window.closed) {{
+                                        window.history.back();
+                                    }}
+                                }}, 100);
+                            }} else {{
+                                alert('請允許彈出視窗，或點擊確定後手動開啟連結');
+                                window.location.href = '{response_.Url}';
+                            }}
+                        }}, 500);
+                    }})();
+                </script>
+            </body>
+            </html>";
             return Content(script, "text/html");
         }
         else
         {
-            return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.Msg}'); window.history.back();</script>", "text/html");
+            return Content($@"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <script>
+                    alert('取得頁面功能管理連結失敗：{response_.Msg}');
+                    window.history.back();
+                </script>
+            </body>
+            </html>", "text/html");
         }
     }
     catch (Exception ex)
     {
-        return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}'); window.history.back();</script>", "text/html");
+        return Content($@"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <script>
+                alert('導向權限管理系統發生錯誤：{ex.Message}');
+                window.history.back();
+            </script>
+        </body>
+        </html>", "text/html");
     }
 }
 ```
 
-### **方案B：用 AJAX 方式呼叫，完全不離開當前頁面**
+## 改進重點
 
-如果你是從目錄樹點擊進入，可以改用 AJAX：
+### **1. 完整的 HTML 結構**
 
-**修改 Controller 回傳 JSON：**
-
-```csharp
-// 權限管理導向 URL - JSON 版本
-[HttpPost]
-public JsonResult GetAccessUrl(string type)
-{
-    try
-    {
-        var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
-        {
-            SysID = "HI_APACCESS",
-            Type = type, // "1" 或 "2"
-            Environment = "DEV"
-        };
-
-        string json_input = JsonConvert.SerializeObject(req_para);
-        string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
-        HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
-
-        if (response_.Result_code == "0000")
-        {
-            return Json(new { success = true, url = response_.Url });
-        }
-        else
-        {
-            return Json(new { success = false, message = response_.Msg });
-        }
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = ex.Message });
-    }
-}
+```html
+<!DOCTYPE html>
+<html>
+<head>...</head>
+<body>...</body>
+</html>
 ```
 
-**前端 JavaScript（在目錄樹或按鈕點擊事件）：**
+確保瀏覽器正確解析 script。
+
+### **2. 加入使用者提示**
+
+```html
+<div style='text-align:center; padding:50px;'>
+    <h3>正在開啟權限管理頁面...</h3>
+</div>
+```
+
+讓使用者知道正在處理中。
+
+### **3. 檢查新視窗是否成功開啟**
 
 ```javascript
-// 權限管理
-$('#btn-access-sys').click(function() {
-    $.ajax({
-        url: '@Url.Action("GetAccessUrl", "SYS")',
-        type: 'POST',
-        data: { type: "2" },
-        dataType: 'json',
-        success: function(response) {
-            if (response.success) {
-                window.open(response.url, '_blank');
-            } else {
-                alert('取得權限管理連結失敗：' + response.message);
-            }
-        },
-        error: function() {
-            alert('導向權限管理系統發生錯誤');
-        }
-    });
-});
+var newWindow = window.open('{response_.Url}', '_blank');
 
-// 頁面管理
-$('#btn-func-sys').click(function() {
-    $.ajax({
-        url: '@Url.Action("GetAccessUrl", "SYS")',
-        type: 'POST',
-        data: { type: "1" },
-        dataType: 'json',
-        success: function(response) {
-            if (response.success) {
-                window.open(response.url, '_blank');
-            } else {
-                alert('取得頁面功能管理連結失敗：' + response.message);
-            }
-        },
-        error: function() {
-            alert('導向權限管理系統發生錯誤');
-        }
-    });
-});
+if (newWindow) {
+    // 成功開啟
+} else {
+    // 被封鎖，顯示 alert 並直接導向
+    alert('請允許彈出視窗...');
+    window.location.href = '{response_.Url}';
+}
 ```
 
-### **方案C：直接 Redirect 到新分頁 URL**
+### **4. 延遲處理**
 
-如果你的目標是讓使用者直接跳轉過去：
+```javascript
+setTimeout(function() {
+    // 確保新視窗開啟後再關閉當前視窗
+}, 500);
+```
+
+## 如果還是不行，用這個 Debug 版本
 
 ```csharp
 public ActionResult AP_ACCESS_SYS()
@@ -194,34 +247,86 @@ public ActionResult AP_ACCESS_SYS()
         string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
         HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
 
+        // 👇 加入 Debug 資訊
         if (response_.Result_code == "0000")
         {
-            // 直接導向到 TOKEN URL（當前頁面跳轉）
-            return Redirect(response_.Url);
+            string script = $@"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>導向中...</title>
+            </head>
+            <body>
+                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
+                    <h3>正在開啟權限管理頁面...</h3>
+                    <p>目標URL：{response_.Url}</p>
+                    <p>Result Code：{response_.Result_code}</p>
+                    <p><a href='{response_.Url}' target='_blank'>如果未自動開啟，請點此手動開啟</a></p>
+                </div>
+                <script>
+                    console.log('準備開啟新視窗');
+                    console.log('URL:', '{response_.Url}');
+                    
+                    var newWindow = window.open('{response_.Url}', '_blank');
+                    console.log('新視窗物件:', newWindow);
+                    
+                    setTimeout(function() {{
+                        if (newWindow) {{
+                            console.log('新視窗成功開啟，準備關閉當前頁面');
+                            window.close();
+                            setTimeout(function() {{
+                                if (!window.closed) {{
+                                    console.log('無法關閉當前視窗，返回上一頁');
+                                    window.history.back();
+                                }}
+                            }}, 100);
+                        }} else {{
+                            console.log('新視窗被封鎖');
+                            alert('請允許彈出視窗，或使用下方連結手動開啟');
+                        }}
+                    }}, 500);
+                </script>
+            </body>
+            </html>";
+            return Content(script, "text/html");
         }
         else
         {
-            TempData["ErrorMessage"] = $"取得權限管理連結失敗：{response_.Msg}";
-            return RedirectToAction("Main", "Home");
+            // 顯示錯誤資訊
+            return Content($@"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <h3>取得連結失敗</h3>
+                <p>Result Code: {response_.Result_code}</p>
+                <p>訊息: {response_.Msg}</p>
+                <p><a href='javascript:history.back()'>返回上一頁</a></p>
+            </body>
+            </html>", "text/html");
         }
     }
     catch (Exception ex)
     {
-        TempData["ErrorMessage"] = $"導向權限管理系統發生錯誤：{ex.Message}";
-        return RedirectToAction("Main", "Home");
+        return Content($@"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <h3>發生錯誤</h3>
+            <p>錯誤訊息: {ex.Message}</p>
+            <p>堆疊: {ex.StackTrace}</p>
+            <p><a href='javascript:history.back()'>返回上一頁</a></p>
+        </body>
+        </html>", "text/html");
     }
 }
 ```
 
-## 我的建議
+## 測試步驟
 
-**推薦使用方案B（AJAX 方式）**，因為：
+1. 從目錄樹點擊連結
+1. 檢查瀏覽器 Console (F12 開發者工具)
+1. 看看有沒有錯誤訊息
+1. 確認 `response_.Url` 的值是否正確
+1. 檢查瀏覽器是否封鎖彈出視窗
 
-✅ **使用者體驗最好** - 當前頁面完全不動，只開新分頁  
-✅ **不會有「空白頁面」** - 不會出現執行 script 的過渡頁面  
-✅ **更彈性** - 可以在任何地方呼叫，不限於目錄樹  
-✅ **錯誤處理更優雅** - 用 alert 提示，不會跳頁
-
-如果你的目錄樹是透過連結 `<a href="...">` 點擊進入，那可以用方案A。
-
-你比較想用哪一種方式？我可以幫你調整細節！😊​​​​​​​​​​​​​​​​
+試試看這個版本，如果還有問題，請告訴我 Console 中顯示了什麼訊息！​​​​​​​​​​​​​​​​
