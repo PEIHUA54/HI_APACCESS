@@ -1,332 +1,151 @@
-了解了！問題可能出在幾個地方，讓我幫你 debug：
+ok，鎖 001 這個內建管理員群組最穩的是「前端禁止 + 後端再擋一次」。下面直接給你「就地改」的片段，貼上就能用。
 
-## 問題分析
+前端（View / JS）
 
-### **可能原因1：Script 執行時機問題**
+1) 切換群組時，直接禁用「修改 / 刪除」按鈕
 
-`window.open()` 可能因為瀏覽器的彈出視窗封鎖或執行順序問題沒有成功開啟。
+在你的 loadGroupData() 裡，原本選到群組後會啟用按鈕；請在啟用後加上這段判斷，把 001 鎖起來：
 
-### **可能原因2：兩個導向同時執行**
+function loadGroupData() {
+    const newGroup = $('#groupSelect').val();
 
-`window.open()` 還沒完成，`window.location.href` 就已經執行了。
+    if (hasUnsavedChanges && currentGroup !== newGroup && currentGroup !== '') {
+        if (!confirm('有未儲存的變更，切換群組將遺失這些變更。確定要繼續嗎？')) {
+            $('#groupSelect').val(currentGroup);
+            return;
+        }
+    }
 
-## 解決方案：加強版方案A
+    currentGroup = newGroup;
+    hideSaveReminder();
 
-```csharp
-// 權限管理導向 URL
-public ActionResult AP_ACCESS_SYS()
+    if (!currentGroup) {
+        resetAllSections();
+        return;
+    }
+
+    // 啟用所有按鈕
+    $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', false);
+
+    // ★ 這裡加：鎖定 001
+    const isLockedGroup = (currentGroup === '001');
+    if (isLockedGroup) {
+        $('#editGroupBtn, #deleteGroupBtn').prop('disabled', true);
+        // 也可以給個提示（可留可不留）
+        $('#editGroupBtn').attr('title', '此為系統內建群組，無法修改');
+        $('#deleteGroupBtn').attr('title', '此為系統內建群組，無法刪除');
+    } else {
+        $('#editGroupBtn, #deleteGroupBtn').removeAttr('title');
+    }
+
+    loadUsers();
+    loadPagePermissions();
+}
+
+2) 擋下「修改群組」動作
+
+在你的 editGroup() 開頭加上這段，直接不讓開啟：
+
+function editGroup() {
+    if (!currentGroup) return;
+
+    // ★ 這裡加：001 不可修改
+    if (currentGroup === '001') {
+        alert('「001 管理員（資訊）」為系統內建群組，無法修改。');
+        return;
+    }
+
+    isEditMode = true;
+    $('#groupModalTitle').text('修改群組');
+    // ……後面原程式碼維持……
+}
+
+3) 擋下「刪除群組」動作
+
+在你的 deleteGroup() 一開始加：
+
+function deleteGroup() {
+    if (!currentGroup) return;
+
+    // ★ 這裡加：001 不可刪除
+    if (currentGroup === '001') {
+        alert('「001 管理員（資訊）」為系統內建群組，無法刪除。');
+        return;
+    }
+
+    const groupName = $('#groupSelect option:selected').text();
+    // ……後面原邏輯不變……
+}
+
+如果你只想鎖「名稱不可改」，而允許改其他欄位：可以在 editGroup() 裡照常開 modal，但在載入完資料後把 #groupName 設成 readonly。你現在的需求是「不能修改、也不能刪」，所以我直接整個擋掉。
+
+⸻
+
+後端（Controller / Service）
+
+前端擋住仍不夠，後端要再保險擋一次，避免有人手動發 request。
+
+1) UpdateGroup 動作擋 001
+
+[HttpPost]
+public JsonResult UpdateGroup(string APG_NO, string APG_NAME /* 其餘參數… */, string sysID)
 {
     try
     {
-        var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
-        {
-            SysID = "HI_APACCESS",
-            Type = "2",
-            Environment = "DEV"
-        };
+        // ★ 這裡加：001 不允許修改
+        if (APG_NO == "001")
+            return Json(new { success = false, message = "「001 管理員（資訊）」為系統內建群組，禁止修改。" });
 
-        string json_input = JsonConvert.SerializeObject(req_para);
-        string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
-        HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
+        var service = GetAPService();
+        var result = service.UpdateGroup(APG_NO, APG_NAME /* …其餘 */);
+        if (result.Success)
+            return Json(new { success = true, message = "群組修改成功" });
 
-        if (response_.Result_code == "0000")
-        {
-            // 👇 改進版：確保新視窗開啟後才處理當前頁面
-            string script = $@"
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>導向中...</title>
-            </head>
-            <body>
-                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
-                    <h3>正在開啟權限管理頁面...</h3>
-                    <p>如果未自動開啟，請檢查瀏覽器彈出視窗設定</p>
-                </div>
-                <script>
-                    (function() {{
-                        // 開啟新視窗
-                        var newWindow = window.open('{response_.Url}', '_blank');
-                        
-                        // 等待一下讓新視窗開啟
-                        setTimeout(function() {{
-                            // 檢查新視窗是否成功開啟
-                            if (newWindow) {{
-                                // 成功開啟，關閉當前視窗或返回上一頁
-                                window.close();
-                                // 如果無法關閉（不是由 script 開啟的視窗），則返回上一頁
-                                setTimeout(function() {{
-                                    if (!window.closed) {{
-                                        window.history.back();
-                                    }}
-                                }}, 100);
-                            }} else {{
-                                // 未成功開啟，顯示連結讓使用者手動點擊
-                                alert('請允許彈出視窗，或點擊確定後手動開啟連結');
-                                window.location.href = '{response_.Url}';
-                            }}
-                        }}, 500);
-                    }})();
-                </script>
-            </body>
-            </html>";
-            return Content(script, "text/html");
-        }
-        else
-        {
-            return Content($@"
-            <!DOCTYPE html>
-            <html>
-            <body>
-                <script>
-                    alert('取得權限管理連結失敗：{response_.Msg}');
-                    window.history.back();
-                </script>
-            </body>
-            </html>", "text/html");
-        }
+        return Json(new { success = false, message = result.Message ?? "群組修改失敗" });
     }
     catch (Exception ex)
     {
-        return Content($@"
-        <!DOCTYPE html>
-        <html>
-        <body>
-            <script>
-                alert('導向權限管理系統發生錯誤：{ex.Message}');
-                window.history.back();
-            </script>
-        </body>
-        </html>", "text/html");
+        return Json(new { success = false, message = "修改發生錯誤：" + ex.Message });
     }
 }
 
-// 系統頁面管理導向
-public ActionResult AP_ACCESS_SYS_FUNC()
+2) DeleteGroup 動作擋 001
+
+[HttpPost]
+public JsonResult DeleteGroup(string apg_no, string sysID)
 {
     try
     {
-        var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
-        {
-            SysID = "HI_APACCESS",
-            Type = "1",
-            Environment = "DEV"
-        };
+        // ★ 這裡加：001 不允許刪除
+        if (apg_no == "001")
+            return Json(new { success = false, message = "「001 管理員（資訊）」為系統內建群組，禁止刪除。" });
 
-        string json_input = JsonConvert.SerializeObject(req_para);
-        string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
-        HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
+        var service = GetAPService();
 
-        if (response_.Result_code == "0000")
+        // 你原本的檢查與刪除流程…
+        var canDelete = service.CanDeleteGroup(apg_no); // 若你現成的是 CanDeleteGroup / CanDeleteFunction 擇一使用
+        if (!canDelete)
         {
-            string script = $@"
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>導向中...</title>
-            </head>
-            <body>
-                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
-                    <h3>正在開啟頁面功能管理...</h3>
-                    <p>如果未自動開啟，請檢查瀏覽器彈出視窗設定</p>
-                </div>
-                <script>
-                    (function() {{
-                        var newWindow = window.open('{response_.Url}', '_blank');
-                        
-                        setTimeout(function() {{
-                            if (newWindow) {{
-                                window.close();
-                                setTimeout(function() {{
-                                    if (!window.closed) {{
-                                        window.history.back();
-                                    }}
-                                }}, 100);
-                            }} else {{
-                                alert('請允許彈出視窗，或點擊確定後手動開啟連結');
-                                window.location.href = '{response_.Url}';
-                            }}
-                        }}, 500);
-                    }})();
-                </script>
-            </body>
-            </html>";
-            return Content(script, "text/html");
+            return Json(new { success = false, message = "該群組仍有設定，無法刪除" });
         }
-        else
-        {
-            return Content($@"
-            <!DOCTYPE html>
-            <html>
-            <body>
-                <script>
-                    alert('取得頁面功能管理連結失敗：{response_.Msg}');
-                    window.history.back();
-                </script>
-            </body>
-            </html>", "text/html");
-        }
+
+        var result = service.DeleteGroup(apg_no);
+        if (result.Success)
+            return Json(new { success = true, message = "群組刪除成功" });
+
+        return Json(new { success = false, message = result.Message ?? "群組刪除失敗" });
     }
     catch (Exception ex)
     {
-        return Content($@"
-        <!DOCTYPE html>
-        <html>
-        <body>
-            <script>
-                alert('導向權限管理系統發生錯誤：{ex.Message}');
-                window.history.back();
-            </script>
-        </body>
-        </html>", "text/html");
+        return Json(new { success = false, message = "刪除發生錯誤：" + ex.Message });
     }
 }
-```
 
-## 改進重點
+服務層（Service）如果也有 UpdateGroup/DeleteGroup，同樣加一層 if (apg_no == "001") throw / return fail 比較保險。
 
-### **1. 完整的 HTML 結構**
+⸻
 
-```html
-<!DOCTYPE html>
-<html>
-<head>...</head>
-<body>...</body>
-</html>
-```
-
-確保瀏覽器正確解析 script。
-
-### **2. 加入使用者提示**
-
-```html
-<div style='text-align:center; padding:50px;'>
-    <h3>正在開啟權限管理頁面...</h3>
-</div>
-```
-
-讓使用者知道正在處理中。
-
-### **3. 檢查新視窗是否成功開啟**
-
-```javascript
-var newWindow = window.open('{response_.Url}', '_blank');
-
-if (newWindow) {
-    // 成功開啟
-} else {
-    // 被封鎖，顯示 alert 並直接導向
-    alert('請允許彈出視窗...');
-    window.location.href = '{response_.Url}';
-}
-```
-
-### **4. 延遲處理**
-
-```javascript
-setTimeout(function() {
-    // 確保新視窗開啟後再關閉當前視窗
-}, 500);
-```
-
-## 如果還是不行，用這個 Debug 版本
-
-```csharp
-public ActionResult AP_ACCESS_SYS()
-{
-    try
-    {
-        var req_para = new HI_APACCESS.Models.M_SYS.GetUrlRequsetModel()
-        {
-            SysID = "HI_APACCESS",
-            Type = "2",
-            Environment = "DEV"
-        };
-
-        string json_input = JsonConvert.SerializeObject(req_para);
-        string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
-        HI_APACCESS.Models.M_SYS.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<HI_APACCESS.Models.M_SYS.GetUrlResponseModel>(response);
-
-        // 👇 加入 Debug 資訊
-        if (response_.Result_code == "0000")
-        {
-            string script = $@"
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>導向中...</title>
-            </head>
-            <body>
-                <div style='text-align:center; padding:50px; font-family:Microsoft JhengHei;'>
-                    <h3>正在開啟權限管理頁面...</h3>
-                    <p>目標URL：{response_.Url}</p>
-                    <p>Result Code：{response_.Result_code}</p>
-                    <p><a href='{response_.Url}' target='_blank'>如果未自動開啟，請點此手動開啟</a></p>
-                </div>
-                <script>
-                    console.log('準備開啟新視窗');
-                    console.log('URL:', '{response_.Url}');
-                    
-                    var newWindow = window.open('{response_.Url}', '_blank');
-                    console.log('新視窗物件:', newWindow);
-                    
-                    setTimeout(function() {{
-                        if (newWindow) {{
-                            console.log('新視窗成功開啟，準備關閉當前頁面');
-                            window.close();
-                            setTimeout(function() {{
-                                if (!window.closed) {{
-                                    console.log('無法關閉當前視窗，返回上一頁');
-                                    window.history.back();
-                                }}
-                            }}, 100);
-                        }} else {{
-                            console.log('新視窗被封鎖');
-                            alert('請允許彈出視窗，或使用下方連結手動開啟');
-                        }}
-                    }}, 500);
-                </script>
-            </body>
-            </html>";
-            return Content(script, "text/html");
-        }
-        else
-        {
-            // 顯示錯誤資訊
-            return Content($@"
-            <!DOCTYPE html>
-            <html>
-            <body>
-                <h3>取得連結失敗</h3>
-                <p>Result Code: {response_.Result_code}</p>
-                <p>訊息: {response_.Msg}</p>
-                <p><a href='javascript:history.back()'>返回上一頁</a></p>
-            </body>
-            </html>", "text/html");
-        }
-    }
-    catch (Exception ex)
-    {
-        return Content($@"
-        <!DOCTYPE html>
-        <html>
-        <body>
-            <h3>發生錯誤</h3>
-            <p>錯誤訊息: {ex.Message}</p>
-            <p>堆疊: {ex.StackTrace}</p>
-            <p><a href='javascript:history.back()'>返回上一頁</a></p>
-        </body>
-        </html>", "text/html");
-    }
-}
-```
-
-## 測試步驟
-
-1. 從目錄樹點擊連結
-1. 檢查瀏覽器 Console (F12 開發者工具)
-1. 看看有沒有錯誤訊息
-1. 確認 `response_.Url` 的值是否正確
-1. 檢查瀏覽器是否封鎖彈出視窗
-
-試試看這個版本，如果還有問題，請告訴我 Console 中顯示了什麼訊息！​​​​​​​​​​​​​​​​
+這樣做完：
+	•	在畫面選到 001 時，「修改群組」「刪除群組」會自動變灰且點了也會被攔。
+	•	就算有人刻意呼叫 API，後端也會拒絕。
+	•	其他群組不受影響。
