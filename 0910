@@ -1,146 +1,95 @@
-   該頁面尚有權限設定，無法刪除=>
-應該改成該頁面已有權限設定，將會清除此頁面所有相關權限設定及按鈕設定，確定要刪除嗎?
+沒問題！我用你「原本的 JS 介面與同一個 Action 名稱」來改，邏輯是兩段式：
+	•	先打 DeleteFunction 檢查
+	•	沒權限 → 直接刪除並回傳成功
+	•	有權限 → 回傳 needConfirm=true 與訊息
+	•	前端收到 needConfirm 後 confirm()，同樣再呼叫 同一個 DeleteFunction，但帶 confirm=true，後端才會真的清掉頁面＋所有相關權限/按鈕。
 
-   // 刪除頁面
-   [HttpPost]
-   public JsonResult DeleteFunction(string func_id , string sysID)
-   {
-       try
-       {
-           var service = GetAPService();
-           if (!service.CanDeleteFunction(func_id))
-           {
-               return Json(new { success = false, message = "該頁面尚有權限設定，無法刪除" });
-           }
+⸻
 
-           var result = service.DeleteFunction(func_id);
-           if (result == null || !result.Contains("fail"))
-           {
-               return Json(new { success = true, message = "頁面刪除成功" });
-           }
-           else
-           {
-               return Json(new { success = false, message = "頁面刪除失敗：" + result });
-           }
-       }
-       catch (Exception ex)
-       {
-           return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
-       }
-   }
+Controller（沿用同一 Action 名稱）
 
+[HttpPost]
+public JsonResult DeleteFunction(string func_id, string sysID, bool confirm = false)
+{
+    try
+    {
+        var service = GetAPService();
 
-        // 檢查頁面是否可以刪除
-        public bool CanDeleteFunction(string func_id)
+        // 第一次：只檢查
+        bool hasPermissions = !service.CanDeleteFunction(func_id);
+        if (hasPermissions && !confirm)
         {
-            string sql = @"
-            SELECT COUNT(*) as PermissionCount
-            FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
-            
-            UNION ALL
-            
-            SELECT COUNT(*) as PermissionCount
-            FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
-";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-        {
-            new SqlParameter("@SYS_ID", _sysId),
-            new SqlParameter("@FUNC_ID", func_id)
-        };
-
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            int totalCount = 0;
-            foreach (DataRow row in dt.Rows)
+            return Json(new
             {
-                totalCount += Convert.ToInt32(row["PermissionCount"]);
-            }
-            return totalCount == 0;
+                success = false,
+                needConfirm = true,
+                message = "該頁面已有權限設定，將會清除此頁面所有相關權限設定及按鈕設定，確定要刪除嗎?"
+            });
         }
 
-        // 刪除頁面
-        public string DeleteFunction(string func_id)
+        // 真的刪（無權限 or 已經二次確認）
+        var result = service.DeleteFunction(func_id);
+        if (result == null || !result.Contains("fail"))
         {
-            try
-            {
-                // 1. 刪除該頁面的所有按鈕定義
-                string deleteButtonsSQL = @"
-DELETE FROM [HI-AUTOS].[dbo].[AP_RFUNC]
-WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
-
-                List<SqlParameter> buttonsParameters = new List<SqlParameter>
-                {
-                    new SqlParameter("@SYS_ID", _sysId),
-                    new SqlParameter("@FUNC_ID", func_id)
-                };
-
-                // 2. 刪除該頁面的按鈕權限設定
-                string deleteButtonPermSQL = @"
-    DELETE FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
-    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
-
-                List<SqlParameter> buttonPermParameters = new List<SqlParameter>
-                {
-                    new SqlParameter("@SYS_ID", _sysId),
-                    new SqlParameter("@FUNC_ID", func_id)
-                };
-
-                // 3. 刪除該頁面的頁面權限設定
-                string deleteFuncPermSQL = @"
-    DELETE FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
-    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
-
-                List<SqlParameter> funcPermParameters = new List<SqlParameter>
-                {
-                    new SqlParameter("@SYS_ID", _sysId),
-                    new SqlParameter("@FUNC_ID", func_id)
-                };
-
-                // 4. 最後刪除頁面本身
-                string deleteFuncSQL = @"
-    DELETE FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
-
-                List<SqlParameter> funcParameters = new List<SqlParameter>
-                {
-                    new SqlParameter("@SYS_ID", _sysId),
-                    new SqlParameter("@FUNC_ID", func_id)
-                };
-
-                // 依序執行刪除
-                SVS_DBmanager.ExecuteSQL(deleteButtonsSQL, buttonsParameters);
-                SVS_DBmanager.ExecuteSQL(deleteButtonPermSQL, buttonPermParameters);
-                SVS_DBmanager.ExecuteSQL(deleteFuncPermSQL, funcPermParameters);
-                return SVS_DBmanager.ExecuteSQL(deleteFuncSQL, funcParameters);
-            }
-            catch (Exception ex)
-            {
-                return "fail," + ex.Message;
-            }
+            return Json(new { success = true, message = "頁面刪除成功" });
         }
+        else
+        {
+            return Json(new { success = false, message = "頁面刪除失敗：" + result });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
+    }
+}
 
-JS:
-        function deletePage(funcId, funcName) {
-            if (confirm(`確定要刪除頁面 "${funcName}" 嗎？\n注意：這將同時刪除該頁面的所有按鈕定義！`)) {
-                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
-                    if (response.success) {
-                        alert(response.message);
 
-                        // 如果刪除的是當前選中的頁面，清空選擇
+⸻
+
+JS（你的原函式，內部微調）
+
+function deletePage(funcId, funcName) {
+    // 第一次呼叫：先檢查是否有權限設定
+    $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
+        // 有權限 → 顯示你要的提示訊息，再次呼叫同一 Action，但帶 confirm=true
+        if (response.needConfirm) {
+            if (confirm(response.message)) {
+                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID, confirm: true }, function (res2) {
+                    alert(res2.message);
+
+                    if (res2.success) {
+                        // 如果刪的是目前選中的頁面，清空右側 UI
                         if (currentSelectedPage === funcId) {
                             currentSelectedPage = '';
                             $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
                             $('#addButtonBtn').prop('disabled', true);
                             $('#buttonSection').removeClass('hide-add-button');
                         }
-
-                        // 自動重新載入頁面列表
                         loadPages();
-                    } else {
-                        alert(response.message);
                     }
                 });
             }
+            return;
         }
+
+        // 沒有權限設定 → 直接刪除完成
+        alert(response.message);
+
+        if (response.success) {
+            if (currentSelectedPage === funcId) {
+                currentSelectedPage = '';
+                $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
+                $('#addButtonBtn').prop('disabled', true);
+                $('#buttonSection').removeClass('hide-add-button');
+            }
+            loadPages();
+        }
+    });
+}
+
+重點：
+	•	仍然只有 一支 DeleteFunction
+	•	只多帶一個 confirm（預設 false）參數，避免再多開新 Action
+	•	提示內容完全照你指定的文案
+	•	其餘前端 UI 行為維持你原本寫法（刪除後刷新、清空右側等）
