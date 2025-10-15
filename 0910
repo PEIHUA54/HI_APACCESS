@@ -1,84 +1,112 @@
-可以！核心就是「只有當 PARENT_ID !== 'HOME' 時，才強制檢查 VIEW_H / VIEW_HB 必填」。若是 HOME 則可留空或填寫都行；送到後端時，如果是空字串就傳 null，避免存成空白。
+using HI_APACCESS_DLL.Models;
+using System;
+using System.Collections.Generic;
+using Microsoft.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
-把你的 savePage() 換成下面這版（其餘程式不動）：
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetTree
+    {
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment, bool onlyIsShow)
+        {
+            var response = new GetTreeModel.GetTreeResponse();
 
-function savePage() {
-    const funcId   = ($('#funcId').val()    || '').trim();
-    const funcName = ($('#funcName').val()  || '').trim();
-    const parentId = ($('#parentId').val()  || '');      // 可能為 'HOME' 或其他
-    const sortNo   = ($('#sortNo').val()    || null);
-    const isShow   = ($('#isShow').val()    || 'Y');
-    const memo     = ($('#memo').val()      || null);
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
 
-    // 先把 Controller / Action 取出並安全 trim
-    const viewHRaw  = $('#viewH').val();
-    const viewHBRaw = $('#viewHB').val();
-    const viewH  = (viewHRaw  == null ? '' : viewHRaw).trim();
-    const viewHB = (viewHBRaw == null ? '' : viewHBRaw).trim();
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
 
-    // 基本必填
-    if (!funcId || !funcName) {
-        alert('請輸入頁面ID和頁面名稱');
-        return;
-    }
+                var resultList = new List<GetTreeModel.ResultData>();
 
-    // 只有非 HOME 的子頁面才強制檢查必填
-    if (parentId !== 'HOME') {
-        if (!viewH || !viewHB) {
-            alert('請輸入CONTROLLER名稱和ACTION名稱');
-            return;
-        }
-    }
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
 
-    // 新增頁面時檢查上層是否選擇
-    if (!isPageEditMode && !parentId) {
-        alert('請選擇上層ID');
-        return;
-    }
+                    // 3. 查詢功能清單
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID,
+    a.MEMO
+FROM [HI-AUTOS].[dbo].[AP_FUNC] a
+LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID 
+    AND a.sys_id= b.sys_id 
+WHERE a.SYS_ID=@SysID 
+  AND b.APG_NO=@GroupID
+  AND a.IS_SHOW='Y'
+ORDER BY a.SORT_NO
+";
 
-    // 組裝送出的資料：
-    // - 若欄位為空字串就送 null（避免存成空白），否則送實際值
-    const formData = {
-        FUNC_ID : funcId,
-        FUNC_NA : funcName,
-        PARENT_ID: parentId || null,
-        SORT_NO : sortNo,
-        IS_SHOW : isShow,
-        MEMO    : memo,
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
 
-        // HOME 可空：空字串就傳 null；若有填也照實送出
-        VIEW_H  : viewH  === '' ? null : viewH,
-        VIEW_HB : viewHB === '' ? null : viewHB
-    };
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString(),
+                                    Memo = reader["MEMO"].ToString()
+                                });
+                            }
+                        }
+                    }
+                }
 
-    let url, postData;
-    if (isPageEditMode) {
-        url = '@Url.Action("UpdateFunction", "AP")';
-        postData = Object.assign({}, formData, { originalFuncId: originalFuncId });
-    } else {
-        url = '@Url.Action("AddFunction", "AP")';
-        postData = formData;
-    }
-
-    $.post(url, postData, function (response) {
-        if (response.success) {
-            alert(response.message);
-            $('#pageModal').modal('hide');
-            loadPages();
-            if (isPageEditMode) {
-                setTimeout(function () {
-                    currentSelectedPage = formData.FUNC_ID;
-                    renderPageListHierarchical();
-                }, 500);
+                // 4. 結果判斷
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
             }
-        } else {
-            alert(response.message);
-        }
-    });
-}
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
 
-為什麼這樣改
-	•	使用 val() || '' 搭配 .trim()，避免 null 觸發「Cannot read properties of null (reading ‘trim’)」。
-	•	以 parentId !== 'HOME' 判斷是否要強制檢查必填。
-	•	送出時把空字串轉成 null，資料庫會更乾淨（也符合你不要「寫死 null」、但空白時自動給 null 的需求）。
-	•	若是 HOME，就算兩欄為空也可送出；若有填也會照實儲存。
+            return response;
+        }
+    }
+}
