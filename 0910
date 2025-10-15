@@ -1,3 +1,6 @@
+   private readonly string sqlcon = ConfigurationManager.AppSettings["Environment"] == "HI_APACCESS_TEST" ?
+       ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString : ConfigurationManager.ConnectionStrings["ConnDB_DBLS_HI-AUTOS"].ConnectionString;
+
 using HI_APACCESS.ViewModels;
 using System;
 using System.Collections.Generic;
