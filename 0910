@@ -1,205 +1,66 @@
-太好了，你的 Web.config 已經用 Environment = "HI_APACCESS_TEST" / "HI_APACCESS" 做區分。
-接下來只要把「環境判斷」集中到一個小 helper，然後把原本硬寫 "TEST" 的地方改掉即可。
+報錯誤訊息
+Uncaught TypeError: Cannot read properties of null (reading 'trim')
 
-下面給你最小改動集：新增 1 個 Helper 檔、修改 3 個呼叫 DLL 的地方（其餘程式不動）。
-
-⸻
-
-1) 新增 EnvHelper.cs
-
-放在 Web 專案（HI_APACCESS）的 Service 資料夾即可。
-
-using System;
-using System.Configuration;
-
-namespace HI_APACCESS.Service
-{
-    internal static class EnvHelper
-    {
-        /// <summary>
-        /// 依 Web.config 的 appSettings["Environment"] 推導 DLL 需要的 Environment 值
-        /// DEV / TEST / PROD
-        /// </summary>
-        internal static string ResolveEnvForDll()
-        {
-            var raw = (ConfigurationManager.AppSettings["Environment"] ?? "")
-                .Trim()
-                .ToUpperInvariant();
-
-            if (raw.Contains("DEV"))  return "DEV";
-            if (raw.Contains("TEST")) return "TEST";
-            if (raw.Contains("PROD")) return "PROD";
-
-            // 若值不在預期（或忘了設），預設走 TEST，避免誤連正式
-            return "TEST";
-        }
-    }
-}
-
-之後你只要改 Web.config 的 Environment 值，這裡就會自動回傳 DEV/TEST/PROD 給 DLL。
-
-⸻
-
-2) 修改 SVS_員工基本資料（三個地方把硬寫 “TEST” 換掉）
-
-using HI_APACCESS.ViewModels;
-using Newtonsoft.Json;
-using System.Linq;
-using System.Collections.Generic;
-using HI_APACCESS_DLL;
-
-namespace HI_APACCESS.Service
-{
-    public class SVS_員工基本資料
-    {
-        #region AD、員編、 基本資料
-
-        internal static string Get_員工AD()
-        {
-            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name
-                .Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
-
-            if (string.IsNullOrEmpty(EMP_DOM_ID))
-            {
-                var principal = new System.Security.Principal.WindowsPrincipal(
-                    System.Security.Principal.WindowsIdentity.GetCurrent());
-                string name = principal.Identity.Name;
-                string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
-                EMP_DOM_ID = adname[1].ToString().ToUpper();
-            }
-            return EMP_DOM_ID;
-        }
-
-        /// <summary>
-        /// 取得員工編號（呼叫 DLL 功能1）
-        /// </summary>
-        internal static string Get_員工編號(string ad = null)
-        {
-            var req = new Models.M_AP_DLL.GetUserDataRequestModel
-            {
-                SysID = "HI_APACCESS",
-                UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
-                Environment = EnvHelper.ResolveEnvForDll(),   // ← 這裡改：不再硬寫 "TEST"
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetUserData(json_input);
-            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
-
-            return res?.Result?.UserID ?? req.UserAD; // 找不到就回 AD
-        }
-
-        /// <summary>
-        /// 取得員工基本資料（呼叫 DLL 功能1）
-        /// </summary>
-        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
-        {
-            var req = new Models.M_AP_DLL.GetUserDataRequestModel
-            {
-                SysID = "HI_APACCESS",
-                UserAD = ad,
-                Environment = EnvHelper.ResolveEnvForDll(),   // ← 這裡改
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetUserData(json_input);
-            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
-
-            if (res?.Result == null) return null;
-
-            return new VM_Employee.VM_員工部門職稱
-            {
-                AD        = req.UserAD,
-                EMP_NO    = res.Result.UserID,
-                EMP_NAME  = res.Result.UserName,
-                POST_NAME = res.Result.PostName,
-                ORGAN_CAP = res.Result.OrganName,
-                APG_NO    = res.Result.GroupID
-            };
-        }
-
-        #endregion
-
-        #region 權限樹（呼叫 DLL 功能3）
-
-        internal static List<VM_Employee.WebTree_Node> Get_Tree(string groupId)
-        {
-            var req = new Models.M_AP_DLL.GetTreeRequestModel
-            {
-                SysID = "HI_APACCESS",
-                GroupID = groupId,
-                Environment = EnvHelper.ResolveEnvForDll(),   // ← 這裡改
-            };
-
-            string json_input = JsonConvert.SerializeObject(req);
-            string response = new APACCESS().GetTree(json_input);
-            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetTreeResponseModel>(response);
-
-            if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
-
-            // 扁平 → 樹
-            var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
-            {
-                FUNC_ID  = x.FuncID,
-                FUNC_NA  = x.FuncName,
-                PARENT_ID= x.ParentID,
-                VIEW_H   = x.Controller,
-                VIEW_HB  = x.Action,
-                SORT_NO  = x.Sort.ToString(),
-                WebTree  = new List<VM_Employee.WebTree_Node>()
-            }).ToList();
-
-            var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
-            var roots = new List<VM_Employee.WebTree_Node>();
-
-            foreach (var node in allNodes)
-            {
-                if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
-                    roots.Add(node);
-                else if (dict.ContainsKey(node.PARENT_ID))
-                    dict[node.PARENT_ID].WebTree.Add(node);
+js:
+ if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
+                alert('請輸入CONTROLLER名稱和ACTION名稱');
+                return;
             }
 
-            SortTree(roots);
-            return roots;
-        }
+但因為我要修改儲存的是
+PARENT_ID=HOME就不用填寫VIEW_H、VIEW_HB NULL即可
+不是HOME就需要寫VIEW_H、VIEW_HB
 
-        private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
-        {
-            nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
-            foreach (var n in nodes)
-                if (n.WebTree != null && n.WebTree.Count > 0)
-                    SortTree(n.WebTree);
-        }
+ function savePage() {
+     const formData = {
+         FUNC_ID: $('#funcId').val(),
+         FUNC_NA: $('#funcName').val(),
+         PARENT_ID: $('#parentId').val() || null,
+         SORT_NO: $('#sortNo').val() || null,
+         IS_SHOW: $('#isShow').val(),
+         MEMO: $('#memo').val() || null,
+         VIEW_H: $('#viewH').val() || null,      // 新增
+         VIEW_HB: $('#viewHB').val() || null     // 新增
+     };
 
-        #endregion
-    }
-}
+     if (!formData.FUNC_ID.trim() || !formData.FUNC_NA.trim()) {
+         alert('請輸入頁面ID和頁面名稱');
+         return;
+     }
 
+     if (!formData.VIEW_H.trim() || !formData.VIEW_HB.trim()) {
+         alert('請輸入CONTROLLER名稱和ACTION名稱');
+         return;
+     }
 
-⸻
+     // 新增頁面時檢查上層ID是否為必填
+     if (!isPageEditMode && !formData.PARENT_ID) {
+         alert('請選擇上層ID');
+         return;
+     }
 
-3) Web.config（你已經有，這裡只示意）
+     let url, postData;
+     if (isPageEditMode) {
+         url = '@Url.Action("UpdateFunction", "AP")';
+         postData = Object.assign(formData, { originalFuncId: originalFuncId });
+     } else {
+         url = '@Url.Action("AddFunction", "AP")';
+         postData = formData;
+     }
 
-<appSettings>
-  <!-- 測試區 -->
-  <add key="Environment" value="HI_APACCESS_TEST"/>
-  <!-- 正式區就改成 -->
-  <!-- <add key="Environment" value="HI_APACCESS"/> -->
-</appSettings>
-
-不用在程式碼裡寫 "TEST" 或 "PROD"，全部交給 EnvHelper.ResolveEnvForDll() 自動判斷。
-
-⸻
-
-4)（可選）若頁面上有用到 Hi_Btn 或其他 DLL 呼叫
-
-請把原本硬寫 "TEST" 的地方也改成：
-
-Environment = EnvHelper.ResolveEnvForDll()
-
-這樣整個網站的環境切換就只靠 Web.config 一行了。乾淨、好維護、上線不會踩雷。👏
-
-⸻
-
-如果你要支援 DEV（本機 / 開發 DB），也只要把 Web.config 的 value 換成 HI_APACCESS_DEV，DLL 會吃到 "DEV"，去連你在 DLL 的 FCommon.BuildConnectionString("DEV") 設定的連線字串。
+     $.post(url, postData, function (response) {
+         if (response.success) {
+             alert(response.message);
+             $('#pageModal').modal('hide');
+             loadPages();
+             if (isPageEditMode) {
+                 setTimeout(function () {
+                     currentSelectedPage = formData.FUNC_ID;
+                     renderPageListHierarchical();
+                 }, 500);
+             }
+         } else {
+             alert(response.message);
+         }
+     });
+ }
