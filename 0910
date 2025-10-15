@@ -1,1 +1,157 @@
- ConfigurationManager.AppSettings["Environment"] == "HI_APACCESS_TEST" ? "TEST" : "PROD"
+using HI_APACCESS.ViewModels;
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Data.SqlClient;
+using System.Linq;
+using HI_APACCESS_DLL;
+using HI_APACCESS.Factory.F_AP;
+using Newtonsoft.Json;
+
+namespace HI_APACCESS.Service
+{
+    public class SVS_員工基本資料
+    {
+        #region AD、員編、 基本資料
+
+        /// <summary>
+        /// 權限管理-取得員工AD
+        /// </summary>
+        /// <returns>AD</returns>
+        internal static string Get_員工AD()
+        {
+            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+
+            if (String.IsNullOrEmpty(EMP_DOM_ID))
+            {
+                System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
+                string name = principal.Identity.Name;
+                string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+                EMP_DOM_ID = adname[1].ToString().ToUpper();
+            }
+
+            return EMP_DOM_ID;
+        }
+
+        /// <summary>
+        /// 權限管理-取得員工編號 (呼叫 DLL 功能1)
+        /// </summary>
+        /// <returns>員編</returns>
+        internal static string Get_員工編號(string ad = null)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,  // 有傳參數就用參數，沒傳就抓 HttpContext
+                Environment = "TEST",
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
+
+            return res?.Result?.UserID ?? req.UserAD; // 沒找到就回傳 AD
+        }
+
+        /// <summary>
+        /// 取得員工基本資料 (呼叫 DLL 功能1)
+        /// </summary>
+        /// <param name="Emp_NO">員編</param>
+        /// <returns></returns>
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = ad,
+                Environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
+
+            if (res?.Result == null) return null;
+
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD = req.UserAD,
+                EMP_NO = res.Result.UserID,
+                EMP_NAME = res.Result.UserName,
+                //POST_NO = res.Result.PostNo,
+                POST_NAME = res.Result.PostName,
+                //ORGAN_NO = res.Result.OrganNo,
+                ORGAN_CAP = res.Result.OrganName,
+                APG_NO = res.Result.GroupID
+            };
+        }
+
+        #endregion
+
+        #region 權限樹
+        // 取得權限樹 呼叫功能3
+        internal static List<VM_Employee.WebTree_Node> Get_Tree(string groupId)
+        {
+            var req = new Models.M_AP_DLL.GetTreeRequestModel
+            {
+                SysID = "HI_APACCESS",
+                GroupID = groupId,
+                Environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetTree(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetTreeResponseModel>(response);
+
+            if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
+
+            // 轉換
+            var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
+            {
+                FUNC_ID = x.FuncID,
+                FUNC_NA = x.FuncName,
+                PARENT_ID = x.ParentID,
+                VIEW_H = x.Controller,
+                VIEW_HB = x.Action,
+                SORT_NO = x.Sort.ToString(),
+                WebTree = new List<VM_Employee.WebTree_Node>()
+            }).ToList();
+
+            // 建立字典
+            var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
+
+            // 樹狀化
+            List<VM_Employee.WebTree_Node> roots = new List<VM_Employee.WebTree_Node>();
+            foreach (var node in allNodes)
+            {
+                if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
+                {
+                    roots.Add(node);
+                }
+                else if (dict.ContainsKey(node.PARENT_ID))
+                {
+                    dict[node.PARENT_ID].WebTree.Add(node);
+                }
+            }
+
+            // 排序 (遞迴)
+            SortTree(roots);
+
+            return roots;
+        }
+
+        private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
+        {
+            nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
+            foreach (var node in nodes)
+            {
+                if (node.WebTree != null && node.WebTree.Count > 0)
+                {
+                    SortTree(node.WebTree);
+                }
+            }
+        }
+        #endregion
+    }
+}
