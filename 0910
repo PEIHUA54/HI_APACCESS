@@ -1,103 +1,146 @@
-很好，你這份 JS 是完整的頁面管理程式碼。
-你要改的是這一段 savePage() —— 目前它固定強制檢查 VIEW_H、VIEW_HB，導致 HOME 頁面沒填時報錯。
+   該頁面尚有權限設定，無法刪除=>
+應該改成該頁面已有權限設定，將會清除此頁面所有相關權限設定及按鈕設定，確定要刪除嗎?
 
-⸻
+   // 刪除頁面
+   [HttpPost]
+   public JsonResult DeleteFunction(string func_id , string sysID)
+   {
+       try
+       {
+           var service = GetAPService();
+           if (!service.CanDeleteFunction(func_id))
+           {
+               return Json(new { success = false, message = "該頁面尚有權限設定，無法刪除" });
+           }
 
-✅ 以下是修改後的建議版本（只需取代你現有的 savePage() 區塊）
+           var result = service.DeleteFunction(func_id);
+           if (result == null || !result.Contains("fail"))
+           {
+               return Json(new { success = true, message = "頁面刪除成功" });
+           }
+           else
+           {
+               return Json(new { success = false, message = "頁面刪除失敗：" + result });
+           }
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "刪除頁面發生錯誤：" + ex.Message });
+       }
+   }
 
-function savePage() {
-    const formData = {
-        FUNC_ID: ($('#funcId').val() || '').trim(),
-        FUNC_NA: ($('#funcName').val() || '').trim(),
-        PARENT_ID: ($('#parentId').val() || '').trim() || null,
-        SORT_NO: ($('#sortNo').val() || '').trim() || null,
-        IS_SHOW: $('#isShow').val(),
-        MEMO: ($('#memo').val() || '').trim() || null,
-        VIEW_H: ($('#viewH').val() || '').trim(),
-        VIEW_HB: ($('#viewHB').val() || '').trim()
-    };
 
-    // 頁面ID與名稱必填
-    if (!formData.FUNC_ID || !formData.FUNC_NA) {
-        alert('請輸入頁面ID和頁面名稱');
-        return;
-    }
+        // 檢查頁面是否可以刪除
+        public bool CanDeleteFunction(string func_id)
+        {
+            string sql = @"
+            SELECT COUNT(*) as PermissionCount
+            FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+            
+            UNION ALL
+            
+            SELECT COUNT(*) as PermissionCount
+            FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+";
 
-    // 🔹 只有當 PARENT_ID 不是 HOME 時，才檢查 CONTROLLER 與 ACTION
-    const needView = formData.PARENT_ID && formData.PARENT_ID.toUpperCase() !== 'HOME';
-    if (needView && (!formData.VIEW_H || !formData.VIEW_HB)) {
-        alert('請輸入 CONTROLLER 名稱與 ACTION 名稱');
-        return;
-    }
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId),
+            new SqlParameter("@FUNC_ID", func_id)
+        };
 
-    // 🔹 HOME 頁面允許為空，確保送出時是 null
-    if (!needView) {
-        formData.VIEW_H = null;
-        formData.VIEW_HB = null;
-    }
-
-    // 新增頁面時，上層必選
-    if (!isPageEditMode && !formData.PARENT_ID) {
-        alert('請選擇上層ID');
-        return;
-    }
-
-    let url, postData;
-    if (isPageEditMode) {
-        url = '@Url.Action("UpdateFunction", "AP")';
-        postData = Object.assign({}, formData, { originalFuncId: originalFuncId });
-    } else {
-        url = '@Url.Action("AddFunction", "AP")';
-        postData = formData;
-    }
-
-    $.post(url, postData, function (response) {
-        if (response.success) {
-            alert(response.message);
-            $('#pageModal').modal('hide');
-            loadPages();
-
-            // 若為編輯狀態，保持選中項目
-            if (isPageEditMode) {
-                setTimeout(function () {
-                    currentSelectedPage = formData.FUNC_ID;
-                    renderPageListHierarchical();
-                }, 500);
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            int totalCount = 0;
+            foreach (DataRow row in dt.Rows)
+            {
+                totalCount += Convert.ToInt32(row["PermissionCount"]);
             }
-        } else {
-            alert(response.message);
+            return totalCount == 0;
         }
-    });
-}
 
+        // 刪除頁面
+        public string DeleteFunction(string func_id)
+        {
+            try
+            {
+                // 1. 刪除該頁面的所有按鈕定義
+                string deleteButtonsSQL = @"
+DELETE FROM [HI-AUTOS].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
 
-⸻
+                List<SqlParameter> buttonsParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
 
-✅ 可選加強版（視覺提示）
+                // 2. 刪除該頁面的按鈕權限設定
+                string deleteButtonPermSQL = @"
+    DELETE FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
 
-若你想在選擇上層頁面時自動「鎖住 / 清空」VIEW_H 與 VIEW_HB，可在前面加這段：
+                List<SqlParameter> buttonPermParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
 
-// 🔸 當上層改變時，自動控制欄位啟用
-$(document).on('change', '#parentId', function () {
-    const parent = ($(this).val() || '').trim().toUpperCase();
-    if (parent === 'HOME') {
-        $('#viewH, #viewHB').val('').prop('disabled', true).attr('placeholder', 'HOME 不需填寫');
-    } else {
-        $('#viewH, #viewHB').prop('disabled', false).attr('placeholder', '');
-    }
-});
+                // 3. 刪除該頁面的頁面權限設定
+                string deleteFuncPermSQL = @"
+    DELETE FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
 
+                List<SqlParameter> funcPermParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
 
-⸻
+                // 4. 最後刪除頁面本身
+                string deleteFuncSQL = @"
+    DELETE FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID";
 
-✅ 總結
+                List<SqlParameter> funcParameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", _sysId),
+                    new SqlParameter("@FUNC_ID", func_id)
+                };
 
-條件	結果
-PARENT_ID = “HOME”	VIEW_H、VIEW_HB 可為空、自動 disable、送出時轉成 null
-其他情況	兩者必填，否則 alert
-任何欄位 null 時不會再觸發 .trim() 錯誤	
+                // 依序執行刪除
+                SVS_DBmanager.ExecuteSQL(deleteButtonsSQL, buttonsParameters);
+                SVS_DBmanager.ExecuteSQL(deleteButtonPermSQL, buttonPermParameters);
+                SVS_DBmanager.ExecuteSQL(deleteFuncPermSQL, funcPermParameters);
+                return SVS_DBmanager.ExecuteSQL(deleteFuncSQL, funcParameters);
+            }
+            catch (Exception ex)
+            {
+                return "fail," + ex.Message;
+            }
+        }
 
+JS:
+        function deletePage(funcId, funcName) {
+            if (confirm(`確定要刪除頁面 "${funcName}" 嗎？\n注意：這將同時刪除該頁面的所有按鈕定義！`)) {
+                $.post('@Url.Action("DeleteFunction", "AP")', { func_id: funcId, sysID: currentSysID }, function (response) {
+                    if (response.success) {
+                        alert(response.message);
 
-⸻
+                        // 如果刪除的是當前選中的頁面，清空選擇
+                        if (currentSelectedPage === funcId) {
+                            currentSelectedPage = '';
+                            $('#buttonList').html('<div class="no-data">請先選擇左側的頁面</div>');
+                            $('#addButtonBtn').prop('disabled', true);
+                            $('#buttonSection').removeClass('hide-add-button');
+                        }
 
-是否要我順便幫你加上「HOME 時輸入框灰掉 + placeholder」的 UI 效果？那樣操作起來使用者也不會誤會需要填。
+                        // 自動重新載入頁面列表
+                        loadPages();
+                    } else {
+                        alert(response.message);
+                    }
+                });
+            }
+        }
