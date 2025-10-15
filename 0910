@@ -1,30 +1,36 @@
+這是「只接受 true/false 的 OnlyIsShow」版本的 FGetTree（含隱藏頁面置底排序與 MEMO 回傳）。直接覆蓋你現在的檔案即可。
+
 using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace HI_APACCESS_DLL.Factory
 {
     internal class FGetTree
     {
+        /// <summary>
+        /// 功能3：取得樹狀功能清單
+        /// </summary>
+        /// <param name="sysId">系統ID</param>
+        /// <param name="groupId">群組ID</param>
+        /// <param name="environment">TEST / PROD / DEV</param>
+        /// <param name="onlyIsShow">true: 只回傳 IS_SHOW='Y'；false: 全部回傳，IS_SHOW='N' 會排在最後</param>
         internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment, bool onlyIsShow)
         {
             var response = new GetTreeModel.GetTreeResponse();
 
             try
             {
-                // 1. 環境檢查
+                // 1) 環境檢查
                 if (environment != "TEST" && environment != "PROD" && environment != "DEV")
                 {
                     response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD 或 DEV";
                     return response;
                 }
 
-                // 2. 系統授權檢查
+                // 2) 系統授權檢查
                 var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
                 if (!authorizedSystems.Contains(sysId))
                 {
@@ -35,34 +41,39 @@ namespace HI_APACCESS_DLL.Factory
 
                 var resultList = new List<GetTreeModel.ResultData>();
 
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                using (var conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
                     conn.Open();
 
-                    // 3. 查詢功能清單
-                    string sql = @"
+                    // 3) SQL：依 onlyIsShow 動態加上 IS_SHOW 過濾；同時把 IS_SHOW='N' 排在最後
+                    string isShowFilter = onlyIsShow ? "AND a.IS_SHOW = 'Y'" : string.Empty;
+
+                    string sql = $@"
 SELECT DISTINCT
     CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
          WHEN a.PARENT_ID <> 'HOME' THEN '1'
     END AS LEVEL,
     a.FUNC_ID,
     a.FUNC_NA,
-    a.VIEW_H AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
+    a.VIEW_H   AS CONTROLLER,
+    a.VIEW_HB  AS ACTION,
     a.SORT_NO,
     a.PARENT_ID,
-    a.MEMO
+    a.MEMO,
+    a.IS_SHOW
 FROM [HI-AUTOS].[dbo].[AP_FUNC] a
-LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-    AND a.sys_id= b.sys_id 
-WHERE a.SYS_ID=@SysID 
-  AND b.APG_NO=@GroupID
-  AND a.IS_SHOW='Y'
-ORDER BY a.SORT_NO
+LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b
+  ON a.FUNC_ID = b.FUNC_ID
+ AND a.SYS_ID  = b.SYS_ID
+WHERE a.SYS_ID = @SysID
+  AND b.APG_NO = @GroupID
+  {isShowFilter}
+ORDER BY 
+    CASE WHEN a.IS_SHOW = 'Y' THEN 0 ELSE 1 END,  -- 隱藏的排最後
+    a.SORT_NO;                                    -- 同群內依排序號碼
 ";
 
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    using (var cmd = new SqlCommand(sql, conn))
                     {
                         cmd.Parameters.AddWithValue("@SysID", sysId);
                         cmd.Parameters.AddWithValue("@GroupID", groupId);
@@ -73,21 +84,21 @@ ORDER BY a.SORT_NO
                             {
                                 resultList.Add(new GetTreeModel.ResultData
                                 {
-                                    FuncID = reader["FUNC_ID"].ToString(),
-                                    FuncName = reader["FUNC_NA"].ToString(),
-                                    Controller = reader["CONTROLLER"].ToString(),
-                                    Action = reader["ACTION"].ToString(),
-                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
-                                    ParentID = reader["PARENT_ID"].ToString(),
-                                    Level = reader["LEVEL"].ToString(),
-                                    Memo = reader["MEMO"].ToString()
+                                    FuncID     = reader["FUNC_ID"]?.ToString(),
+                                    FuncName   = reader["FUNC_NA"]?.ToString(),
+                                    Controller = reader["CONTROLLER"]?.ToString(),
+                                    Action     = reader["ACTION"]?.ToString(),
+                                    Sort       = reader["SORT_NO"] == DBNull.Value ? 0 : Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID   = reader["PARENT_ID"]?.ToString(),
+                                    Level      = reader["LEVEL"]?.ToString(),
+                                    Memo       = reader["MEMO"]?.ToString()
                                 });
                             }
                         }
                     }
                 }
 
-                // 4. 結果判斷
+                // 4) 回傳
                 if (resultList.Count == 0)
                 {
                     response.Result_code = Common.Codes.NO_PERMISSION;
@@ -110,3 +121,9 @@ ORDER BY a.SORT_NO
         }
     }
 }
+
+要點：
+	•	onlyIsShow == true：SQL 會加上 AND a.IS_SHOW='Y'，只回傳顯示頁。
+	•	onlyIsShow == false：不加過濾，但用 ORDER BY CASE WHEN a.IS_SHOW='Y' THEN 0 ELSE 1 END, a.SORT_NO 把隱藏頁排到最後。
+	•	已回傳 Memo 欄位。
+	•	DEV 環境也允許（和你前面一致）。
