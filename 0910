@@ -1,340 +1,215 @@
-@section Scripts {
-    <script>
-        let currentGroup = '';
-        let isEditMode = false;
-        let allFunctions = [];
-        let groupPermissions = {};
-        let hasUnsavedChanges = false;
-        const currentSysID = '@Session["CurrentSystemId"]';
+完美 👍，你這份 PageManagement 已經結構完整，我幫你加上「頁面類型 FUNC_TYPE」的整合：
+👉 包含：
+	1.	後端傳回 FUNC_TYPE 資料的接收
+	2.	Modal 中新增欄位（下拉選單 1:Tree, 2:PartialView）
+	3.	新增與修改時帶入 FUNC_TYPE
+	4.	檢查必填
+	5.	子頁面在列表顯示不同底色：
+  Tree → 綠色 #DFFFD6
+  PartialView → 淺藍 #E8F5FD
 
-        // 頁面載入時允許搜尋
-        $(document).ready(function () {
-            loadGroups();
-            loadAllFunctions();
+⸻
 
-            // 支援 Enter 鍵搜尋
-            $('#searchUserId').on('keypress', function (e) {
-                if (e.which === 13) {
-                    searchUserPermissions();
-                }
-            });
-        });
+✅ 一、在 Modal 新增 FUNC_TYPE 欄位
 
-        // 顯示/隱藏 儲存提醒
-        function showSaveReminder() {
-            $('#saveReminder').show();
-            hasUnsavedChanges = true;
-        }
+請在你的 Modal 中 的這段：
 
-        function hideSaveReminder() {
-            $('#saveReminder').hide();
-            hasUnsavedChanges = false;
-        }
+<div class="row">
+    <div class="col-md-6">
+        <div class="form-group">
+            <label for="isShow">是否顯示</label>
+            <select class="form-control" id="isShow">
+                <option value="Y">是</option>
+                <option value="N">否</option>
+            </select>
+        </div>
+    </div>
 
-       //  載入群組下拉選單 loadGroups 函數支援 callback
-        function loadGroups(callback) {
-            $.get('@Url.Action("GetGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
-                let options = '<option value="">– 請選擇群組 –</option>';
+上方 插入以下新欄位 👇：
 
-                if (Array.isArray(response)) {
-                    response.forEach(function (group) {
-                        options += `<option value="${group.value}">${group.text}</option>`;
-                    });
-                } else {
-                    console.log('群組資料格式錯誤:', response);
-                    options += '<option value="">-- 載入失敗 --</option>';
-                }
+<div class="col-md-6">
+    <div class="form-group">
+        <label for="funcType">頁面類型 <span class="text-danger">*</span></label>
+        <select class="form-control" id="funcType" required>
+            <option value="1">1 - Tree</option>
+            <option value="2">2 - PartialView</option>
+        </select>
+    </div>
+</div>
 
-                $('#groupSelect').html(options);
+✅ 這樣 Modal 顯示順序為：
+上層ID / 頁面名稱 / Controller / Action / 頁面類型 / 是否顯示 / 備註
 
-                if (callback) callback();
+⸻
 
-            }).fail(function (xhr, status, error) {
-                console.log('載入群組失敗:', error);
-                $('#groupSelect').html('<option value="">-- 載入失敗 --</option>');
-            });
-        }
+✅ 二、在 JS 中加入 FUNC_TYPE 處理邏輯
 
-        // 載入所有頁面
-        function loadAllFunctions() {
-            $.get('@Url.Action("GetAllFunctions", "AP")', { sysID: currentSysID } , function (response) {
-                if (response.success) {
-                    allFunctions = response.data || [];
-                    //console.log('後端返回的數據順序:');
-                    allFunctions.forEach((f, index) => {
-                        console.log(`${index}: ${f.FUNC_ID} - ${f.FUNC_NA} (Parent: ${f.PARENT_ID}, Sort: ${f.SORT_NO})`);
-                    });
-                } else {
-                    allFunctions = [];
-                }
-            });
-        }
+(1) openPageModal()
 
-        // 載入群組資料 loadGroupData 函數，啟用/停用刪除按鈕
-        function loadGroupData() {
-            const newGroup = $('#groupSelect').val();
+function openPageModal() {
+    isPageEditMode = false;
+    $('#pageModalTitle').text('新增頁面');
+    $('#pageForm')[0].reset();
+    $('#isShow').val('Y');
+    $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
+    $('#viewH').val('');
+    $('#viewHB').val('');
+    $('#funcType').val('1'); // 預設為 Tree
 
-            if (hasUnsavedChanges && currentGroup !== newGroup && currentGroup !== '') {
-                if (!confirm('有未儲存的變更，切換群組將遺失這些變更。確定要繼續嗎？')) {
-                    $('#groupSelect').val(currentGroup);
-                    return;
-                }
-            }
+    loadParentPageOptions();
+    $('#pageModal').modal('show');
+}
 
-            currentGroup = newGroup;
-            hideSaveReminder();
 
-            if (!currentGroup) {
-                resetAllSections();
-                return;
-            }
+⸻
 
-            // 啟用所有按鈕
-            $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', false);
+(2) editPage(funcId)
 
-            // 鎖定 001
-            const isLockedGroup = (currentGroup === '001');
-            if (isLockedGroup) {
-                $('#deleteGroupBtn').prop('disabled', true);
-            } else {
-                $('#editGroupBtn, #deleteGroupBtn').removeAttr('title');
-            }
+在載入資料後加入：
 
-            loadUsers();
-            loadPagePermissions();
-        }
+$('#funcType').val(page.FUNC_TYPE || '1');
 
-        // 重設所有區塊 resetAllSections 函數
-        function resetAllSections() {
-            // 停用所有按鈕
-            $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', true);
-            $('#userList').html('<div class="no-data">請先選擇群組</div>');
-            $('#pageList').html('<div class="no-data">請先選擇群組</div>');
-            $('#buttonList').html('<div class="no-data">請先選擇群組</div>');
-            hideSaveReminder();
-        }
+修改後版本（節錄）：
 
-        // 載入使用者列表
-        function loadUsers() {
-            $.get('@Url.Action("GetUsersByGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
-                if (response.success) {
-                    let html = '';
-                    if (response.data.length > 0) {
-                        response.data.forEach(function (user) {
-                            html += `
-                                <div class="user-item">
-                                    <div>
-                                        <strong>${user.U_ID}</strong><br>
-                                        <small>${user.U_NAME}</small><br>
-                                        <div class="extra-info">
-                                              建立人員:${user.CREATOR || ''}
-                                              建立日期:${user.CREATE_TIME || ''}<br>
-                                              修改人員:${user.EDITOR || ''}
-                                              修改日期:${user.EDIT_TIME || ''}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <button type="button"
-                                                class="btn btn-sm btn-warning btn-small"
-                                                onclick="openChangeGroupModal('${user.U_ID}', '${user.U_NAME}', '${currentGroup}')">
-                                            變更群組
-                                        </button>
-                                        <button type="button"
-                                                class="btn btn-sm btn-danger btn-small"
-                                                onclick="deleteUser('${user.U_ID}', '${user.U_NAME}')">
-                                            刪除
-                                        </button>
-                                    </div>
-                                </div>`;
-                        });
-                    } else {
-                        html = '<div class="no-data">此群組暫無使用者</div>';
-                    }
-                    $('#userList').html(html);
-                }
-            });
-        }
+if (page) {
+    $('#funcId').val(page.FUNC_ID).prop('readonly', false);
+    $('#funcName').val(page.FUNC_NA);
+    $('#sortNo').val(page.SORT_NO || '');
+    $('#isShow').val(page.IS_SHOW || 'Y');
+    $('#memo').val(page.MEMO || '');
+    $('#viewH').val(page.VIEW_H || '');
+    $('#viewHB').val(page.VIEW_HB || '');
+    $('#funcType').val(page.FUNC_TYPE || '1'); // 新增
 
-        // 載入頁面權限
-        function loadPagePermissions() {
-            $.get('@Url.Action("GetGroupPermissions", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
-                if (response.success) {
-                    groupPermissions = {};
-                    response.data.forEach(function (item) {
-                        if (!groupPermissions[item.FUNC_ID]) {
-                            groupPermissions[item.FUNC_ID] = {
-                                hasPagePermission: item.HasPagePermission,
-                                buttons: {}
-                            };
-                        }
-                        item.ButtonPermissions.forEach(function (btn) {
-                            groupPermissions[item.FUNC_ID].buttons[btn.BTNSEQ] = btn.HasPermission;
-                        });
-                    });
-                    renderPageListHierarchical();
-                    updateButtonListHierarchical(); // 這會顯示所有頁面的按鈕
-                }
-            });
-        }
 
-        // 輔助函數
-        function getFuncId(func) {
-            return func.FUNC_ID || func.value || func.func_id;
-        }
+⸻
 
-        function getParentId(func) {
-        return func.PARENT_ID || func.parent_id || func.parentId;
-        }
+(3) savePage()
 
-        function getFuncName(func) {
-        return func.FUNC_NA || func.text || func.func_na;
-        }
+在組合 formData 時加入 FUNC_TYPE：
 
-        // 變更使用者群組Modal
-        function openChangeGroupModal(userId, userName, currentGroup) {
-            $('#changeGroupModal').remove(); // 先移除舊的（避免重覆）
+const funcType = ($('#funcType').val() || '').trim();
 
-            const modalHtml = `
-                <div class="modal fade" id="changeGroupModal" tabindex="-1">
-                  <div class="modal-dialog">
-                    <div class="modal-content">
-                      <div class="modal-header">
-                        <h5 class="modal-title">變更使用者群組</h5>
-                        <button type="button" class="close" data-dismiss="modal">&times;</button>
-                      </div>
-                      <div class="modal-body">
-                        <div class="alert alert-info">
-                          <strong>使用者：</strong> ${userName} (${userId})<br>
-                          <strong>目前群組：</strong> ${currentGroup}
-                        </div>
-                        <form id="changeGroupForm">
-                          <input type="hidden" id="changeUserId" value="${userId}">
-                          <input type="hidden" id="changeCurrentGroup" value="${currentGroup}">
-                          <div class="form-group">
-                            <label for="newGroupSelect">選擇新群組 <span class="text-danger">*</span></label>
-                            <select class="form-control" id="newGroupSelect" required>
-                              <option value="">-- 請選擇新群組 --</option>
-                            </select>
-                          </div>
-                        </form>
-                      </div>
-                      <div class="modal-footer">
-                        <button type="button" class="btn btn-primary" onclick="confirmChangeGroup()">確認變更</button>
-                        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>`;
+if (!funcType) {
+    alert('請選擇頁面類型');
+    return;
+}
 
-            $('body').append(modalHtml);
+const formData = {
+    FUNC_ID: funcId,
+    FUNC_NA: funcName,
+    PARENT_ID: parentId || null,
+    SORT_NO: sortNo,
+    IS_SHOW: isShow,
+    MEMO: memo,
+    VIEW_H: viewH === '' ? null : viewH,
+    VIEW_HB: viewHB === '' ? null : viewHB,
+    FUNC_TYPE: funcType // 新增
+};
 
-            // 載入群組下拉
-            $.get('@Url.Action("GetGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
-                let options = '<option value="">-- 請選擇新群組 --</option>';
-                if (Array.isArray(response)) {
-                    response.forEach(function (group) {
-                        if (group.value !== currentGroup) { // 排除目前群組
-                            options += `<option value="${group.value}">${group.text}</option>`;
-                        }
-                    });
-                }
-                $('#newGroupSelect').html(options);
-            });
 
-            $('#changeGroupModal').modal('show');
-        }
+⸻
 
-        // 變更使用者群組
-        function confirmChangeGroup() {
-            const userId = $('#changeUserId').val();
-            const currentGroup = $('#changeCurrentGroup').val();
-            const newGroup = $('#newGroupSelect').val();
+✅ 三、在 renderPageListHierarchical() 顯示不同底色
 
-            if (!newGroup) {
-                alert('請選擇新群組');
-                return;
-            }
-            if (newGroup === currentGroup) {
-                alert('新群組與目前群組相同');
-                return;
-            }
+找到這一段：
 
-            if (confirm(`確定要將使用者 ${userId} 從群組 ${currentGroup} 變更到 ${newGroup} 嗎？`)) {
-                $.post('@Url.Action("ChangeUserGroup", "AP")', {
-                    u_id: userId,
-                    old_apg_no: currentGroup,
-                    new_apg_no: newGroup,
-                    sysID: currentSysID
-                }, function (response) {
-                    if (response.success) {
-                        alert(response.message || '使用者群組變更成功');
-                        $('#changeGroupModal').modal('hide');
-                        loadUsers(); // 重新載入清單
-                    } else {
-                        alert(response.message || '群組變更失敗');
-                    }
-                }).fail(function (xhr) {
-                    alert('群組變更失敗：' + (xhr.responseText || '系統錯誤'));
-                });
-            }
-        }
+// 顯示其子頁面
+const children = childPages.filter(c => c.PARENT_ID === parentPage.FUNC_ID);
+children.forEach(function (childPage, childIndex) {
+    html += renderPageItem(childPage, true, childIndex, children.length, parentPage.FUNC_ID);
+});
 
-        // 檢查是否為父層頁面 (PARENT_ID=HOME 或無父級且有子頁面)
-        function isParentPage(func) {
-            const funcId = getFuncId(func);
-            const parentId = getParentId(func);
+不改這裡，而在 renderPageItem() 中加入底色邏輯。
 
-            // 檢查是否為 HOME 層級的頁面
-            if (parentId === 'HOME' || !parentId || parentId === '') {
-                return true;
-            }
+在 return HTML 之前加這段（在 function 開頭區段）：
 
-            // 檢查是否有子頁面
-            return allFunctions.some(f => getParentId(f) === funcId);
-        }
+let bgStyle = '';
+if (isChild) {
+    if (page.FUNC_TYPE === '1') {
+        bgStyle = 'background-color:#DFFFD6;'; // 綠色 tree
+    } else if (page.FUNC_TYPE === '2') {
+        bgStyle = 'background-color:#E8F5FD;'; // 淺藍 partialview
+    }
+}
 
-        // 階層式渲染頁面列表
-        function renderPageListHierarchical() {
-            let html = '';
-            if (allFunctions.length === 0) {
-                html = '<div class="no-data">無可用頁面</div>';
-            } else {
-                // 只取顯示的頁面 (IS_SHOW = 'Y')
-                const visibleFunctions = allFunctions.filter(f => f.IS_SHOW === 'Y');
+然後修改原本回傳 HTML 的最外層 <div class="page-item ..."> 加上 style：
 
-                const parentPages = visibleFunctions.filter(f => !getParentId(f) || !visibleFunctions.some(p => getFuncId(p) === getParentId(f)));
-                const childPages = visibleFunctions.filter(f => getParentId(f) && visibleFunctions.some(p => getFuncId(p) === getParentId(f)));
+return `
+<div class="page-item ${selectedClass} ${hierarchyClass} ${hiddenClass}"
+     style="${bgStyle}"
+     onclick="selectPage('${page.FUNC_ID}', '${page.FUNC_NA}', ${isChild})">
 
-                parentPages.forEach(function (parentFunc) {
-                    html += renderPageItem(parentFunc, false);
-                    const children = childPages.filter(c => getParentId(c) === getFuncId(parentFunc));
-                    children.forEach(function (childFunc) {
-                        html += renderPageItem(childFunc, true);
-                    });
-                });
-            }
-            $('#pageList').html(html);
-        }
 
-        // 頁面項目渲染 - 一列顯示
-        function renderPageItem(func, isChild) {
-            const funcId = getFuncId(func);
-            const funcName = getFuncName(func);
+⸻
 
-            const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-            const checkedAttr = hasPermission ? 'checked' : '';
+✅ 四、後端 FuncModel 已經加過 FUNC_TYPE (前面教過)
 
-            // 判斷是否為父層頁面並添加相應樣式
-            const isParent = isParentPage(func);
-            let itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
-            if (isParent) {
-                itemClass += ' parent-page';
-            }
+Controller 不用改，因為 model 綁自動帶 FUNC_TYPE。
 
-            const childClass = isChild ? 'child-page-item' : '';
+⸻
 
-            return `
-    <div class="${itemClass} ${childClass}" data-func-id="${funcId}" onclick="togglePagePermissionByClick('${funcId}')">
+✅ 五、完成後效果
+
+頁面層級	FUNC_TYPE	顏色	備註
+父頁面	—	淺藍（原樣）	不變
+子頁面 (Tree)	1	淡綠 #DFFFD6	功能主畫面
+子頁面 (PartialView)	2	淺藍 #E8F5FD	嵌入頁面/Modal 類
+
+
+⸻
+
+是否要我幫你加上 Modal 裡 FUNC_TYPE 的「下拉中文顯示」改成更明顯（例如「Tree 結構頁」「PartialView 部分頁」），
+並讓修改時在畫面上自動顯示對應底色預覽？
+
+非常好 👍
+你的 GroupManagement 前端架構我完全看懂了，
+我們要在「頁面權限清單」那邊（renderPageListHierarchical() / renderPageItem()）
+根據 FUNC_TYPE 來做顏色區別（例如 Tree=綠、PartialView=藍），
+這樣在群組管理畫面也能一眼分辨不同頁面類型。
+
+⸻
+
+✅ 修改重點
+
+我們只需要動到兩個地方：
+
+(1) 在 renderPageItem() 中加上底色判斷
+
+找到原始的：
+
+function renderPageItem(func, isChild) {
+    const funcId = getFuncId(func);
+    const funcName = getFuncName(func);
+
+    const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+    const checkedAttr = hasPermission ? 'checked' : '';
+
+    // 判斷是否為父層頁面並添加相應樣式
+    const isParent = isParentPage(func);
+    let itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
+    if (isParent) {
+        itemClass += ' parent-page';
+    }
+
+    const childClass = isChild ? 'child-page-item' : '';
+
+👉 在這段後面加入：
+
+    // 根據 FUNC_TYPE 決定底色
+    let bgStyle = '';
+    if (func.FUNC_TYPE === '1') {
+        bgStyle = 'background-color:#DFFFD6;'; // Tree → 淡綠
+    } else if (func.FUNC_TYPE === '2') {
+        bgStyle = 'background-color:#E8F5FD;'; // PartialView → 淺藍
+    }
+
+然後在回傳的 HTML 裡，把外層 <div> 加上 style="${bgStyle}"：
+
+return `
+    <div class="${itemClass} ${childClass}" data-func-id="${funcId}"
+         style="${bgStyle}"
+         onclick="togglePagePermissionByClick('${funcId}')">
         <div class="permission-content">
             <input type="checkbox" class="permission-checkbox" ${checkedAttr}>
             <span class="permission-title">${funcName}</span>
@@ -342,1005 +217,38 @@
         </div>
     </div>`;
 
-        }
 
-        // 點擊切換頁面權限
-        function togglePagePermissionByClick(funcId) {
-            const checkbox = $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`);
-            const isChecked = checkbox.prop('checked');
-            checkbox.prop('checked', !isChecked);
-            togglePagePermission(funcId, !isChecked);
-        }
+⸻
 
-        // 切換頁面權限
-        function togglePagePermission(funcId, hasPermission) {
-            if (!groupPermissions[funcId]) {
-                groupPermissions[funcId] = { buttons: {} };
-            }
-            groupPermissions[funcId].hasPagePermission = hasPermission;
+(2) 確保 FUNC_TYPE 從後端有被撈出
 
-            showSaveReminder();
+在 loadAllFunctions() 中，後端回傳的 response.data 應該已包含 FUNC_TYPE（如果你之前已經在 AP_FUNC 加了那個欄位）。
+不需修改這段，但你可以驗證看看 Console log：
 
-            if (hasPermission) {
-                // 勾選頁面時，自動全勾該頁面的所有按鈕
-                $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
-                    func_id: funcId,
-                    sysID: currentSysID
-                }, function (btnResponse) {
-                    if (btnResponse.success && btnResponse.data) {
-                        if (!groupPermissions[funcId]) {
-                            groupPermissions[funcId] = { buttons: {} };
-                        }
-                        btnResponse.data.forEach(function (btn) {
-                            groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
-                        });
-                        refreshButtonsDisplay(funcId);   // 只刷新這個頁面的按鈕顯示
-                        showSaveReminder();
-                    }
-                });
+console.log(`${index}: ${f.FUNC_ID} - ${f.FUNC_NA} (Type: ${f.FUNC_TYPE}, Parent: ${f.PARENT_ID})`);
 
-                if (isParentPage(allFunctions.find(f => getFuncId(f) === funcId))) {
-                    const childPages = allFunctions.filter(f => getParentId(f) === funcId);
-                    childPages.forEach(function (childFunc) {
-                        const childId = getFuncId(childFunc);
-                        if (!groupPermissions[childId]) {
-                            groupPermissions[childId] = { buttons: {} };
-                        }
-                        groupPermissions[childId].hasPagePermission = true;
-                        $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', true);
-                        $(`.page-item[data-func-id="${childId}"]`).addClass('has-permission');
+確認有印出 Type=1/2 即可。
 
-                        // 自動勾選該子頁面的所有按鈕權限
-                        $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
-                            func_id: childId,
-                            sysID: currentSysID
-                        }, function (btnResponse) {
-                            if (btnResponse.success && btnResponse.data) {
-                                btnResponse.data.forEach(function (btn) {
-                                    groupPermissions[childId].buttons[btn.BTNSEQ] = true;
-                                });
-                            }
-                        });
-                    });
-                }
+⸻
 
-                const currentPage = allFunctions.find(f => getFuncId(f) === funcId);
-                if (currentPage && getParentId(currentPage)) {
-                    const parentExists = allFunctions.some(f => getFuncId(f) === getParentId(currentPage));
-                    if (parentExists) {
-                        const parentId = getParentId(currentPage);
-                        if (!groupPermissions[parentId]) {
-                            groupPermissions[parentId] = { buttons: {} };
-                        }
-                        if (!groupPermissions[parentId].hasPagePermission) {
-                            groupPermissions[parentId].hasPagePermission = true;
-                            $(`.page-item[data-func-id="${parentId}"] input[type="checkbox"]`).prop('checked', true);
-                            $(`.page-item[data-func-id="${parentId}"]`).addClass('has-permission');
-                            alert(`已自動勾選上層頁面權限：${parentId}`);
-                        }
-                    }
-                }
-            } else {
-                const childPages = allFunctions.filter(f => getParentId(f) === funcId);
-                const hasChildWithPermission = childPages.some(child =>
-                    groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission
-                );
+✅ 顏色效果一覽
 
-                if (hasChildWithPermission) {
-                    const childNames = childPages
-                        .filter(child => groupPermissions[getFuncId(child)] && groupPermissions[getFuncId(child)].hasPagePermission)
-                        .map(child => getFuncName(child))
-                        .join('、');
+類型	FUNC_TYPE	顏色	意義
+Tree	1	淡綠 #DFFFD6	樹狀主要頁面
+PartialView	2	淺藍 #E8F5FD	嵌入子頁面
 
-                    if (!confirm(`取消此頁面權限將同時取消子頁面權限：${childNames}\n\n確定要繼續嗎？`)) {
-                        $(`.page-item[data-func-id="${funcId}"] input[type="checkbox"]`).prop('checked', true);
-                        return;
-                    } else {
-                        childPages.forEach(child => {
-                            const childId = getFuncId(child);
-                            if (groupPermissions[childId] && groupPermissions[childId].hasPagePermission) {
-                                groupPermissions[childId].hasPagePermission = false;
-                                groupPermissions[childId].buttons = {};
-                                $(`.page-item[data-func-id="${childId}"] input[type="checkbox"]`).prop('checked', false);
-                                $(`.page-item[data-func-id="${childId}"]`).removeClass('has-permission');
-                            }
-                        });
-                    }
-                }
 
-                groupPermissions[funcId].buttons = {};
-            }
+⸻
 
-            const pageItem = $(`.page-item[data-func-id="${funcId}"]`);
-            if (hasPermission) {
-                pageItem.addClass('has-permission');
-            } else {
-                pageItem.removeClass('has-permission');
-            }
+✅ 完成後效果
+群組權限頁 → 左側頁面清單
+	•	Tree 類型子頁會顯示淡綠色底。
+	•	PartialView 類型子頁會顯示淡藍色底。
+	•	父層（Home 層）保持原樣。
 
-            updateButtonListHierarchical();
-        }
+⸻
 
-        // 全勾選按鈕權限
-        function selectAllButtons(funcId) {
-            if (!groupPermissions[funcId]) {
-                groupPermissions[funcId] = { buttons: {} };
-            }
+是否希望我幫你加一個 legend（小提示）在頁面上方，例如顯示：
 
-            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
-                func_id: funcId,
-                sysID: currentSysID
-            }, function (response) {
-                if (response.success && response.data) {
-                    response.data.forEach(function (btn) {
-                        groupPermissions[funcId].buttons[btn.BTNSEQ] = true;
-                    });
-                    // 只更新該頁面的按鈕顯示狀態，不重新排序
-                    refreshButtonsDisplay(funcId);
-                    showSaveReminder();
-                }
-            });
-        }
-
-        // 全取消按鈕權限
-        function clearAllButtons(funcId) {
-            if (!groupPermissions[funcId]) {
-                groupPermissions[funcId] = { buttons: {} };
-            }
-
-            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
-                func_id: funcId,
-                sysID: currentSysID
-            }, function (response) {
-                if (response.success && response.data) {
-                    response.data.forEach(function (btn) {
-                        groupPermissions[funcId].buttons[btn.BTNSEQ] = false;
-                    });
-                    // 只更新該頁面的按鈕顯示狀態，不重新排序
-                    refreshButtonsDisplay(funcId);
-                    showSaveReminder();
-                }
-            });
-        }
-
-        // 階層式更新按鈕列表
-        function updateButtonListHierarchical() {
-            if (allFunctions.length === 0) {
-                $('#buttonList').html('<div class="no-data">無可用頁面</div>');
-                return;
-            }
-
-            // 建立父子關係映射
-            const parentChildMap = {};
-            const parentPages = [];
-
-            // 分離父頁面和子頁面，並過濾隱藏的子頁面
-            allFunctions.forEach(func => {
-                const funcId = getFuncId(func);
-                const parentId = getParentId(func);
-
-                if (!parentId || parentId === '' || parentId === 'HOME') {
-                    // 父頁面
-                    parentPages.push(func);
-                    if (!parentChildMap[funcId]) {
-                        parentChildMap[funcId] = [];
-                    }
-                } else {
-                    // 子頁面 - 只要顯示的子頁面
-                    if (func.IS_SHOW === 'Y') {
-                        if (!parentChildMap[parentId]) {
-                            parentChildMap[parentId] = [];
-                        }
-                        parentChildMap[parentId].push(func);
-                    }
-                }
-            });
-
-            // 父頁面按SORT_NO排序
-            parentPages.sort((a, b) => {
-                const aSort = parseInt(a.SORT_NO) || 999;
-                const bSort = parseInt(b.SORT_NO) || 999;
-                return aSort - bSort;
-            });
-
-            // 每個父頁面的子頁面按SORT_NO排序
-            Object.keys(parentChildMap).forEach(parentId => {
-                parentChildMap[parentId].sort((a, b) => {
-                    const aSort = parseInt(a.SORT_NO) || 999;
-                    const bSort = parseInt(b.SORT_NO) || 999;
-                    return aSort - bSort;
-                });
-            });
-
-            let html = '';
-
-            // 按父頁面順序顯示
-            parentPages.forEach(parentFunc => {
-                const parentId = getFuncId(parentFunc);
-                const parentName = getFuncName(parentFunc);
-                const children = parentChildMap[parentId] || [];
-
-                // 父頁面標題
-                html += `
-        <div class="parent-page-header" id="parent-header-${parentId}">
-            <i class="fas fa-folder"></i> ${parentName}
-            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-        </div>`;
-
-                // 父頁面區塊（包含父頁面本身的按鈕）
-                const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
-                const parentSectionStyle = parentHasPagePermission
-                    ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa; margin-left: 20px;'
-                    : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6; margin-left: 20px;';
-
-                html += `
-        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
-            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                <span>
-                    <i class="fas fa-folder-open"></i> ${parentName}
-                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${parentId})</small>
-                </span>
-                <div style="display: flex; gap: 5px;">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-check-square"></i> 全勾選
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size: 11px; padding: 2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-square"></i> 全取消
-                    </button>
-                </div>
-            </div>
-            <div class="buttons-container" id="buttons-${parentId}" style="padding: 10px;">
-                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-            </div>`;
-
-                // 如果有子頁面，在父層區塊內加入分隔線，然後繼續在同一個區塊內顯示子頁面
-                if (children.length > 0) {
-                    html += `
-            <div style="margin: 10px 15px; border-top: 2px solid #6c757d; position: relative;">
-                <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #f8f9fa; padding: 0 10px; color: #6c757d; font-size: 12px; font-weight: bold;">
-
-                </div>
-            </div>`;
-
-                    // 在同一個父層區塊內顯示子頁面
-                    children.forEach(childFunc => {
-                        const funcId = getFuncId(childFunc);
-                        const funcName = getFuncName(childFunc);
-                        const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-                        html += `
-                <div class="child-page-section" style="margin: 10px; border: 1px solid #ccc; border-radius: 4px; background: ${hasPagePermission ? '#fff' : '#f5f5f5'}; ${!hasPagePermission ? 'opacity: 0.6;' : ''}">
-                    <div class="page-header" style="background: #f1f3f4; padding: 8px 12px; border-bottom: 1px solid #ccc; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
-                        <span>
-                            <i class="fas fa-file-alt"></i> ${funcName}
-                            <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
-                        </span>
-                        <div style="display: flex; gap: 5px;">
-                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-check-square"></i> 全勾選
-                            </button>
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 10px; padding: 1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
-                                <i class="fas fa-square"></i> 全取消
-                            </button>
-                        </div>
-                    </div>
-                    <div class="buttons-container" id="buttons-${funcId}" style="padding: 8px;">
-                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-                    </div>
-                </div>`;
-                    });
-                }
-
-                // 結束父頁面區塊
-                html += `</div>`;
-            });
-
-            $('#buttonList').html(html);
-
-            // 現在載入每個頁面的按鈕
-            parentPages.forEach(parentFunc => {
-                const parentId = getFuncId(parentFunc);
-                const children = parentChildMap[parentId] || [];
-
-                // 載入父頁面的按鈕
-                loadButtonsForPage(parentId);
-
-                // 載入子頁面的按鈕
-                children.forEach(childFunc => {
-                    loadButtonsForPage(getFuncId(childFunc));
-                });
-            });
-        }
-
-        // updateButtonListHierarchical：渲染頁面按鈕區塊
-        function renderPageButtonSection(func, isChild) {
-            const funcId = getFuncId(func);
-            const funcName = getFuncName(func);
-            const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-            // 頁面區塊樣式
-            const sectionStyle = hasPagePermission
-                ? 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f8f9fa;' + (isChild ? ' margin-left: 20px;' : '')
-                : 'margin-bottom: 15px; border: 1px solid #dee2e6; border-radius: 6px; background: #f5f5f5; opacity: 0.6;' + (isChild ? ' margin-left: 20px;' : '');
-
-            return `
-        <div class="page-section ${isChild ? 'child-section' : 'parent-section'}" id="page-section-${funcId}" style="${sectionStyle}">
-            <div class="page-header" style="background: #e9ecef; padding: 10px 15px; border-bottom: 1px solid #dee2e6; font-weight: bold; color: #495057; display: flex; justify-content: space-between; align-items: center;">
-                <span>
-                    <i class="fas fa-file-alt"></i> ${funcName}
-                    <small class="text-muted" style="font-weight: normal; margin-left: 10px;">(${funcId})</small>
-                </span>
-                <div style="display: flex; gap: 5px;">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-check-square"></i> 全勾選
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size: 11px; padding: 2px 8px;" ${!hasPagePermission ? 'disabled' : ''}>
-                        <i class="fas fa-square"></i> 全取消
-                    </button>
-                </div>
-            </div>
-            <div class="buttons-container" id="buttons-${funcId}" style="padding: 10px;">
-                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
-            </div>
-        </div>`;
-        }
-
-        function loadButtonsForPage(funcId) {
-            const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-
-            $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
-                func_id: funcId,
-                sysID: currentSysID
-            }, function (response) {
-                let buttonHtml = '';
-
-                if (response.success && response.data && response.data.length > 0) {
-                    // 有按鈕時，使用正常的容器樣式
-                    response.data.forEach(function (btn) {
-                        const hasPermission = hasPagePermission && (groupPermissions[funcId].buttons[btn.BTNSEQ] || false);
-                        const checkedAttr = hasPermission ? 'checked' : '';
-                        const itemClass = hasPermission ? 'btn-item has-permission' : 'btn-item';
-                        const disabled = !hasPagePermission ? 'style="opacity: 0.5; pointer-events: none;"' : '';
-
-                        buttonHtml += `
-                <div class="${itemClass}" onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')" ${disabled}>
-                    <div class="permission-content">
-                        <input type="checkbox" class="permission-checkbox" ${checkedAttr} ${!hasPagePermission ? 'disabled' : ''}>
-                        <span class="permission-title">${btn.BTN_NAME}</span>
-                        <span class="permission-info">ID: ${btn.BTNID}</span>
-                    </div>
-                </div>`;
-                    });
-
-                    // 更新該頁面的按鈕容器 - 正常高度
-                    $(`#buttons-${funcId}`).html(buttonHtml).css({
-                        'padding': '10px',
-                        'min-height': 'auto'
-                    });
-                } else {
-                    // 沒有按鈕時，使用緊湊樣式
-                    buttonHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #6c757d; font-size: 12px;">此頁面無按鈕</div>';
-
-                    // 更新該頁面的按鈕容器 - 緊湊高度
-                    $(`#buttons-${funcId}`).html(buttonHtml).css({
-                        'padding': '0',
-                        'min-height': '30px'
-                    });
-                }
-            }).fail(function () {
-                // 載入失敗時也使用緊湊樣式
-                const errorHtml = '<div class="no-data-compact" style="padding: 8px; text-align: center; color: #dc3545; font-size: 12px;">載入失敗</div>';
-                $(`#buttons-${funcId}`).html(errorHtml).css({
-                    'padding': '0',
-                    'min-height': '30px'
-                });
-            });
-        }
-
-        // 點擊切換按鈕權限
-        function toggleButtonPermissionByClick(funcId, btnSeq) {
-            const checkbox = $(`.btn-item`).filter(function () {
-                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
-            }).find('input[type="checkbox"]');
-
-            const isChecked = checkbox.prop('checked');
-            checkbox.prop('checked', !isChecked);
-            toggleButtonPermission(funcId, btnSeq, !isChecked);
-
-        }
-
-        // 切換按鈕權限
-        function toggleButtonPermission(funcId, btnSeq, hasPermission) {
-            groupPermissions[funcId].buttons[btnSeq] = hasPermission;
-            showSaveReminder();
-
-            const btnItem = $(`.btn-item`).filter(function () {
-                return $(this).attr('onclick') && $(this).attr('onclick').includes(`'${funcId}', '${btnSeq}'`);
-            });
-
-            if (hasPermission) {
-                btnItem.addClass('has-permission');
-            } else {
-                btnItem.removeClass('has-permission');
-            }
-        }
-
-        // 刷新指定頁面的按鈕顯示狀態
-        function refreshButtonsDisplay(funcId) {
-            $(`.page-section`).each(function () {
-                const pageHeader = $(this).find('.page-header');
-                if (pageHeader.text().includes(`(${funcId})`)) {
-                    const buttonsContainer = $(this).find('.buttons-container');
-                    buttonsContainer.find('.btn-item').each(function () {
-                        const btnElement = $(this);
-                        const onclick = btnElement.attr('onclick');
-                        if (onclick && onclick.includes(`'${funcId}',`)) {
-                            const btnSeqMatch = onclick.match(/'([^']+)', '([^']+)'/);
-                            if (btnSeqMatch && btnSeqMatch.length >= 3) {
-                                const btnSeq = btnSeqMatch[2];
-                                const hasPermission = groupPermissions[funcId].buttons[btnSeq] || false;
-                                const checkbox = btnElement.find('input[type="checkbox"]');
-                                checkbox.prop('checked', hasPermission);
-
-                                if (hasPermission) {
-                                    btnElement.addClass('has-permission');
-                                } else {
-                                    btnElement.removeClass('has-permission');
-                                }
-                            }
-                        }
-                    });
-                }
-            });
-        }
-
-        // 儲存所有權限
-        function saveAllPermissions() {
-            const funcIds = [];
-            const buttonPermissions = [];
-            Object.keys(groupPermissions).forEach(function (funcId) {
-                if (groupPermissions[funcId].hasPagePermission) {
-                    funcIds.push(funcId);
-
-                    Object.keys(groupPermissions[funcId].buttons).forEach(function (btnSeq) {
-                        if (groupPermissions[funcId].buttons[btnSeq]) {
-                            buttonPermissions.push(`${funcId}|${btnSeq}`);
-                        }
-                    });
-                }
-            });
-
-            $.post('@Url.Action("BatchSetPermissions", "AP")', {
-                apg_no: currentGroup,
-                funcIds: funcIds,
-                buttonPermissions: buttonPermissions,
-                sysID: currentSysID
-            }, function (response) {
-                if (response.success) {
-                    alert('權限設定儲存成功！');
-                    hideSaveReminder();
-                } else {
-                    alert('儲存失敗：' + response.message);
-                }
-            });
-        }
-
-        // 群組管理函數
-        function openGroupModal() {
-            isEditMode = false;
-            $('#groupModalTitle').text('新增群組');
-            $('#groupForm')[0].reset();
-
-            $.get('@Url.Action("GetNextGroupNo", "AP")', { sysID: currentSysID } ,function (response) {
-                if (response.success) {
-                    $('#groupNo').val(response.data);
-                }
-            });
-
-            loadParentGroupOptions();
-
-            $('#groupModal').modal('show');
-        }
-
-        function editGroup() {
-            if (!currentGroup) return;
-
-            // 001 群組可編輯主管群組，名稱鎖住
-            const isLockedGroup = (currentGroup === '001');
-
-            isEditMode = true;
-            $('#groupModalTitle').text('修改群組');
-
-            // 載入主管群組選項
-            loadParentGroupOptions(() => {
-                // 載入群組資料
-                $.get('@Url.Action("GetGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
-                    if (response.success) {
-                        $('#groupNo').val(response.data.APG_NO);
-                        $('#groupName').val(response.data.APG_NAME);
-
-                        if (isLockedGroup) {
-                            $('#groupName').prop('readonly', true)
-                                .css('background-color', '#f3f3f3')
-                                .attr('title', '此為系統最高權限，名稱不可修改');
-                        } else {
-                            $('#groupName').prop('readonly', false)
-                                .css('background-color', '#ffffff')
-                                .removeAttr('title');
-                        }
-
-                        if (response.data.PARENT_APG_NO) {
-                            const parentGroups = response.data.PARENT_APG_NO.split(',');
-                            parentGroups.forEach(function (parentApgNo) {
-                                const trimmedApgNo = parentApgNo.trim();
-                                if (trimmedApgNo) {
-                                    $(`input[name="parentGroups"][value="${trimmedApgNo}"]`).prop('checked', true);
-                                }
-                            });
-                        }
-
-                        $('#groupModal').modal('show');
-                    }
-                });
-            });
-        }
-
-        // 主管群組選項
-        function loadParentGroupOptions(callback) {
-            $.get('@Url.Action("GetParentGroupSelectList", "AP")', { sysID: currentSysID }, function (response) {
-                let html = '';
-
-                if (Array.isArray(response)) {
-                    response.forEach(function (group) {
-                        // 允許選擇自己群組
-                        html += `
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" name="parentGroups"
-                               value="${group.value}" id="parent_${group.value}">
-                        <label class="form-check-label" for="parent_${group.value}">
-                            ${group.text}
-                        </label>
-                    </div>`;
-                    });
-                }
-
-                if (html === '') {
-                    html = '<div class="text-muted">無可選擇的群組</div>';
-                }
-
-                $('#parentGroupList').html(html);
-
-                if (callback) callback();
-            }).fail(function () {
-                $('#parentGroupList').html('<div class="text-danger">載入失敗</div>');
-            });
-        }
-
-        // 儲存群組設定
-        function saveGroup() {
-            const groupNo = $('#groupNo').val();
-            const groupName = $('#groupName').val();
-
-            if (!groupName.trim()) {
-                alert('請輸入群組名稱');
-                return;
-            }
-
-            const selectedParentGroups = [];
-            $('input[name="parentGroups"]:checked').each(function () {
-                selectedParentGroups.push($(this).val());
-            });
-
-            const url = isEditMode ? '@Url.Action("UpdateGroup", "AP")' : '@Url.Action("AddGroup", "AP")';
-
-            const postData = {
-                APG_NO: groupNo,
-                APG_NAME: groupName
-            };
-
-            selectedParentGroups.forEach(function (parentApgNo, index) {
-                postData[`parentApgNos[${index}]`] = parentApgNo;
-            });
-
-            $.post(url, postData, function (response) {
-                if (response.success) {
-                    alert(response.message);
-                    $('#groupModal').modal('hide');
-                    if (isEditMode) {
-                        // 修改模式：只更新群組下拉選單，不重新載入其他區塊
-                        loadGroups(() => {
-                            $('#groupSelect').val(currentGroup);
-                        });
-                    } else {
-                        // 新增模式：需要選中新群組並載入所有資料
-                        loadGroups(() => {
-                            $('#groupSelect').val(groupNo);
-                            currentGroup = groupNo;
-                            loadGroupData();
-                        });
-                    }
-                } else {
-                    alert(response.message);
-                }
-            }).fail(function () {
-                alert('儲存失敗，請稍後再試');
-            });
-        }
-
-        // 刪除群組
-        function deleteGroup() {
-            if (!currentGroup) return;
-
-            // 001 不可刪除
-            if (currentGroup === '001') {
-                alert('「001 管理員（資訊）」為系統最高權限，無法刪除。');
-                return;
-            }
-
-            const groupName = $('#groupSelect option:selected').text();
-
-            if (confirm(`確定要刪除群組「${groupName}」嗎？\n\n注意：這將同時刪除該群組的所有使用者和權限設定，且無法復原！`)) {
-                $.post('@Url.Action("DeleteGroup", "AP")',
-                    {
-                        apg_no: currentGroup,
-                        sysID: currentSysID
-                    },
-                    function (response) {
-                        if (response.success) {
-                            alert('群組刪除成功！');
-                            // 重新載入群組清單並重置所有區塊
-                            loadGroups();
-                            currentGroup = '';
-                            resetAllSections();
-                        } else {
-                            alert('刪除失敗：' + response.message);
-                        }
-                    }).fail(function () {
-                        alert('刪除失敗，請稍後再試');
-                    });
-            }
-        }
-
-        // 使用者管理函數
-        function openUserModal() {
-            $('#userForm')[0].reset();
-            $('#empList').empty();
-
-            //  一進去就撈全部清單
-            $.get('@Url.Action("GetEmployeeList", "AP")', { sysID: currentSysID }, function (res) {
-                if (res.success && Array.isArray(res.data)) {
-                    const options = res.data.map(emp =>
-                        `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
-                    ).join('');
-                    $('#empList').html(options);
-                }
-            });
-
-            // 綁定選擇事件（自動帶姓名/部門/職稱）
-            $('#userIdInput').off('change blur').on('change blur', function () {
-                const empNo = this.value.trim();
-                if (!empNo) return;
-                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
-                    if (r.success && r.data) {
-                        const emp = r.data;
-                        $('#userName').val(emp.EMP_NAME || '');
-                        $('#userDept').val(emp.ORGAN_CAP || '');
-                        $('#userPost').val(emp.POST_NAME || '');
-                    } else {
-                        $('#userName,#userDept,#userPost').val('');
-                    }
-                });
-            });
-
-            $('#userModal').modal('show');
-        }
-
-        function saveUser() {
-            const formData = {
-                APG_NO: currentGroup,
-                U_ID: ($('#userIdInput').val() || '').trim(),
-                U_NAME: ($('#userName').val() || '').trim()
-            };
-            if (!formData.U_ID || !formData.U_NAME) {
-                alert('請選擇有效員工編號，並確認姓名已帶出');
-                return;
-            }
-            $.post('@Url.Action("AddUser", "AP")', formData, function (res) {
-                if (res.success) {
-                    alert(res.message || '新增成功');
-                    $('#userModal').modal('hide');
-                    loadUsers();
-                } else { alert(res.message || '新增失敗'); }
-            });
-        }
-
-        function deleteUser(userId, userName) {
-            if (confirm(`確定要將 "${userName}" 從群組中移除嗎？`)) {
-                $.post('@Url.Action("DeleteUser", "AP")', {
-                    apg_no: currentGroup,
-                    u_id: userId,
-                    sysID: currentSysID
-                }, function (response) {
-                    if (response.success) {
-                        alert(response.message);
-                        loadUsers();
-                    } else {
-                        alert(response.message);
-                    }
-                });
-            }
-        }
-
-        // 查詢人員權限
-        function searchUserPermissions() {
-            const userId = $('#searchUserId').val().trim();
-            if (!userId) { alert('請輸入員工編號'); return; }
-
-            $.get('@Url.Action("SearchUserPermissions", "AP")', { u_id: userId, sysID: currentSysID }, function (response) {
-                if (response.success) {
-                    displaySearchResult(response.data);
-                    $('#searchResult').show();
-
-                    const apgNo = response.data?.UserInfo?.APG_NO || '';
-                    if (apgNo) {
-                        $('#groupSelect').val(apgNo);
-                        loadGroupData();
-                    }
-                } else {
-                    alert(response.message || '查無資料');
-                    $('#searchResult').hide();
-                }
-            }).fail(function () {
-                alert('查詢失敗，請稍後再試');
-                $('#searchResult').hide();
-            });
-        }
-
-        // 顯示查詢結果
-        function displaySearchResult(data) {
-            const u = data.UserInfo || {};
-            const html = `
-    <div class="d-flex flex-wrap align-items-center small" style="gap:14px; line-height:1.6;">
-      <span><strong>員工編號</strong>：${u.U_ID || ''}</span>
-      <span><strong>員工姓名</strong>：${u.U_NAME || ''}</span>
-      <span><strong>所屬群組</strong>：${u.APG_NAME || ''}${u.APG_NO ? ` (${u.APG_NO})` : ''}</span>
-      <span><strong>員工部門</strong>：${u.ORGAN_CAP || ''}</span>
-      <span><strong>員工職稱</strong>：${u.POST_NAME || ''}</span>
-    </div>`;
-            $('#searchResultContent').html(html);
-        }
-
-        // 載入使用者群組
-        function loadUserGroup(apgNo) {
-            $('#groupSelect').val(apgNo);
-            loadGroupData();
-            clearSearch();
-        }
-
-        // 清除查詢
-        function clearSearch() {
-            $('#searchUserId').val('');
-            //$('#groupSelect').val('');
-            $('#searchResult').hide();
-            //resetAllSections();
-        }
-
-        // 初始化員工下拉選單（支援搜尋）
-        function initEmployeeSelect() {
-            $('#userIdSelect').select2({
-                ajax: {
-                    url: '@Url.Action("GetEmployeeList", "AP")',
-                    dataType: 'json',
-                    delay: 300,
-                    data: function (params) {
-                        return {
-                            keyword: params.term || '',
-                            sysID: currentSysID
-                        };
-                    },
-                    processResults: function (data) {
-                        if (data.success) {
-                            return {
-                                results: data.data.map(function (emp) {
-                                    return {
-                                        id: emp.EMP_NO,
-                                        text: `${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP})`,
-                                        empData: emp
-                                    };
-                                })
-                            };
-                        }
-                        return { results: [] };
-                    },
-                    cache: true
-                },
-                placeholder: '請輸入員工編號或姓名搜尋',
-                allowClear: true,
-                minimumInputLength: 0,
-                language: {
-                    noResults: function () {
-                        return "查無相關員工資料";
-                    },
-                    searching: function () {
-                        return "搜尋中...";
-                    }
-                }
-            });
-
-            // 監聽選擇事件
-            $('#userIdSelect').on('select2:select', function (e) {
-                onEmployeeSelect();
-            });
-
-            // 監聽清除事件
-            $('#userIdSelect').on('select2:clear', function (e) {
-                $('#userName, #userDept, #userPost').val('');
-            });
-        }
-
-        // 員工選擇事件
-        function onEmployeeSelect() {
-            const empNo = $('#userIdSelect').val();
-            if (empNo) {
-                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (response) {
-                    if (response.success) {
-                        const emp = response.data;
-                        $('#userName').val(emp.EMP_NAME || '');
-                        $('#userDept').val(emp.ORGAN_CAP || '');
-                        $('#userPost').val(emp.POST_NAME || '');
-                    } else {
-                        alert('取得員工資訊失敗：' + response.message);
-                    }
-                }).fail(function () {
-                    alert('取得員工資訊失敗，請稍後再試');
-                });
-            } else {
-                $('#userName, #userDept, #userPost').val('');
-            }
-        }
-
-        // debounce 工具
-        const debounce = (fn, wait = 300) => {
-            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
-        };
-
-        // 使用者 Modal：綁定 datalist
-        function bindUserIdTypeahead() {
-            $('#userIdInput').off('input').on('input', debounce(function () {
-                const kw = this.value.trim();
-                if (kw.length < 3) return;
-
-                $.get('@Url.Action("GetEmployeeList", "AP")', { keyword: kw, sysID: currentSysID }, function (res) {
-                    if (res.success && Array.isArray(res.data)) {
-                        const rows = res.data.slice(0, 20);
-                        const options = rows.map(emp =>
-                            `<option value="${emp.EMP_NO}">${emp.EMP_NO} - ${emp.EMP_NAME} (${emp.ORGAN_CAP || ''})</option>`
-                        ).join('');
-                        $('#empList').html(options);
-                    }
-                });
-            }, 250));
-
-            $('#userIdInput').off('change blur').on('change blur', function () {
-                const empNo = this.value.trim();
-                if (!empNo) return;
-                $.get('@Url.Action("GetEmployeeInfo", "AP")', { emp_no: empNo, sysID: currentSysID }, function (r) {
-                    if (r.success && r.data) {
-                        const emp = r.data;
-                        $('#userName').val(emp.EMP_NAME || '');
-                        $('#userDept').val(emp.ORGAN_CAP || '');
-                        $('#userPost').val(emp.POST_NAME || '');
-                    } else {
-                        $('#userName,#userDept,#userPost').val('');
-                    }
-                });
-            });
-        }
-
-        // 清除員工編號
-        function clearUserIdInput() {
-            $('#userIdInput').val('');
-            $('#userName, #userDept, #userPost').val('');
-        }
-
-        // 批次匯入使用者MODAL
-        function openImportModal() {
-            $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
-            $('#importResult').empty();
-            $("#errorSection").addClass("d-none");
-            $("#successSection").addClass("d-none");
-            $("#uploadProgress").addClass("d-none");
-            $(".progress-bar").css("width", "0%");
-            $('#importModal').modal('show');
-        }
-
-        // 下載匯入範例
-        function downloadTemplate() {
-            var sysID = currentSysID;
-            window.location.href = '@Url.Action("DownloadImportTemplate","AP")' + "?sysID=" + encodeURIComponent(sysID);
-        }
-
-        // 匯入表單送出
-        $("#importForm").submit(function (e) {
-            e.preventDefault();
-            var formData = new FormData(this);
-
-            $("#uploadProgress").removeClass("d-none");
-            $(".progress-bar").css("width", "50%");
-
-            $.ajax({
-                url: '@Url.Action("ImportUsers", "AP")',
-                type: 'POST',
-                data: formData,
-                contentType: false,
-                processData: false,
-                success: function (res) {
-                    $("#uploadProgress").addClass("d-none");
-                    $(".progress-bar").css("width", "0%");
-
-                    // 清空舊的訊息區塊
-                    $("#successSection, #errorSection, #partialSection").addClass("d-none");
-                    $("#errorTable tbody").empty();
-
-                    if (res.status === "success") {
-                        // 全部成功
-                        $("#successMessage").text(res.message);
-                        $("#successSection").removeClass("d-none");
-                        loadUsers();
-                    }
-                    else if (res.status === "fail") {
-                        // 全部失敗
-                        $("#errorMessage").text(res.message);
-                        $("#errorSection").removeClass("d-none");
-
-                        if (res.errors && res.errors.length > 0) {
-                            res.errors.forEach(err => {
-                                $("#errorTable tbody").append(
-                                    `<tr>
-                                        <td>${err.RowNumber}</td>
-                                        <td>${err.EmpNo}</td>
-                                        <td>${err.Message}</td>
-                                    </tr>`
-                                );
-                            });
-                        }
-                    }
-                    else if (res.status === "partial") {
-                        // 部分成功
-                        $("#partialMessage").text(res.message);
-                        $("#partialSection").removeClass("d-none");
-
-                        if (res.errors && res.errors.length > 0) {
-                            res.errors.forEach(err => {
-                                $("#errorTable tbody").append(
-                                    `<tr>
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
-                                <td>${err.Message}</td>
-                            </tr>`
-                                );
-                            });
-                        }
-
-                        loadUsers();
-                    }
-                },
-                error: function () {
-                    $("#uploadProgress").addClass("d-none");
-                    $(".progress-bar").css("width", "0%");
-                    alert("伺服器發生錯誤，請稍後再試。");
-                }
-            });
-        });
-
-        // 重新上傳按鈕
-        $(document).on("click", ".btn-retry-upload", function () {
-            $("#errorSection").addClass("d-none");
-            $("#partialSection").addClass("d-none");
-            $("#successSection").addClass("d-none");
-            $("#importForm")[0].reset();
-            $("#errorTable tbody").empty();
-        });
-
-    </script>
-}
+🟩 Tree 頁面 🟦 PartialView 頁面
+這樣方便辨識？
