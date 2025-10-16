@@ -1,254 +1,458 @@
-完美 👍，你這份 PageManagement 已經結構完整，我幫你加上「頁面類型 FUNC_TYPE」的整合：
-👉 包含：
-	1.	後端傳回 FUNC_TYPE 資料的接收
-	2.	Modal 中新增欄位（下拉選單 1:Tree, 2:PartialView）
-	3.	新增與修改時帶入 FUNC_TYPE
-	4.	檢查必填
-	5.	子頁面在列表顯示不同底色：
-  Tree → 綠色 #DFFFD6
-  PartialView → 淺藍 #E8F5FD
+系統在登入的時候，首先會有登入畫面login，
+在登入過程中，因為有呼叫dll，去取員工身分跟是否有權限用系統的關係，
+在 login.AD = AD; 這句會抱錯(登入ad員工沒有權限使用該系統)，
+我需要的是先檢查是否為有效員編，是否為無權限使用 之類的。
+但卡在呼叫dll的時候就會連系統權限一起查，這樣要怎麼改?
+目前程式碼
+AccountController:
+    [AllowAnonymous]
+    [HttpGet]
+    public ActionResult Login()
+    {
+        // 登入時清空所有 Session 資料
+        Session.RemoveAll();
 
-⸻
+        string LOGIN_NAME = null;
+        var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+        if (authCookie != null)
+        {
+            var cookieValue = authCookie.Value;
+            if (!String.IsNullOrWhiteSpace(cookieValue))
+            {
+                try
+                {
+                    var ticket = FormsAuthentication.Decrypt(cookieValue);
+                    if (ticket.Expiration >= DateTime.Now)
+                    {
+                        LOGIN_NAME = ticket.Name;
+                    }
+                }
+                catch (CryptographicException cex)
+                {
+                    log.Error<string>(cex, cex.Message, cex.StackTrace);
+                    FormsAuthentication.SignOut();
+                }
+                finally
+                {
+                    Serilog.Log.CloseAndFlush();
+                }
+            }
+        }
 
-✅ 一、在 Modal 新增 FUNC_TYPE 欄位
-
-請在你的 Modal 中 的這段：
-
-<div class="row">
-    <div class="col-md-6">
-        <div class="form-group">
-            <label for="isShow">是否顯示</label>
-            <select class="form-control" id="isShow">
-                <option value="Y">是</option>
-                <option value="N">否</option>
-            </select>
-        </div>
-    </div>
-
-上方 插入以下新欄位 👇：
-
-<div class="col-md-6">
-    <div class="form-group">
-        <label for="funcType">頁面類型 <span class="text-danger">*</span></label>
-        <select class="form-control" id="funcType" required>
-            <option value="1">1 - Tree</option>
-            <option value="2">2 - PartialView</option>
-        </select>
-    </div>
-</div>
-
-✅ 這樣 Modal 顯示順序為：
-上層ID / 頁面名稱 / Controller / Action / 頁面類型 / 是否顯示 / 備註
-
-⸻
-
-✅ 二、在 JS 中加入 FUNC_TYPE 處理邏輯
-
-(1) openPageModal()
-
-function openPageModal() {
-    isPageEditMode = false;
-    $('#pageModalTitle').text('新增頁面');
-    $('#pageForm')[0].reset();
-    $('#isShow').val('Y');
-    $('#funcId').prop('readonly', false).css('background-color', '#ffffff');
-    $('#viewH').val('');
-    $('#viewHB').val('');
-    $('#funcType').val('1'); // 預設為 Tree
-
-    loadParentPageOptions();
-    $('#pageModal').modal('show');
-}
-
-
-⸻
-
-(2) editPage(funcId)
-
-在載入資料後加入：
-
-$('#funcType').val(page.FUNC_TYPE || '1');
-
-修改後版本（節錄）：
-
-if (page) {
-    $('#funcId').val(page.FUNC_ID).prop('readonly', false);
-    $('#funcName').val(page.FUNC_NA);
-    $('#sortNo').val(page.SORT_NO || '');
-    $('#isShow').val(page.IS_SHOW || 'Y');
-    $('#memo').val(page.MEMO || '');
-    $('#viewH').val(page.VIEW_H || '');
-    $('#viewHB').val(page.VIEW_HB || '');
-    $('#funcType').val(page.FUNC_TYPE || '1'); // 新增
-
-
-⸻
-
-(3) savePage()
-
-在組合 formData 時加入 FUNC_TYPE：
-
-const funcType = ($('#funcType').val() || '').trim();
-
-if (!funcType) {
-    alert('請選擇頁面類型');
-    return;
-}
-
-const formData = {
-    FUNC_ID: funcId,
-    FUNC_NA: funcName,
-    PARENT_ID: parentId || null,
-    SORT_NO: sortNo,
-    IS_SHOW: isShow,
-    MEMO: memo,
-    VIEW_H: viewH === '' ? null : viewH,
-    VIEW_HB: viewHB === '' ? null : viewHB,
-    FUNC_TYPE: funcType // 新增
-};
-
-
-⸻
-
-✅ 三、在 renderPageListHierarchical() 顯示不同底色
-
-找到這一段：
-
-// 顯示其子頁面
-const children = childPages.filter(c => c.PARENT_ID === parentPage.FUNC_ID);
-children.forEach(function (childPage, childIndex) {
-    html += renderPageItem(childPage, true, childIndex, children.length, parentPage.FUNC_ID);
-});
-
-不改這裡，而在 renderPageItem() 中加入底色邏輯。
-
-在 return HTML 之前加這段（在 function 開頭區段）：
-
-let bgStyle = '';
-if (isChild) {
-    if (page.FUNC_TYPE === '1') {
-        bgStyle = 'background-color:#DFFFD6;'; // 綠色 tree
-    } else if (page.FUNC_TYPE === '2') {
-        bgStyle = 'background-color:#E8F5FD;'; // 淺藍 partialview
-    }
-}
-
-然後修改原本回傳 HTML 的最外層 <div class="page-item ..."> 加上 style：
-
-return `
-<div class="page-item ${selectedClass} ${hierarchyClass} ${hiddenClass}"
-     style="${bgStyle}"
-     onclick="selectPage('${page.FUNC_ID}', '${page.FUNC_NA}', ${isChild})">
-
-
-⸻
-
-✅ 四、後端 FuncModel 已經加過 FUNC_TYPE (前面教過)
-
-Controller 不用改，因為 model 綁自動帶 FUNC_TYPE。
-
-⸻
-
-✅ 五、完成後效果
-
-頁面層級	FUNC_TYPE	顏色	備註
-父頁面	—	淺藍（原樣）	不變
-子頁面 (Tree)	1	淡綠 #DFFFD6	功能主畫面
-子頁面 (PartialView)	2	淺藍 #E8F5FD	嵌入頁面/Modal 類
-
-
-⸻
-
-是否要我幫你加上 Modal 裡 FUNC_TYPE 的「下拉中文顯示」改成更明顯（例如「Tree 結構頁」「PartialView 部分頁」），
-並讓修改時在畫面上自動顯示對應底色預覽？
-
-非常好 👍
-你的 GroupManagement 前端架構我完全看懂了，
-我們要在「頁面權限清單」那邊（renderPageListHierarchical() / renderPageItem()）
-根據 FUNC_TYPE 來做顏色區別（例如 Tree=綠、PartialView=藍），
-這樣在群組管理畫面也能一眼分辨不同頁面類型。
-
-⸻
-
-✅ 修改重點
-
-我們只需要動到兩個地方：
-
-(1) 在 renderPageItem() 中加上底色判斷
-
-找到原始的：
-
-function renderPageItem(func, isChild) {
-    const funcId = getFuncId(func);
-    const funcName = getFuncName(func);
-
-    const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-    const checkedAttr = hasPermission ? 'checked' : '';
-
-    // 判斷是否為父層頁面並添加相應樣式
-    const isParent = isParentPage(func);
-    let itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
-    if (isParent) {
-        itemClass += ' parent-page';
+        string AD = !string.IsNullOrEmpty(LOGIN_NAME) ? LOGIN_NAME : SVS_員工基本資料.Get_員工AD();
+        VM_員工部門職稱 login = SVS_員工基本資料.Get_員工基本資料(AD);
+        login.AD = AD;
+        return View(login);
     }
 
-    const childClass = isChild ? 'child-page-item' : '';
+    [AllowAnonymous]
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public ActionResult Login([Bind] VM_員工部門職稱 login, string ReturnUrl)
+    {
+        if (ModelState.IsValid)
+        {
+            FormsAuthentication.RedirectFromLoginPage(login.AD, true);
 
-👉 在這段後面加入：
+            string str_員工AD = SVS_員工基本資料.Get_員工AD();
+            string str_員編 = SVS_員工基本資料.Get_員工編號(str_員工AD);
+            string AD = !string.IsNullOrEmpty(login.AD) ? login.AD : str_員工AD;
 
-    // 根據 FUNC_TYPE 決定底色
-    let bgStyle = '';
-    if (func.FUNC_TYPE === '1') {
-        bgStyle = 'background-color:#DFFFD6;'; // Tree → 淡綠
-    } else if (func.FUNC_TYPE === '2') {
-        bgStyle = 'background-color:#E8F5FD;'; // PartialView → 淺藍
+            if (str_員工AD != login.AD && !SVS_Dictionary.List_測試站台登入者白名單.Contains(str_員編))
+            {
+                AD = str_員工AD;
+            }
+
+            var encTicket = LoginTicket(AD);
+
+            //將 Ticket 寫入 Cookie
+            HttpCookie authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+            {
+                Secure = Request.IsSecureConnection,  //確保在htpps下啟用secure屬性
+                HttpOnly = true //防止客戶端腳本訪問 cookie
+            };
+            Response.Cookies.Add(authCookie);
+            //Response.Cookies.Add(new HttpCookie(FormsAuthentication.FormsCookieName, encTicket));
+
+
+            if (String.IsNullOrEmpty(ReturnUrl) || ReturnUrl == "/")
+            {
+                return RedirectToAction("Main", "Home");
+            }
+
+            //本地url驗證
+            if (!Url.IsLocalUrl(ReturnUrl))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+            //檢查是否為允許的路徑
+            string[] allowedPaths = new[]
+            {
+                    "/Main/",
+                    "/Home/",
+                     "/Account/",
+                };
+
+            if (allowedPaths.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                return RedirectToAction("Login", "Account", new { ReturnUrl = ReturnUrl });
+                //return Redirect(ReturnUrl); //在允許清單中，允許重定向
+            }
+            return RedirectToAction("Login", "Account");
+        }
+        return View(login);
+    }
+ [AllowAnonymous]
+ [HttpGet]
+ public ActionResult Logout(string ReturnUrl)
+ {
+     Session.Abandon();
+     FormsAuthentication.SignOut();
+
+     if (String.IsNullOrEmpty(ReturnUrl))
+     {
+         return RedirectToAction("Login", "Account");
+     }
+     //檢查是否為本地url
+     if (!Url.IsLocalUrl(ReturnUrl))
+     {
+         return RedirectToAction("Login", "Account");
+     }
+     string[] allowedPaths = new string[]
+     {
+         "/Account/",
+         "/Login/",
+         "/Home"
+     };
+     if (allowedPaths.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+     {
+         return RedirectToAction("Login", "Account", new { ReturnUrl = ReturnUrl });
+         //return Redirect(ReturnUrl);
+     }
+
+     return RedirectToAction("Login", "Account");
+
+ }
+     private string LoginTicket(string AD)
+     {
+         VM_員工部門職稱 login = SVS_員工基本資料.Get_員工基本資料(AD);
+         login.AD = AD;
+
+         //新增UserData，存入群組等相關使用者資料
+         //新增表單驗證用的票證
+         var ticket = new FormsAuthenticationTicket(1,//版本
+             login.AD,//使用者名稱
+             DateTime.Now,//發行時間
+             DateTime.Now.AddMinutes(20),//有效期限
+             false,//是否將 Cookie 設定成 Session Cookie，如果是則會在瀏覽器關閉後移除
+             JsonConvert.SerializeObject(login),//將要記錄的使用者資訊轉換為 JSON 字串
+             FormsAuthentication.FormsCookiePath);//儲存 Cookie 的路徑
+
+         //將 Ticket 加密
+         var encTicket = FormsAuthentication.Encrypt(ticket);
+
+         //var NAME = FormsAuthentication.Decrypt(Request.Cookies[FormsAuthentication.FormsCookieName].Value).Name;
+         //var UserData = FormsAuthentication.Decrypt(Request.Cookies[FormsAuthentication.FormsCookieName].Value).UserData;
+         //Console.WriteLine(NAME);
+         //Console.WriteLine(UserData);
+
+         return encTicket;
+     }
+
+      [HttpPost]
+      public ActionResult RefreshSession()
+      {
+          // 1. 先檢查是否透過 JWT token 登入（TOKEN 導向進來的使用者）
+          string systemId = Session["CurrentSystemId"] as string;
+
+          if (!string.IsNullOrEmpty(systemId))
+          {
+              // TOKEN 使用者直接回傳成功，不需要檢查 Forms Authentication
+              return Content("success");
+          }
+
+          // 2. 一般登入使用者：檢查並更新 Forms Authentication Ticket
+          string Status = "lost";
+          var authCookie = Request.Cookies[FormsAuthentication.FormsCookieName];
+
+          if (authCookie != null)
+          {
+              var cookieValue = authCookie.Value;
+              if (!String.IsNullOrWhiteSpace(cookieValue))
+              {
+                  try
+                  {
+                      var ticket = FormsAuthentication.Decrypt(cookieValue);
+
+                      if (ticket != null)
+                      {
+                          // 檢查 Ticket 是否過期
+                          if (ticket.Expiration <= DateTime.Now)
+                          {
+                              Status = "lost";
+                          }
+                          // 剩餘時間小於等於30秒，需要更新 Ticket
+                          else if (ticket.Expiration > DateTime.Now && ticket.Expiration <= DateTime.Now.AddSeconds(30))
+                          {
+                              VM_員工部門職稱 login = JsonConvert.DeserializeObject<VM_員工部門職稱>(ticket.UserData);
+
+                              var ticket_new = new FormsAuthenticationTicket(
+                                  1,  // 版本
+                                  login.AD,  // 使用者名稱
+                                  DateTime.Now,  // 發行時間
+                                  DateTime.Now.AddMinutes(20),  // 有效期限
+                                  false,  // 是否將 Cookie 設定成 Session Cookie
+                                  JsonConvert.SerializeObject(login),  // 使用者資訊
+                                  FormsAuthentication.FormsCookiePath  // Cookie 路徑
+                              );
+
+                              // 將 Ticket 加密
+                              var encTicket = FormsAuthentication.Encrypt(ticket_new);
+
+                              // 將新 Ticket 寫入 Cookie
+                              HttpCookie sessionCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+                              {
+                                  Secure = Request.IsSecureConnection,
+                                  HttpOnly = true
+                              };
+                              Response.Cookies.Add(sessionCookie);
+
+                              Status = "success";  // 前端只需要知道成功即可
+                                                   // 如果需要除錯：Status = "refresh-OK-新的有效時間:" + ticket_new.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+                          }
+                          else
+                          {
+                              Status = "success";  // 前端只需要知道成功即可
+                                                   // 如果需要除錯：Status = "continue-OK-原本的有效時間:" + ticket.Expiration.ToString("yyyy-MM-dd HH:mm:ss");
+                          }
+                      }
+                  }
+                  catch (Exception ex)
+                  {
+                      // Ticket 解密失敗
+                      log.Error<string>(ex, "RefreshSession Decrypt Error: " + ex.Message, ex.StackTrace);
+                      Status = "lost";
+                  }
+                  finally
+                  {
+                      Serilog.Log.CloseAndFlush();
+                  }
+              }
+          }
+
+          return Content(Status);
+      }
+
+SVS_員工基本資料:
+    public class SVS_員工基本資料
+    {
+        #region AD、員編、 基本資料
+
+        /// <summary>
+        /// 權限管理-取得員工AD
+        /// </summary>
+        /// <returns>AD</returns>
+        internal static string Get_員工AD()
+        {
+            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+
+            if (String.IsNullOrEmpty(EMP_DOM_ID))
+            {
+                System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
+                string name = principal.Identity.Name;
+                string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+                EMP_DOM_ID = adname[1].ToString().ToUpper();
+            }
+
+            return EMP_DOM_ID;
+        }
+
+        /// <summary>
+        /// 權限管理-取得員工編號 (呼叫 DLL 功能1)
+        /// </summary>
+        /// <returns>員編</returns>
+        internal static string Get_員工編號(string ad = null)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,  // 有傳參數就用參數，沒傳就抓 HttpContext
+                Environment = EnvHelper.EnvironmentForDll(),
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
+
+            return res?.Result?.UserID ?? req.UserAD; // 沒找到就回傳 AD
+        }
+
+        /// <summary>
+        /// 取得員工基本資料 (呼叫 DLL 功能1)
+        /// </summary>
+        /// <param name="Emp_NO">員編</param>
+        /// <returns></returns>
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = ad,
+                Environment = EnvHelper.EnvironmentForDll(),     // Environment = "TEST"
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
+
+            if (res?.Result == null) return null;
+
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD = req.UserAD,
+                EMP_NO = res.Result.UserID,
+                EMP_NAME = res.Result.UserName,
+                //POST_NO = res.Result.PostNo,
+                POST_NAME = res.Result.PostName,
+                //ORGAN_NO = res.Result.OrganNo,
+                ORGAN_CAP = res.Result.OrganName,
+                APG_NO = res.Result.GroupID
+            };
+        }
+
+        #endregion
+
+        #region 權限樹
+        // 取得權限樹 呼叫功能3
+        internal static List<VM_Employee.WebTree_Node> Get_Tree(string groupId)
+        {
+            var req = new Models.M_AP_DLL.GetTreeRequestModel
+            {
+                SysID = "HI_APACCESS",
+                GroupID = groupId,
+                Environment = EnvHelper.EnvironmentForDll()
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetTree(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetTreeResponseModel>(response);
+
+            if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
+
+            // 轉換
+            var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
+            {
+                FUNC_ID = x.FuncID,
+                FUNC_NA = x.FuncName,
+                PARENT_ID = x.ParentID,
+                VIEW_H = x.Controller,
+                VIEW_HB = x.Action,
+                SORT_NO = x.Sort.ToString(),
+                WebTree = new List<VM_Employee.WebTree_Node>()
+            }).ToList();
+
+            // 建立字典
+            var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
+
+            // 樹狀化
+            List<VM_Employee.WebTree_Node> roots = new List<VM_Employee.WebTree_Node>();
+            foreach (var node in allNodes)
+            {
+                if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
+                {
+                    roots.Add(node);
+                }
+                else if (dict.ContainsKey(node.PARENT_ID))
+                {
+                    dict[node.PARENT_ID].WebTree.Add(node);
+                }
+            }
+
+            // 排序 (遞迴)
+            SortTree(roots);
+
+            return roots;
+        }
+
+        private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
+        {
+            nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
+            foreach (var node in nodes)
+            {
+                if (node.WebTree != null && node.WebTree.Count > 0)
+                {
+                    SortTree(node.WebTree);
+                }
+            }
+        }
+        #endregion
     }
 
-然後在回傳的 HTML 裡，把外層 <div> 加上 style="${bgStyle}"：
+員編驗證Attribute:
+namespace HI_APACCESS.Service.Validation
+{
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public class 員編驗證Attribute : DataTypeAttribute
+    {
+        public 員編驗證Attribute() : base(DataType.Text)
+        {
+            ErrorMessage = "請填寫有效的員編";
+        }
 
-return `
-    <div class="${itemClass} ${childClass}" data-func-id="${funcId}"
-         style="${bgStyle}"
-         onclick="togglePagePermissionByClick('${funcId}')">
-        <div class="permission-content">
-            <input type="checkbox" class="permission-checkbox" ${checkedAttr}>
-            <span class="permission-title">${funcName}</span>
-            <span class="permission-info">頁面ID: ${funcId}</span>
-        </div>
-    </div>`;
+        public override bool IsValid(object value)
+        {
+            if (value == null)
+            {
+                return true;
+            }
+            if (!(value is string EmpNo))
+            {
+                return false;
+            }
+            if (SVS_員工基本資料.Get_員工基本資料(EmpNo.ToUpper()) == null)
+            {
+                return false;
+            }
+            return true;
+        }
+    }
+}
+群組驗證Attribute:
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public class 群組驗證Attribute : DataTypeAttribute
+    {
+        public 群組驗證Attribute() : base(DataType.Text)
+        {
+            ErrorMessage = "您沒有登入權限";
+        }
 
+        public override bool IsValid(object value)
+        {
+            if (value == null)
+            {
+                return true;
+            }
+            if (!(value is string EmpNo))
+            {
+                return false;
+            }
 
-⸻
+            var obj_員工基本資料 = SVS_員工基本資料.Get_員工基本資料(EmpNo.ToUpper());
 
-(2) 確保 FUNC_TYPE 從後端有被撈出
+            if (obj_員工基本資料 == null)
+            {
+                return false;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(obj_員工基本資料.APG_NO))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
 
-在 loadAllFunctions() 中，後端回傳的 response.data 應該已包含 FUNC_TYPE（如果你之前已經在 AP_FUNC 加了那個欄位）。
-不需修改這段，但你可以驗證看看 Console log：
+然後我分次給你以前SVS_員工基本資料直接寫sql在上面的用法，可以做比較一下。
 
-console.log(`${index}: ${f.FUNC_ID} - ${f.FUNC_NA} (Type: ${f.FUNC_TYPE}, Parent: ${f.PARENT_ID})`);
-
-確認有印出 Type=1/2 即可。
-
-⸻
-
-✅ 顏色效果一覽
-
-類型	FUNC_TYPE	顏色	意義
-Tree	1	淡綠 #DFFFD6	樹狀主要頁面
-PartialView	2	淺藍 #E8F5FD	嵌入子頁面
-
-
-⸻
-
-✅ 完成後效果
-群組權限頁 → 左側頁面清單
-	•	Tree 類型子頁會顯示淡綠色底。
-	•	PartialView 類型子頁會顯示淡藍色底。
-	•	父層（Home 層）保持原樣。
-
-⸻
-
-是否希望我幫你加一個 legend（小提示）在頁面上方，例如顯示：
-
-🟩 Tree 頁面 🟦 PartialView 頁面
-這樣方便辨識？
