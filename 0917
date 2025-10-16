@@ -1,286 +1,271 @@
-切換按鈕
-了解！你需要在 `GroupManagement` 頁面判斷是從哪種方式進來的，只有從站台進來才顯示「切換系統」按鈕。
+可以，這一段完全可以只在「站台」改，不用碰 DLL。做法是把「登入前只驗身分、不驗權限」的邏輯放在站台專案，用最輕量的 SQL 直接查人事主檔；等通過登入後、真的要畫功能樹/按鈕時，再去呼叫 DLL 的功能1/3/4/5 做權限判斷。
 
-## 解決方案
+下面給你可直接貼上的程式碼與改動點。
 
-### **判斷邏輯**
+⸻
 
-- **TOKEN 進來**：Session 有 `CurrentSystemId` 和 `CurrentEmpNo`，且是透過 `TokenEntry` 進來
-- **站台進來**：Session 有 `CurrentSystemId`，但是透過 `SYS_PERMISSION_SET` 導向過來的
+1) 新增站台端的輕量服務（不檢查權限）
 
-我們可以加一個標記來區分！
+新增檔：/Service/AuthBootstrapService.cs（名稱你可調）
 
-## 修改方案
+using System;
+using System.Configuration;
+using System.Data;
+using System.Data.SqlClient;
 
-### **1. 修改 SYSController.cs - 導向時加上標記**
-
-```csharp
-// 導向群組管理
-[HttpPost]
-public JsonResult RedirectToGroupManagement(string sysId)
+namespace HI_APACCESS.Service
 {
-    try
+    /// <summary>
+    /// 登入前置（只驗身分，不驗系統權限）
+    /// </summary>
+    public static class AuthBootstrapService
     {
-        if (string.IsNullOrEmpty(sysId))
+        // 依 Web.config 選 DB（你既有寫法的封裝）
+        private static string ConnString()
         {
-            return Json(new { success = false, message = "請選擇系統" });
+            // 你原本的判斷：HI_APACCESS_TEST => TEST；其他 => PROD
+            bool isTest = (ConfigurationManager.AppSettings["Environment"] ?? "")
+                          .IndexOf("HI_APACCESS_TEST", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            return isTest
+                ? ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString  // 測試
+                : ConfigurationManager.ConnectionStrings["ConnDB_DBLS_HI-AUTOS"].ConnectionString; // 正式
         }
 
-        // 更新Session
-        Session["CurrentSystemId"] = sysId;
-        Session["FromInternalSite"] = true; // 👈 加上標記，表示從站台內部進來
-
-        return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "導向失敗：" + ex.Message });
-    }
-}
-
-// 導向頁面管理
-[HttpPost]
-public JsonResult RedirectToPageManagement(string sysId)
-{
-    try
-    {
-        if (string.IsNullOrEmpty(sysId))
+        /// <summary>
+        /// 依 AD 取得員編（若傳入的本身就是員編，也會回傳它本身）
+        /// </summary>
+        public static string ResolveEmpNoByAD(string adOrEmp)
         {
-            return Json(new { success = false, message = "請選擇系統" });
-        }
+            if (string.IsNullOrWhiteSpace(adOrEmp)) return null;
 
-        // 更新Session
-        Session["CurrentSystemId"] = sysId;
-        Session["FromInternalSite"] = true; // 👈 加上標記
-
-        return Json(new { success = true, redirectUrl = Url.Action("PageManagement", "AP", new { systemId = sysId }) });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "導向失敗：" + ex.Message });
-    }
-}
-```
-
-### **2. 修改 HomeController.cs - TOKEN 進來時清除標記**
-
-```csharp
-[HttpGet]
-[TokenAuthorize]
-public ActionResult TokenEntry()
-{
-    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-    Session["CurrentSystemId"] = systemId;
-    Session["CurrentEmpNo"] = empNo;
-    Session["FromInternalSite"] = false; // 👈 標記為 TOKEN 進來，不是站台內部
-    
-    // 導向到群組管理
-    return RedirectToAction("GroupManagement", "AP", new { systemId = systemId });
-}
-
-[HttpGet]
-[TokenAuthorize]
-public ActionResult TokenEntry_FUNC()
-{
-    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-    var empNo = ((ClaimsPrincipal)User).FindFirst("empNo")?.Value;
-
-    Session["CurrentSystemId"] = systemId;
-    Session["CurrentEmpNo"] = empNo;
-    Session["FromInternalSite"] = false; // 👈 標記為 TOKEN 進來
-    
-    // 導向到頁面管理
-    return RedirectToAction("PageManagement", "AP", new { systemId = systemId });
-}
-```
-
-### **3. 修改 APController.cs - 傳遞標記到 View**
-
-```csharp
-// 群組管理頁面
-public ActionResult GroupManagement(string systemId)
-{
-    if (string.IsNullOrEmpty(systemId))
-    {
-        systemId = Session["CurrentSystemId"]?.ToString();
-    }
-    else
-    {
-        // 同步更新 Session
-        Session["CurrentSystemId"] = systemId;
-    }
-
-    // 👇 判斷是否從站台內部進來
-    bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
-
-    ViewBag.SystemId = systemId;
-    ViewBag.Title = "群組權限管理 - " + systemId;
-    ViewBag.ShowSwitchButton = isFromInternalSite; // 👈 傳遞給 View
-
-    return View();
-}
-
-// 系統頁面設定
-public ActionResult PageManagement(string systemId = null)
-{
-    if (string.IsNullOrEmpty(systemId))
-    {
-        systemId = Session["CurrentSystemId"]?.ToString();
-    }
-
-    if (string.IsNullOrEmpty(systemId))
-    {
-        return Content("<h3>系統ID遺失，請重新透過權限管理連結進入</h3>");
-    }
-
-    // 👇 判斷是否從站台內部進來
-    bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
-
-    ViewBag.SystemId = systemId;
-    ViewBag.Title = "系統頁面設定 - " + systemId;
-    ViewBag.ShowSwitchButton = isFromInternalSite; // 👈 傳遞給 View
-
-    return View();
-}
-```
-
-### **4. 修改 GroupManagement.cshtml - 加入切換按鈕**
-
-在頁面頂部加入切換按鈕（只有從站台進來才顯示）：
-
-```html
-@{
-    ViewBag.Title = ViewBag.Title ?? "群組權限管理";
-    var systemId = ViewBag.SystemId as string;
-    var showSwitchButton = ViewBag.ShowSwitchButton != null && (bool)ViewBag.ShowSwitchButton;
-}
-
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">@ViewBag.Title</div>
-</section>
-
-<!-- 👇 只有從站台進來才顯示切換系統按鈕 -->
-@if (showSwitchButton)
-{
-    <div class="row mb-3">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-info" id="btnSwitchSystem">
-                <i class="fas fa-exchange-alt"></i> 切換系統
-            </button>
-        </div>
-    </div>
-}
-
-<!-- 原本的群組管理內容 -->
-<div class="container-fluid">
-    <!-- ... 原本的內容 ... -->
-</div>
-
-@section Scripts {
-    <script>
-        // 原本的 script...
-
-        @if (showSwitchButton)
-        {
-            <text>
-            // 切換系統按鈕事件
-            $('#btnSwitchSystem').click(function() {
-                if (confirm('確定要切換系統嗎？')) {
-                    window.location.href = '@Url.Action("SYS_PERMISSION_SET", "SYS")';
+            string empNo = null;
+            using (var conn = new SqlConnection(ConnString()))
+            {
+                conn.Open();
+                // 這張表維護 AD 與員編的對應（你先前提供）
+                const string sql = @"
+SELECT TOP 1 E.EMP_ID
+FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
+WHERE E.EMP_DOM_ID = @AD
+  AND E.EMP_ID <> E.EMP_DOM_ID
+  AND LTRIM(RTRIM(E.EMP_DOM_ID)) <> ''";
+                using (var cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@AD", adOrEmp.ToUpper());
+                    empNo = cmd.ExecuteScalar() as string;
                 }
-            });
-            </text>
+            }
+
+            // 對不到就當作已經是員編
+            return string.IsNullOrWhiteSpace(empNo) ? adOrEmp.ToUpper() : empNo;
         }
-    </script>
-}
-```
 
-### **5. 同樣修改 PageManagement.cshtml**
-
-```html
-@{
-    ViewBag.Title = ViewBag.Title ?? "系統頁面設定";
-    var systemId = ViewBag.SystemId as string;
-    var showSwitchButton = ViewBag.ShowSwitchButton != null && (bool)ViewBag.ShowSwitchButton;
-}
-
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">@ViewBag.Title</div>
-</section>
-
-<!-- 👇 只有從站台進來才顯示切換系統按鈕 -->
-@if (showSwitchButton)
-{
-    <div class="row mb-3">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-info" id="btnSwitchSystem">
-                <i class="fas fa-exchange-alt"></i> 切換系統
-            </button>
-        </div>
-    </div>
-}
-
-<!-- 原本的頁面管理內容 -->
-<div class="container-fluid">
-    <!-- ... 原本的內容 ... -->
-</div>
-
-@section Scripts {
-    <script>
-        // 原本的 script...
-
-        @if (showSwitchButton)
+        /// <summary>
+        /// 只取基本人事資料（不檢查 AP 群組/權限）
+        /// </summary>
+        public static (string EmpNo, string EmpName, string OrganName, string PostName)? GetEmpBasic_NoAuth(string adOrEmp)
         {
-            <text>
-            // 切換系統按鈕事件
-            $('#btnSwitchSystem').click(function() {
-                if (confirm('確定要切換系統嗎？')) {
-                    window.location.href = '@Url.Action("SYS_FUNC_SET", "SYS")';
+            string empNo = ResolveEmpNoByAD(adOrEmp);
+            if (string.IsNullOrWhiteSpace(empNo)) return null;
+
+            using (var conn = new SqlConnection(ConnString()))
+            {
+                conn.Open();
+                // 只看在職有效資料
+                const string sql = @"
+SELECT TOP 1
+    M.EMP_NO,
+    M.EMP_NAME,
+    M.ORGAN_CAP,
+    M.POST_NAME
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M
+WHERE M.EMP_NO = @EMP_NO
+  AND (M.END_DT IS NULL OR LTRIM(RTRIM(M.END_DT)) = '')";
+                using (var cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                    using (var r = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                    {
+                        if (r.Read())
+                        {
+                            return (
+                                r["EMP_NO"]?.ToString(),
+                                r["EMP_NAME"]?.ToString(),
+                                r["ORGAN_CAP"]?.ToString(),
+                                r["POST_NAME"]?.ToString()
+                            );
+                        }
+                    }
                 }
-            });
-            </text>
+            }
+            return null;
         }
-    </script>
+    }
 }
-```
 
-## 流程圖
 
-```
-【TOKEN 進來】
-TokenEntry 
-  ↓
-Session["FromInternalSite"] = false
-  ↓
-GroupManagement 
-  ↓
-ViewBag.ShowSwitchButton = false
-  ↓
-❌ 不顯示「切換系統」按鈕
+⸻
 
-【站台進來】
-SYS_PERMISSION_SET (選擇系統)
-  ↓
-Session["FromInternalSite"] = true
-  ↓
-GroupManagement
-  ↓
-ViewBag.ShowSwitchButton = true
-  ↓
-✅ 顯示「切換系統」按鈕
-  ↓
-點擊按鈕 → 導向回 SYS_PERMISSION_SET
-```
+2) 調整 SVS_員工基本資料（站台直接用上面服務）
 
-## 優點
+只新增兩個「站台限定、不驗權限」的 helper，原本呼叫 DLL 的方法全部保留不動，用在登入後需要權限的場景。
 
-✅ **清楚區分來源** - 用 Session 標記區分  
-✅ **安全可靠** - TOKEN 使用者看不到切換按鈕  
-✅ **使用者體驗好** - 站台使用者可以輕鬆切換系統  
-✅ **不影響現有功能** - TOKEN 導向流程完全不受影響
+using HI_APACCESS_DLL;
+using Newtonsoft.Json;
 
-這樣就可以完美區分兩種進入方式了！🎯​​​​​​​​​​​​​​​​
+namespace HI_APACCESS.Service
+{
+    public class SVS_員工基本資料
+    {
+        internal static string Get_員工AD()
+        {
+            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name
+                .Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+            if (string.IsNullOrEmpty(EMP_DOM_ID))
+            {
+                var principal = new System.Security.Principal.WindowsPrincipal(
+                    System.Security.Principal.WindowsIdentity.GetCurrent());
+                string name = principal.Identity.Name;
+                var adname = name.Split(new[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
+                EMP_DOM_ID = adname[1].ToString().ToUpper();
+            }
+            return EMP_DOM_ID;
+        }
+
+        // ✅ 新增：登入畫面用（不驗權限）
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料_只驗身分_站台(string adOrEmp)
+        {
+            var basic = AuthBootstrapService.GetEmpBasic_NoAuth(adOrEmp);
+            if (basic == null) return null;
+
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD        = adOrEmp?.ToUpper(),
+                EMP_NO    = basic.Value.EmpNo,
+                EMP_NAME  = basic.Value.EmpName,
+                ORGAN_CAP = basic.Value.OrganName,
+                POST_NAME = basic.Value.PostName,
+                // 這裡不填 APG_NO（因為沒做權限）
+            };
+        }
+
+        // （原本）需要權限的頁面/功能時，仍舊呼叫 DLL 功能1
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = ad,
+                Environment = EnvHelper.EnvironmentForDll()
+            };
+
+            string json = JsonConvert.SerializeObject(req);
+            string raw  = new APACCESS().GetUserData(json);
+            var res     = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(raw);
+
+            if (res?.Result == null) return null;
+
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD        = req.UserAD,
+                EMP_NO    = res.Result.UserID,
+                EMP_NAME  = res.Result.UserName,
+                POST_NAME = res.Result.PostName,
+                ORGAN_CAP = res.Result.OrganName,
+                APG_NO    = res.Result.GroupID
+            };
+        }
+    }
+}
+
+
+⸻
+
+3) 調整 AccountController
+
+GET /Login：只驗身分，不驗權限（改用站台端方法）
+
+[AllowAnonymous]
+[HttpGet]
+public ActionResult Login()
+{
+    Session.RemoveAll();
+
+    string ad = SVS_員工基本資料.Get_員工AD();
+    var login = SVS_員工基本資料.Get_員工基本資料_只驗身分_站台(ad);
+    if (login == null)
+    {
+        ModelState.AddModelError("", "查無有效員工或已離職");
+        return View(new VM_員工部門職稱 { AD = ad });
+    }
+
+    login.AD = ad;
+    return View(login);
+}
+
+POST /Login：建立票證前再做權限檢查（仍用 DLL 功能1）
+
+[AllowAnonymous]
+[HttpPost]
+[ValidateAntiForgeryToken]
+public ActionResult Login([Bind] VM_員工部門職稱 login, string ReturnUrl)
+{
+    if (!ModelState.IsValid) return View(login);
+
+    string ad = !string.IsNullOrEmpty(login.AD) ? login.AD : SVS_員工基本資料.Get_員工AD();
+
+    // 先只驗身分（站台端）
+    var basic = SVS_員工基本資料.Get_員工基本資料_只驗身分_站台(ad);
+    if (basic == null)
+    {
+        ModelState.AddModelError("", "查無有效員工或已離職");
+        return View(login);
+    }
+
+    // 再驗權限（DLL 功能1）
+    var withGroup = SVS_員工基本資料.Get_員工基本資料(ad);
+    if (withGroup == null || string.IsNullOrEmpty(withGroup.APG_NO))
+    {
+        ModelState.AddModelError("", "您沒有登入此系統的權限");
+        return View(login);
+    }
+
+    // 建票證（沿用你的原流程）
+    FormsAuthentication.RedirectFromLoginPage(ad, true);
+    var encTicket = LoginTicket(ad);
+    var authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+    {
+        Secure = Request.IsSecureConnection,
+        HttpOnly = true
+    };
+    Response.Cookies.Add(authCookie);
+
+    if (string.IsNullOrEmpty(ReturnUrl) || ReturnUrl == "/")
+        return RedirectToAction("Main", "Home");
+
+    if (!Url.IsLocalUrl(ReturnUrl))
+        return RedirectToAction("Login", "Account");
+
+    string[] allowed = { "/Main/", "/Home/", "/Account/" };
+    if (allowed.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+        return RedirectToAction("Login", "Account", new { ReturnUrl });
+
+    return RedirectToAction("Login", "Account");
+}
+
+
+⸻
+
+4) 驗證 Attribute 要怎麼搭配
+	•	員編驗證Attribute → 改成呼叫 Get_員工基本資料_只驗身分_站台（只驗員工存在）
+	•	群組驗證Attribute → 保持呼叫 Get_員工基本資料（DLL 功能1），確認有 APG_NO
+
+⸻
+
+為什麼這樣改就能解你的問題？
+	•	不改 DLL：DLL 保持「權限系統」角色；站台只是把「登入前的身份確認」另外寫輕量 SQL。
+	•	登入流程不會被權限卡住：GET /Login 只查人事表，不看 AP 表。
+	•	權限仍統一由 DLL 管：登入通過之後，畫面功能與按鈕才呼叫功能1/3/4/5。
+
+如果你想，我也可以順手幫你把 員編驗證Attribute 改為用站台方法的範例貼上。
