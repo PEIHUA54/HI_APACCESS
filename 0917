@@ -1,16 +1,31 @@
- #region AD、員編
+OK，我把「只驗身分、不驗權限」那段改成你們舊寫法風格（用 SVS_DBmanager.QueryBySQL，不開 SqlConnection），直接塞回 SVS_員工基本資料。你只要把下面這段貼進去就能用。
+（保留你原本的 Get_員工AD / Get_員工編號 舊寫法；新增 _只驗身分 版查人事主檔，不碰群組表）
+
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Linq;
+
+namespace HI_APACCESS.Service
+{
+    public class SVS_員工基本資料
+    {
+        #region AD、員編
 
         /// <summary>
         /// 權限管理-取得員工AD
         /// </summary>
-        /// <returns>AD</returns>
         internal static string Get_員工AD()
         {
-            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name.Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
+            string EMP_DOM_ID = System.Web.HttpContext.Current.User.Identity.Name
+                .Substring(System.Web.HttpContext.Current.User.Identity.Name.LastIndexOf("\\") + 1);
 
             if (String.IsNullOrEmpty(EMP_DOM_ID))
             {
-                System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent());
+                var principal = new System.Security.Principal.WindowsPrincipal(
+                    System.Security.Principal.WindowsIdentity.GetCurrent());
                 string name = principal.Identity.Name;
                 string[] adname = name.Split(new string[] { "\\" }, StringSplitOptions.RemoveEmptyEntries);
                 EMP_DOM_ID = adname[1].ToString().ToUpper();
@@ -20,40 +35,46 @@
         }
 
         /// <summary>
-        /// 權限管理-取得員工編號
+        /// 權限管理-取得員工編號（舊寫法：AD → 員編）
         /// </summary>
-        /// <returns>員編</returns>
         internal static string Get_員工編號(string AD = null)
         {
             string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
-            //AD轉換為員編
+            // AD 轉換為員編
             EMP_NO = GetEmpNoByAD(EMP_NO);
             return EMP_NO;
         }
 
         /// <summary>
-        /// AD轉換為員編
+        /// AD 轉換為員編（舊寫法：用 SVS_DBmanager.QueryBySQL）
         /// </summary>
-        /// <param name="AD">取得工作站登入AD</param>
-        /// <returns>員編</returns>
         private static string GetEmpNoByAD(string AD)
         {
             string EMP_NO = null;
-            string sql = "SELECT EMP_ID FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] " +
-                "WHERE EMP_ID!= EMP_DOM_ID " +
-                "AND LTRIM(RTRIM(EMP_DOM_ID)) != '' " +
-                "AND EMP_ID IN (SELECT EMP_NO AS 'EMP_ID' FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE END_DT IS NULL) " +
-                "AND EMP_DOM_ID = @AD ";
+            string sql = @"
+SELECT EMP_ID 
+FROM [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] 
+WHERE EMP_ID != EMP_DOM_ID
+  AND LTRIM(RTRIM(EMP_DOM_ID)) <> '' 
+  AND EMP_ID IN (
+        SELECT EMP_NO AS EMP_ID 
+        FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 
+        WHERE END_DT IS NULL
+  )
+  AND EMP_DOM_ID = @AD ";
+
             List<SqlParameter> paras = new List<SqlParameter>
             {
-                new SqlParameter("@AD",AD)
+                new SqlParameter("@AD", AD)
             };
+
             DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
             if (table.Rows.Count > 0)
             {
                 EMP_NO = table.Rows[0]["EMP_ID"].ToString();
             }
 
+            // 對不到就原樣回傳（相容舊流程）
             EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
             return EMP_NO;
         }
@@ -61,28 +82,81 @@
         #endregion AD、員編
 
         /// <summary>
-        /// 取得員工基本資料
+        /// ✅【新】只驗身分（登入畫面用）：
+        /// 不碰權限/群組，只確認是否為有效在職員工，回傳基本資料（不含 APG_NO）。
         /// </summary>
-        /// <param name="Emp_NO">員編</param>
-        /// <returns></returns>
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料_只驗身分(string adOrEmp)
+        {
+            if (string.IsNullOrWhiteSpace(adOrEmp))
+                return null;
+
+            // 1) 嘗試 AD→員編（對不到就當成已是員編）
+            string empNo = GetEmpNoByAD(adOrEmp);
+
+            // 2) 查人事主檔有效員工
+            string sql = @"
+SELECT TOP 1
+    M.EMP_NO,
+    M.EMP_NAME,
+    M.ORGAN_CAP,
+    M.POST_NAME
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M
+WHERE M.EMP_NO = @EMP_NO
+  AND (M.END_DT IS NULL OR LTRIM(RTRIM(M.END_DT)) = '')
+";
+            List<SqlParameter> paras = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", empNo)
+            };
+
+            DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
+
+            if (table == null || table.Rows.Count == 0)
+                return null; // 非有效員工（或離職）
+
+            // 直接轉模型（不含群組資料）
+            var row = table.Rows[0];
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD        = adOrEmp?.ToUpper(),
+                EMP_NO    = row["EMP_NO"]?.ToString(),
+                EMP_NAME  = row["EMP_NAME"]?.ToString(),
+                ORGAN_CAP = row["ORGAN_CAP"]?.ToString(),
+                POST_NAME = row["POST_NAME"]?.ToString(),
+                // APG_NO 不在這裡回填（這支不查權限）
+            };
+        }
+
+        /// <summary>
+        /// 取得員工基本資料（含群組；舊寫法，用在需要權限時）
+        /// </summary>
         internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string Emp_NO)
         {
             string SQLStrings = @"
-
-  SELECT EMP_NO,EMP_NAME,ORGAN_NO,ORGAN_CAP,POST_NO,POST_NAME,APG_NO 
-  FROM DB_SHARE.DBO.M1EMP_MAST M 
-  LEFT JOIN(SELECT U_ID, APG_NO, U_NAME FROM AP_USER WHERE SYS_ID = @SYS_ID AND U_ID = @EMP_NO) A
-  ON M.EMP_NO = A.U_ID 
-  WHERE EMP_NO = @EMP_NO
+SELECT 
+    M.EMP_NO,
+    M.EMP_NAME,
+    M.ORGAN_NO,
+    M.ORGAN_CAP,
+    M.POST_NO,
+    M.POST_NAME,
+    A.APG_NO 
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M 
+LEFT JOIN (
+    SELECT U_ID, APG_NO, U_NAME 
+    FROM [HI-AUTOS].dbo.[AP_USER] 
+    WHERE SYS_ID = @SYS_ID AND U_ID = @EMP_NO
+) A ON M.EMP_NO = A.U_ID 
+WHERE M.EMP_NO = @EMP_NO
 ";
             List<SqlParameter> Paras = new List<SqlParameter>()
             {
                 new SqlParameter("@SYS_ID","HI_APACCESS"),
-                new SqlParameter("@EMP_NO",Get_員工編號(Emp_NO)),
+                new SqlParameter("@EMP_NO", Get_員工編號(Emp_NO)),
             };
+
             DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
 
-            //員編姓名
             List<VM_Employee.VM_員工部門職稱> list_所有員編姓名 = new List<VM_Employee.VM_員工部門職稱>();
             if (table != null && table.Rows.Count > 0)
             {
@@ -90,3 +164,12 @@
             }
             return list_所有員編姓名.AsEnumerable().FirstOrDefault();
         }
+    }
+}
+
+怎麼用（建議流程）
+	•	Login GET：用 Get_員工基本資料_只驗身分(AD) 先驗「是否有效員工」。
+失敗就顯示「查無有效員工或已離職」。
+	•	Login POST：通過後，再用 Get_員工基本資料(AD)（這支會連 AP_USER）檢查是否有群組；沒有就回「您沒有登入此系統的權限」。
+
+這樣就達成你要的：登入階段先只驗身分，不因為沒權限就整個噴錯；真的要進系統再驗權限。
