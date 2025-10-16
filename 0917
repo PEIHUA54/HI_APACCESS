@@ -1,9 +1,23 @@
-OK，我把「只驗身分、不驗權限」那段改成你們舊寫法風格（用 SVS_DBmanager.QueryBySQL，不開 SqlConnection），直接塞回 SVS_員工基本資料。你只要把下面這段貼進去就能用。
-（保留你原本的 Get_員工AD / Get_員工編號 舊寫法；新增 _只驗身分 版查人事主檔，不碰群組表）
+非常好 👍
+你的意思我完全懂：
+✅ 要保留這個新版架構（登入先驗身分、再驗權限）
+✅ 但「SQL 查詢」部分要改成 用你們慣用的 SVS_DBmanager.QueryBySQL()
+✅ 同時 DLL 呼叫部分要保留（功能1～GetUserData 還是照用）
 
+⸻
+
+以下就是 最終整合版本，可以直接貼上使用 👇
+（我幫你全改成 SVS_DBmanager 寫法，無 SqlConnection，風格與專案統一）
+
+⸻
+
+✅ 一、修改後完整的 SVS_員工基本資料.cs
+
+using HI_APACCESS_DLL;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
 using System.Linq;
@@ -12,7 +26,7 @@ namespace HI_APACCESS.Service
 {
     public class SVS_員工基本資料
     {
-        #region AD、員編
+        #region AD、員編、 基本資料
 
         /// <summary>
         /// 權限管理-取得員工AD
@@ -35,18 +49,7 @@ namespace HI_APACCESS.Service
         }
 
         /// <summary>
-        /// 權限管理-取得員工編號（舊寫法：AD → 員編）
-        /// </summary>
-        internal static string Get_員工編號(string AD = null)
-        {
-            string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
-            // AD 轉換為員編
-            EMP_NO = GetEmpNoByAD(EMP_NO);
-            return EMP_NO;
-        }
-
-        /// <summary>
-        /// AD 轉換為員編（舊寫法：用 SVS_DBmanager.QueryBySQL）
+        /// AD 轉換為員編
         /// </summary>
         private static string GetEmpNoByAD(string AD)
         {
@@ -70,30 +73,32 @@ WHERE EMP_ID != EMP_DOM_ID
 
             DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
             if (table.Rows.Count > 0)
-            {
                 EMP_NO = table.Rows[0]["EMP_ID"].ToString();
-            }
 
-            // 對不到就原樣回傳（相容舊流程）
-            EMP_NO = String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
+            // 找不到就回傳原 AD（相容原流程）
+            return String.IsNullOrEmpty(EMP_NO) ? AD : EMP_NO;
+        }
+
+        /// <summary>
+        /// 權限管理 - 取得員工編號 (舊邏輯)
+        /// </summary>
+        internal static string Get_員工編號(string AD = null)
+        {
+            string EMP_NO = string.IsNullOrEmpty(AD) ? Get_員工AD() : AD;
+            EMP_NO = GetEmpNoByAD(EMP_NO);
             return EMP_NO;
         }
 
-        #endregion AD、員編
-
-        /// <summary>
-        /// ✅【新】只驗身分（登入畫面用）：
-        /// 不碰權限/群組，只確認是否為有效在職員工，回傳基本資料（不含 APG_NO）。
-        /// </summary>
+        // 🟢 新增：只驗身分（登入畫面用，不查權限）
         internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料_只驗身分(string adOrEmp)
         {
             if (string.IsNullOrWhiteSpace(adOrEmp))
                 return null;
 
-            // 1) 嘗試 AD→員編（對不到就當成已是員編）
+            // 1️⃣ 嘗試 AD → 員編
             string empNo = GetEmpNoByAD(adOrEmp);
 
-            // 2) 查人事主檔有效員工
+            // 2️⃣ 查人事主檔（有效員工）
             string sql = @"
 SELECT TOP 1
     M.EMP_NO,
@@ -110,66 +115,228 @@ WHERE M.EMP_NO = @EMP_NO
             };
 
             DataTable table = new SVS_DBmanager().QueryBySQL(sql, paras);
-
             if (table == null || table.Rows.Count == 0)
-                return null; // 非有效員工（或離職）
+                return null; // 無效員工或離職
 
-            // 直接轉模型（不含群組資料）
             var row = table.Rows[0];
             return new VM_Employee.VM_員工部門職稱
             {
-                AD        = adOrEmp?.ToUpper(),
-                EMP_NO    = row["EMP_NO"]?.ToString(),
-                EMP_NAME  = row["EMP_NAME"]?.ToString(),
-                ORGAN_CAP = row["ORGAN_CAP"]?.ToString(),
-                POST_NAME = row["POST_NAME"]?.ToString(),
-                // APG_NO 不在這裡回填（這支不查權限）
+                AD        = adOrEmp.ToUpper(),
+                EMP_NO    = row["EMP_NO"].ToString(),
+                EMP_NAME  = row["EMP_NAME"].ToString(),
+                ORGAN_CAP = row["ORGAN_CAP"].ToString(),
+                POST_NAME = row["POST_NAME"].ToString(),
+                // 不含 APG_NO（不查權限）
             };
         }
 
         /// <summary>
-        /// 取得員工基本資料（含群組；舊寫法，用在需要權限時）
+        /// 權限管理-取得員工編號 (呼叫 DLL 功能1)
         /// </summary>
-        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string Emp_NO)
+        internal static string Get_員工編號_DLL(string ad = null)
         {
-            string SQLStrings = @"
-SELECT 
-    M.EMP_NO,
-    M.EMP_NAME,
-    M.ORGAN_NO,
-    M.ORGAN_CAP,
-    M.POST_NO,
-    M.POST_NAME,
-    A.APG_NO 
-FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M 
-LEFT JOIN (
-    SELECT U_ID, APG_NO, U_NAME 
-    FROM [HI-AUTOS].dbo.[AP_USER] 
-    WHERE SYS_ID = @SYS_ID AND U_ID = @EMP_NO
-) A ON M.EMP_NO = A.U_ID 
-WHERE M.EMP_NO = @EMP_NO
-";
-            List<SqlParameter> Paras = new List<SqlParameter>()
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
             {
-                new SqlParameter("@SYS_ID","HI_APACCESS"),
-                new SqlParameter("@EMP_NO", Get_員工編號(Emp_NO)),
+                SysID = "HI_APACCESS",
+                UserAD = string.IsNullOrEmpty(ad) ? Get_員工AD() : ad,
+                Environment = EnvHelper.EnvironmentForDll(),
             };
 
-            DataTable table = new SVS_DBmanager().QueryBySQL(SQLStrings, Paras);
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
 
-            List<VM_Employee.VM_員工部門職稱> list_所有員編姓名 = new List<VM_Employee.VM_員工部門職稱>();
-            if (table != null && table.Rows.Count > 0)
-            {
-                list_所有員編姓名 = SVS_DBmanager.ConvertToList<VM_Employee.VM_員工部門職稱>(table);
-            }
-            return list_所有員編姓名.AsEnumerable().FirstOrDefault();
+            return res?.Result?.UserID ?? req.UserAD;
         }
+
+        /// <summary>
+        /// 取得員工基本資料 (呼叫 DLL 功能1，含權限)
+        /// </summary>
+        internal static VM_Employee.VM_員工部門職稱 Get_員工基本資料(string ad)
+        {
+            var req = new Models.M_AP_DLL.GetUserDataRequestModel
+            {
+                SysID = "HI_APACCESS",
+                UserAD = ad,
+                Environment = EnvHelper.EnvironmentForDll(),
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetUserData(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetUserDataResponseModel>(response);
+
+            if (res?.Result == null) return null;
+
+            return new VM_Employee.VM_員工部門職稱
+            {
+                AD = req.UserAD,
+                EMP_NO = res.Result.UserID,
+                EMP_NAME = res.Result.UserName,
+                POST_NAME = res.Result.PostName,
+                ORGAN_CAP = res.Result.OrganName,
+                APG_NO = res.Result.GroupID
+            };
+        }
+
+        #endregion
+
+        #region 權限樹（保持原樣）
+        internal static List<VM_Employee.WebTree_Node> Get_Tree(string groupId)
+        {
+            var req = new Models.M_AP_DLL.GetTreeRequestModel
+            {
+                SysID = "HI_APACCESS",
+                GroupID = groupId,
+                Environment = EnvHelper.EnvironmentForDll()
+            };
+
+            string json_input = JsonConvert.SerializeObject(req);
+            string response = new APACCESS().GetTree(json_input);
+            var res = JsonConvert.DeserializeObject<Models.M_AP_DLL.GetTreeResponseModel>(response);
+
+            if (res?.Result == null) return new List<VM_Employee.WebTree_Node>();
+
+            var allNodes = res.Result.Select(x => new VM_Employee.WebTree_Node
+            {
+                FUNC_ID = x.FuncID,
+                FUNC_NA = x.FuncName,
+                PARENT_ID = x.ParentID,
+                VIEW_H = x.Controller,
+                VIEW_HB = x.Action,
+                SORT_NO = x.Sort.ToString(),
+                WebTree = new List<VM_Employee.WebTree_Node>()
+            }).ToList();
+
+            var dict = allNodes.ToDictionary(x => x.FUNC_ID, x => x);
+
+            List<VM_Employee.WebTree_Node> roots = new List<VM_Employee.WebTree_Node>();
+            foreach (var node in allNodes)
+            {
+                if (string.IsNullOrEmpty(node.PARENT_ID) || node.PARENT_ID == "HOME")
+                    roots.Add(node);
+                else if (dict.ContainsKey(node.PARENT_ID))
+                    dict[node.PARENT_ID].WebTree.Add(node);
+            }
+
+            SortTree(roots);
+            return roots;
+        }
+
+        private static void SortTree(List<VM_Employee.WebTree_Node> nodes)
+        {
+            nodes.Sort((a, b) => int.Parse(a.SORT_NO).CompareTo(int.Parse(b.SORT_NO)));
+            foreach (var node in nodes)
+            {
+                if (node.WebTree != null && node.WebTree.Count > 0)
+                    SortTree(node.WebTree);
+            }
+        }
+        #endregion
     }
 }
 
-怎麼用（建議流程）
-	•	Login GET：用 Get_員工基本資料_只驗身分(AD) 先驗「是否有效員工」。
-失敗就顯示「查無有效員工或已離職」。
-	•	Login POST：通過後，再用 Get_員工基本資料(AD)（這支會連 AP_USER）檢查是否有群組；沒有就回「您沒有登入此系統的權限」。
 
-這樣就達成你要的：登入階段先只驗身分，不因為沒權限就整個噴錯；真的要進系統再驗權限。
+⸻
+
+✅ 二、AccountController 修改重點（登入流程）
+
+GET /Login
+
+[AllowAnonymous]
+[HttpGet]
+public ActionResult Login()
+{
+    Session.RemoveAll();
+
+    string ad = SVS_員工基本資料.Get_員工AD();
+    var login = SVS_員工基本資料.Get_員工基本資料_只驗身分(ad);
+
+    if (login == null)
+    {
+        ModelState.AddModelError("", "查無有效員工或已離職");
+        return View(new VM_員工部門職稱 { AD = ad });
+    }
+
+    login.AD = ad;
+    return View(login);
+}
+
+
+⸻
+
+POST /Login
+
+[AllowAnonymous]
+[HttpPost]
+[ValidateAntiForgeryToken]
+public ActionResult Login([Bind] VM_員工部門職稱 login, string ReturnUrl)
+{
+    if (!ModelState.IsValid) return View(login);
+
+    string ad = !string.IsNullOrEmpty(login.AD) ? login.AD : SVS_員工基本資料.Get_員工AD();
+
+    // Step 1: 先驗身分（不查權限）
+    var basic = SVS_員工基本資料.Get_員工基本資料_只驗身分(ad);
+    if (basic == null)
+    {
+        ModelState.AddModelError("", "查無有效員工或已離職");
+        return View(login);
+    }
+
+    // Step 2: 驗權限（呼叫 DLL）
+    var withGroup = SVS_員工基本資料.Get_員工基本資料(ad);
+    if (withGroup == null || string.IsNullOrEmpty(withGroup.APG_NO))
+    {
+        ModelState.AddModelError("", "您沒有登入此系統的權限");
+        return View(login);
+    }
+
+    // Step 3: 登入成功 → 建立票證
+    FormsAuthentication.RedirectFromLoginPage(ad, true);
+    var encTicket = LoginTicket(ad);
+    var authCookie = new HttpCookie(FormsAuthentication.FormsCookieName, encTicket)
+    {
+        Secure = Request.IsSecureConnection,
+        HttpOnly = true
+    };
+    Response.Cookies.Add(authCookie);
+
+    if (String.IsNullOrEmpty(ReturnUrl) || ReturnUrl == "/")
+        return RedirectToAction("Main", "Home");
+
+    if (!Url.IsLocalUrl(ReturnUrl))
+        return RedirectToAction("Login", "Account");
+
+    string[] allowedPaths = { "/Main/", "/Home/", "/Account/" };
+    if (allowedPaths.Any(path => ReturnUrl.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
+        return RedirectToAction("Login", "Account", new { ReturnUrl });
+
+    return RedirectToAction("Login", "Account");
+}
+
+
+⸻
+
+✅ 三、員編驗證Attribute（可選）
+
+如果你希望在輸入員編時不被權限卡住，只驗身分：
+
+if (SVS_員工基本資料.Get_員工基本資料_只驗身分(EmpNo.ToUpper()) == null)
+{
+    return false;
+}
+
+
+⸻
+
+✅ 最終效果總結
+
+階段	查詢方式	是否呼叫 DLL	說明
+登入頁面初次載入 (GET)	Get_員工基本資料_只驗身分	❌ 否	只查員工主檔，人員在職即可
+登入送出 (POST)	Get_員工基本資料	✅ 是	確認該員工是否具登入權限
+登入成功後	建立 Cookie	—	一切與原本相同
+
+
+⸻
+
+是否要我幫你順便加上 EnvHelper.EnvironmentForDll() 的完整內容（讓他能正確判斷 TEST/PROD）？
