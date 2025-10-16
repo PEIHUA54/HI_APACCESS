@@ -1,151 +1,145 @@
-ok，鎖 001 這個內建管理員群組最穩的是「前端禁止 + 後端再擋一次」。下面直接給你「就地改」的片段，貼上就能用。
+非常好 👍，你的需求我幫你整理成最精準的版本：
 
-前端（View / JS）
+✅ 001 管理員（資訊）
+	•	可以 開啟修改 modal
+	•	可以 調整母群組 (PARENT_APG_NO)
+	•	但 群組名稱 (APG_NAME) 欄位鎖住不能改
+	•	不可刪除
 
-1) 切換群組時，直接禁用「修改 / 刪除」按鈕
+⸻
 
-在你的 loadGroupData() 裡，原本選到群組後會啟用按鈕；請在啟用後加上這段判斷，把 001 鎖起來：
+✅ 修改重點一：editGroup()（前端）
 
-function loadGroupData() {
-    const newGroup = $('#groupSelect').val();
-
-    if (hasUnsavedChanges && currentGroup !== newGroup && currentGroup !== '') {
-        if (!confirm('有未儲存的變更，切換群組將遺失這些變更。確定要繼續嗎？')) {
-            $('#groupSelect').val(currentGroup);
-            return;
-        }
-    }
-
-    currentGroup = newGroup;
-    hideSaveReminder();
-
-    if (!currentGroup) {
-        resetAllSections();
-        return;
-    }
-
-    // 啟用所有按鈕
-    $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', false);
-
-    // ★ 這裡加：鎖定 001
-    const isLockedGroup = (currentGroup === '001');
-    if (isLockedGroup) {
-        $('#editGroupBtn, #deleteGroupBtn').prop('disabled', true);
-        // 也可以給個提示（可留可不留）
-        $('#editGroupBtn').attr('title', '此為系統內建群組，無法修改');
-        $('#deleteGroupBtn').attr('title', '此為系統內建群組，無法刪除');
-    } else {
-        $('#editGroupBtn, #deleteGroupBtn').removeAttr('title');
-    }
-
-    loadUsers();
-    loadPagePermissions();
-}
-
-2) 擋下「修改群組」動作
-
-在你的 editGroup() 開頭加上這段，直接不讓開啟：
+在你現有的 editGroup() 裡，只要加下面這段即可。
+不需要改其他地方。
 
 function editGroup() {
     if (!currentGroup) return;
 
-    // ★ 這裡加：001 不可修改
-    if (currentGroup === '001') {
-        alert('「001 管理員（資訊）」為系統內建群組，無法修改。');
-        return;
-    }
+    // 001 群組可編輯母群組，但群組名稱鎖住
+    const isLockedGroup = (currentGroup === '001');
 
     isEditMode = true;
     $('#groupModalTitle').text('修改群組');
-    // ……後面原程式碼維持……
+
+    $.get('@Url.Action("GetGroupDetail", "AP")', { groupId: currentGroup, sysID: currentSysID }, function (response) {
+        if (response.success) {
+            const group = response.data;
+            $('#groupId').val(group.APG_NO).prop('readonly', true);
+            $('#groupName').val(group.APG_NAME);
+
+            // 🔸 鎖住 001 名稱欄位
+            if (isLockedGroup) {
+                $('#groupName').prop('readonly', true)
+                               .css('background-color', '#f3f3f3')
+                               .attr('title', '此為系統內建群組，名稱不可修改');
+            } else {
+                $('#groupName').prop('readonly', false)
+                               .css('background-color', '#ffffff')
+                               .removeAttr('title');
+            }
+
+            $('#parentGroup').val(group.PARENT_APG_NO || '');
+            $('#groupDesc').val(group.MEMO || '');
+
+            $('#groupModal').modal('show');
+        } else {
+            alert('載入群組資料失敗：' + response.message);
+        }
+    });
 }
 
-3) 擋下「刪除群組」動作
 
-在你的 deleteGroup() 一開始加：
+⸻
+
+✅ 修改重點二：deleteGroup()（前端）
+
+直接在開頭擋掉 001，不開啟刪除確認：
 
 function deleteGroup() {
     if (!currentGroup) return;
 
-    // ★ 這裡加：001 不可刪除
     if (currentGroup === '001') {
         alert('「001 管理員（資訊）」為系統內建群組，無法刪除。');
         return;
     }
 
     const groupName = $('#groupSelect option:selected').text();
-    // ……後面原邏輯不變……
+    if (!confirm(`確定要刪除群組「${groupName}」嗎？`)) return;
+
+    $.post('@Url.Action("DeleteGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+        alert(response.message);
+        if (response.success) {
+            loadGroups();
+            $('#userList').html('<div class="no-data">請先選擇群組</div>');
+        }
+    });
 }
 
-如果你只想鎖「名稱不可改」，而允許改其他欄位：可以在 editGroup() 裡照常開 modal，但在載入完資料後把 #groupName 設成 readonly。你現在的需求是「不能修改、也不能刪」，所以我直接整個擋掉。
 
 ⸻
 
-後端（Controller / Service）
+✅ 修改重點三：後端安全防護（Controller）
 
-前端擋住仍不夠，後端要再保險擋一次，避免有人手動發 request。
-
-1) UpdateGroup 動作擋 001
+雖然前端已擋，但保險起見，後端也加上同樣條件：
 
 [HttpPost]
-public JsonResult UpdateGroup(string APG_NO, string APG_NAME /* 其餘參數… */, string sysID)
+public JsonResult UpdateGroup(string APG_NO, string APG_NAME, string PARENT_APG_NO, string sysID)
 {
     try
     {
-        // ★ 這裡加：001 不允許修改
+        // 🔸 若為 001，禁止修改名稱，但允許修改母群組
         if (APG_NO == "001")
-            return Json(new { success = false, message = "「001 管理員（資訊）」為系統內建群組，禁止修改。" });
-
-        var service = GetAPService();
-        var result = service.UpdateGroup(APG_NO, APG_NAME /* …其餘 */);
-        if (result.Success)
-            return Json(new { success = true, message = "群組修改成功" });
-
-        return Json(new { success = false, message = result.Message ?? "群組修改失敗" });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "修改發生錯誤：" + ex.Message });
-    }
-}
-
-2) DeleteGroup 動作擋 001
-
-[HttpPost]
-public JsonResult DeleteGroup(string apg_no, string sysID)
-{
-    try
-    {
-        // ★ 這裡加：001 不允許刪除
-        if (apg_no == "001")
-            return Json(new { success = false, message = "「001 管理員（資訊）」為系統內建群組，禁止刪除。" });
-
-        var service = GetAPService();
-
-        // 你原本的檢查與刪除流程…
-        var canDelete = service.CanDeleteGroup(apg_no); // 若你現成的是 CanDeleteGroup / CanDeleteFunction 擇一使用
-        if (!canDelete)
         {
-            return Json(new { success = false, message = "該群組仍有設定，無法刪除" });
+            var service = GetAPService();
+            service.UpdateParentGroupOnly(APG_NO, PARENT_APG_NO);
+            return Json(new { success = true, message = "母群組更新成功（001 群組名稱已鎖定）" });
         }
 
-        var result = service.DeleteGroup(apg_no);
+        var result = GetAPService().UpdateGroup(APG_NO, APG_NAME, PARENT_APG_NO);
         if (result.Success)
-            return Json(new { success = true, message = "群組刪除成功" });
-
-        return Json(new { success = false, message = result.Message ?? "群組刪除失敗" });
+            return Json(new { success = true, message = "群組修改成功" });
+        else
+            return Json(new { success = false, message = result.Message ?? "群組修改失敗" });
     }
     catch (Exception ex)
     {
-        return Json(new { success = false, message = "刪除發生錯誤：" + ex.Message });
+        return Json(new { success = false, message = "修改群組時發生錯誤：" + ex.Message });
     }
 }
 
-服務層（Service）如果也有 UpdateGroup/DeleteGroup，同樣加一層 if (apg_no == "001") throw / return fail 比較保險。
+在 F_AP 裡補上簡單方法：
+
+// 僅更新母群組（供 001 使用）
+public void UpdateParentGroupOnly(string apgNo, string parentApgNo)
+{
+    string sql = @"
+        UPDATE [HI_AUTOS].[dbo].[AP_GROUP]
+        SET PARENT_APG_NO = @PARENT_APG_NO
+        WHERE APG_NO = @APG_NO AND SYS_ID = @SYS_ID";
+
+    List<SqlParameter> parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@PARENT_APG_NO", (object)parentApgNo ?? DBNull.Value),
+        new SqlParameter("@APG_NO", apgNo),
+        new SqlParameter("@SYS_ID", _sysId)
+    };
+
+    SVS_DBmanager.ExecuteSQL(sql, parameters);
+}
+
 
 ⸻
 
-這樣做完：
-	•	在畫面選到 001 時，「修改群組」「刪除群組」會自動變灰且點了也會被攔。
-	•	就算有人刻意呼叫 API，後端也會拒絕。
-	•	其他群組不受影響。
+✅ 最終行為一覽：
+
+動作	結果
+修改 001	可開啟 modal，但群組名稱鎖住，只能改母群組
+刪除 001	提示「系統內建群組，無法刪除」
+修改其他群組	正常可編輯名稱與母群組
+後端直接 API 呼叫	UpdateGroup 仍會保護名稱不被更改
+
+
+⸻
+
+是否要我幫你順便把 群組名稱欄位的 placeholder 與鎖定樣式 做成灰底 + 顯示 🔒 圖示？（不改結構，只加視覺提示）
