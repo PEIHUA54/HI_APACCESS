@@ -1,200 +1,261 @@
-OK ✅ 你要的是一個簡化版的 GetTree：
-	•	Request 只保留三個參數：SysID、GroupID、Environment。
-	•	SQL 永遠只取 IS_SHOW='Y' 的項目。
-	•	回傳結果 不再包含 IsShow，改成增加 FuncType 欄位。
+[HI-AUTOS].[dbo].[AP_FUNC] 增加一個欄位FUNC_TYPE頁面類型
+FUNC_TYPE:頁面類型(1: tree 2:partialview)
 
-⸻
+首先groupmanagement的管理頁面權限 子頁面 根據FUNC_TYPE做顏色差別
+目前子頁面顏色為綠色，綠色為1.tree、#E8F5FD為2.partialview
 
-✅ 修改後完整 FGetTree 程式碼如下：
+接著pagemanagement的頁面定義管理 (AP_FUNC) 
+1.新增頁面 增加一個欄位FUNC_TYPE(下拉選項(1: tree 2:partialview))，寫入資料庫存1或2，必填
+2.修改頁面 增加一個欄位FUNC_TYPE
 
-using HI_APACCESS_DLL.Models;
-using System;
-using System.Collections.Generic;
-using Microsoft.Data.SqlClient;
-using System.Text;
+FUNC_TYPE 頁面類型(1: tree 2:partialview) 都是子頁面
+只是我之後要區別用(你不用館)，所以邏輯跟原本是一樣的，上層ID 、 CONTROLLER名稱 、ACTION名稱 都是必填
+只是我要分別顏色
 
-namespace HI_APACCESS_DLL.Factory
-{
-    internal class FGetTree
-    {
-        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+程式碼
+controller:
+
+        #region 頁面相關 AJAX
+
+        // 取得所有頁面
+        [HttpGet]
+        public JsonResult GetAllFunctions(string sysID)
         {
-            var response = new GetTreeModel.GetTreeResponse();
-
             try
             {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD 或 DEV";
-                    return response;
-                }
-
-                // 2. 系統授權檢查
-                var authorized = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorized.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
-                }
-
-                var resultList = new List<GetTreeModel.ResultData>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    // 3. 查詢功能清單（固定只取 IS_SHOW='Y'）
-                    string sql = @"
-SELECT DISTINCT
-    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
-         WHEN a.PARENT_ID <> 'HOME' THEN '1'
-    END AS LEVEL,
-    a.FUNC_ID,
-    a.FUNC_NA,
-    a.VIEW_H  AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
-    a.SORT_NO,
-    a.PARENT_ID,
-    a.MEMO,
-    a.FUNC_TYPE
-FROM [HI-AUTOS].[dbo].[AP_FUNC] a
-LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-    AND a.SYS_ID = b.SYS_ID
-WHERE a.SYS_ID = @SysID 
-  AND b.APG_NO = @GroupID
-  AND a.IS_SHOW = 'Y'
-ORDER BY a.SORT_NO;
-";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
-                        cmd.Parameters.AddWithValue("@GroupID", groupId);
-
-                        using (var reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                resultList.Add(new GetTreeModel.ResultData
-                                {
-                                    FuncID     = reader["FUNC_ID"].ToString(),
-                                    FuncName   = reader["FUNC_NA"].ToString(),
-                                    Controller = reader["CONTROLLER"].ToString(),
-                                    Action     = reader["ACTION"].ToString(),
-                                    Sort       = Convert.ToInt32(reader["SORT_NO"]),
-                                    ParentID   = reader["PARENT_ID"].ToString(),
-                                    Level      = reader["LEVEL"].ToString(),
-                                    Memo       = reader["MEMO"]?.ToString(),
-                                    FuncType   = reader["FUNC_TYPE"]?.ToString()
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // 4. 結果判斷
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
+                var service = GetAPService();
+                var functions = service.GetAllFunctions();
+                return Json(new { success = true, data = functions }, JsonRequestBehavior.AllowGet);
             }
             catch (Exception ex)
             {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
+                return Json(new { success = false, message = "取得頁面資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 新增頁面
+        [HttpPost]
+        public JsonResult AddFunction(FuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetAPService();
+                    var result = service.InsertFunction(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "頁面新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "頁面新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增頁面發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 修改頁面
+        [HttpPost]
+        public JsonResult UpdateFunction(FuncModel model, string originalFuncId)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetAPService();
+                    var result = service.UpdateFunction(model, originalFuncId, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "頁面修改成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "頁面修改失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改頁面發生錯誤：" + ex.Message });
+            }
+        }
+
+        #endregion
+
+        // 取得群組權限設定
+        [HttpGet]
+        public JsonResult GetGroupPermissions(string apg_no, string sysID)
+        {
+            try
+            {
+                var service = GetAPService();
+                var permissions = service.GetPermissionSettings(apg_no);
+                return Json(new { success = true, data = permissions }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得權限設定發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+f_ap:
+        // 取得權限設定ViewModel
+        public List<PermissionSettingViewModel> GetPermissionSettings(string apg_no = null)
+        {
+            string sql = @"
+SELECT DISTINCT g.APG_NO, g.APG_NAME, f.FUNC_ID, f.FUNC_NA,
+               CASE WHEN ufc.FUNC_ID IS NOT NULL THEN 1 ELSE 0 END as HasPagePermission,
+              CASE 
+        WHEN f.[PARENT_ID] IS NULL OR f.[PARENT_ID] = '' OR f.[PARENT_ID] = 'HOME' 
+        THEN CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)) + '.0'
+        ELSE 
+            ISNULL(
+                (SELECT CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
+                 FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
+                 WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] = f.[SYS_ID]
+                ), 
+                '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
+            )
+        END as SortPath
+            FROM [HI-AUTOS].[dbo].[AP_GROUP] g
+            CROSS JOIN [HI-AUTOS].[dbo].[AP_FUNC] f
+            LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] ufc 
+                ON g.SYS_ID = ufc.SYS_ID AND g.APG_NO = ufc.APG_NO AND f.FUNC_ID = ufc.FUNC_ID
+            WHERE g.SYS_ID = @SYS_ID AND f.SYS_ID = @SYS_ID
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", _sysId)
+        };
+
+            if (!string.IsNullOrEmpty(apg_no))
+            {
+                sql += " AND g.APG_NO = @APG_NO";
+                parameters.Add(new SqlParameter("@APG_NO", apg_no));
             }
 
-            return response;
+            sql += " ORDER BY g.APG_NO, SortPath, f.FUNC_ID";  // 修正排序邏輯
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+
+            var result = new List<PermissionSettingViewModel>();
+            foreach (DataRow row in dt.Rows)
+            {
+                var viewModel = new PermissionSettingViewModel
+                {
+                    APG_NO = row["APG_NO"].ToString(),
+                    APG_NAME = row["APG_NAME"].ToString(),
+                    FUNC_ID = row["FUNC_ID"].ToString(),
+                    FUNC_NA = row["FUNC_NA"].ToString(),
+                    HasPagePermission = Convert.ToBoolean(row["HasPagePermission"])
+                };
+
+                // 取得按鈕權限
+                viewModel.ButtonPermissions = GetButtonPermissionItems(viewModel.APG_NO, viewModel.FUNC_ID);
+                result.Add(viewModel);
+            }
+
+            return result;
         }
-    }
-}
 
-
-⸻
-
-✅ 同時要修改的 Model (GetTreeModel)
-
-請確認你在 Models/GetTreeModel.cs 裡有這樣的結構：
-
-namespace HI_APACCESS_DLL.Models
-{
-    internal class GetTreeModel
-    {
-        internal class GetTreeRequest
+        // 取得所有頁面
+        public List<FuncModel> GetAllFunctions()
         {
-            public string SysID { get; set; }
-            public string GroupID { get; set; }
-            public string Environment { get; set; }
+            string sql = @"
+   SELECT [SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], 
+           [VIEW_H], [VIEW_HB], [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME],
+           CASE 
+               WHEN [PARENT_ID] IS NULL OR [PARENT_ID] = '' OR [PARENT_ID] = 'HOME' 
+               THEN CAST(ISNULL([SORT_NO], '999') AS VARCHAR(10)) + '.0'
+              ELSE (
+                    SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
+                                  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
+                    FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
+                    WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] =@SYS_ID
+                )
+           END as SortPath
+    FROM [HI-AUTOS].[dbo].[AP_FUNC] f
+    WHERE [SYS_ID] =  @SYS_ID 
+    ORDER BY SortPath, [FUNC_ID]
+";
+
+            List<SqlParameter> parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", _sysId)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<FuncModel>(dt);
         }
+  // 新增頁面
+  public string InsertFunction(FuncModel model, string creator)
+  {
+      // 如果沒有提供排序號，自動分配
+      if (string.IsNullOrEmpty(model.SORT_NO))
+      {
+          model.SORT_NO = GetNextSortNo(model.PARENT_ID);
+      }
+      string sql = @"
+      INSERT INTO [HI-AUTOS].[dbo].[AP_FUNC] 
+      ([SYS_ID], [FUNC_ID], [FUNC_NA], [PARENT_ID], [SORT_NO], [IS_SHOW], [MEMO], [VIEW_H], [VIEW_HB],  [CREATOR], [CREATE_TIME])
+      VALUES (@SYS_ID, @FUNC_ID, @FUNC_NA, @PARENT_ID, @SORT_NO, @IS_SHOW, @MEMO, @VIEW_H, @VIEW_HB, @CREATOR, GETDATE())";
 
-        internal class GetTreeResponse
-        {
-            public string Result_code { get; set; }
-            public string Msg { get; set; }
-            public List<ResultData> Result { get; set; }
-        }
+      List<SqlParameter> parameters = new List<SqlParameter>
+      {
+          new SqlParameter("@SYS_ID", _sysId),
+          new SqlParameter("@FUNC_ID", model.FUNC_ID),
+          new SqlParameter("@FUNC_NA", model.FUNC_NA),
+          new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
+          new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
+          new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
+          new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
+          new SqlParameter("@VIEW_H", model.VIEW_H ?? (object)DBNull.Value),
+          new SqlParameter("@VIEW_HB", model.VIEW_HB ?? (object)DBNull.Value),
+          new SqlParameter("@CREATOR", creator)
+      };
 
-        internal class ResultData
-        {
-            public string FuncID { get; set; }
-            public string FuncName { get; set; }
-            public string Controller { get; set; }
-            public string Action { get; set; }
-            public int Sort { get; set; }
-            public string ParentID { get; set; }
-            public string Level { get; set; }
-            public string Memo { get; set; }
-            public string FuncType { get; set; }   // ✅ 新增這個欄位
-        }
-    }
-}
+      return SVS_DBmanager.ExecuteSQL(sql, parameters);
+  }
 
+  // 更新頁面
+  public string UpdateFunction(FuncModel model, string originalFuncId, string editor)
+  {
+      string sql = @"
+      UPDATE [HI-AUTOS].[dbo].[AP_FUNC] 
+      SET [FUNC_ID] = @NEW_FUNC_ID,[FUNC_NA] = @FUNC_NA, [PARENT_ID] = @PARENT_ID, [SORT_NO] = @SORT_NO, 
+          [IS_SHOW] = @IS_SHOW, [MEMO] = @MEMO, [VIEW_H] = @VIEW_H, [VIEW_HB] = @VIEW_HB, [EDITOR] = @EDITOR, [EDIT_TIME] = GETDATE()
+      WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @ORIGINAL_FUNC_ID";
 
-⸻
+      List<SqlParameter> parameters = new List<SqlParameter>
+      {
+          new SqlParameter("@SYS_ID", _sysId),
+          new SqlParameter("@ORIGINAL_FUNC_ID", originalFuncId),
+          new SqlParameter("@NEW_FUNC_ID", model.FUNC_ID),
+          new SqlParameter("@FUNC_NA", model.FUNC_NA),
+          new SqlParameter("@PARENT_ID", model.PARENT_ID ?? (object)DBNull.Value),
+          new SqlParameter("@SORT_NO", model.SORT_NO ?? (object)DBNull.Value),
+          new SqlParameter("@IS_SHOW", model.IS_SHOW ?? "Y"),
+          new SqlParameter("@MEMO", model.MEMO ?? (object)DBNull.Value),
+          new SqlParameter("@VIEW_H", model.VIEW_H ?? (object)DBNull.Value),
+          new SqlParameter("@VIEW_HB", model.VIEW_HB ?? (object)DBNull.Value),
+          new SqlParameter("@EDITOR", editor)
+      };
 
-🔍 測試結果 (JSON 範例)
+      return SVS_DBmanager.ExecuteSQL(sql, parameters);
+  }
 
-{
-  "Result_code": "0000",
-  "Msg": "成功",
-  "Result": [
-    {
-      "FuncID": "FUNC001",
-      "FuncName": "首頁",
-      "Controller": "Home",
-      "Action": "Index",
-      "Sort": 1,
-      "ParentID": "HOME",
-      "Level": "0",
-      "Memo": "主畫面",
-      "FuncType": "MENU"
-    },
-    {
-      "FuncID": "FUNC002",
-      "FuncName": "公告維護",
-      "Controller": "Announce",
-      "Action": "List",
-      "Sort": 2,
-      "ParentID": "FUNC001",
-      "Level": "1",
-      "Memo": "一般公告",
-      "FuncType": "PAGE"
-    }
-  ]
-}
+groupmanagement: view就不在重複給你 之前給過了
 
-
-⸻
-
-要我幫你一併加上主類別 APACCESS.GetTree() 呼叫的修改（因為參數少了一個）嗎？
+pagemanagement:分下次給
