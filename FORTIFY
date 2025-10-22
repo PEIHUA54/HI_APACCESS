@@ -1,133 +1,98 @@
-我會針對這三個 Fortify 掃描問題提供修復方案，不改變程式邏輯也不安裝額外套件。
+## Fortify 如何判斷是否有驗證？
 
-## 1. Cross-Site Scripting: DOM & Open Redirect
+**Fortify 的分析方式：**
 
-**問題**：未驗證的 `redirectUrl` 直接用於跳轉
+Fortify 做的是**靜態程式碼分析**（Static Analysis），它會：
 
-**修復方案**：在 Controller 端加入白名單驗證
+1. **追蹤資料流路徑**：
+   
+   ```
+   apgNo (來自 HTTP POST) → 參數傳遞 → SQL 查詢使用
+   ```
+1. **檢查中間是否有「驗證模式」**：
+
+- 是否有 `if` 判斷這個變數
+- 是否有呼叫驗證函數
+- 是否有資料庫查詢檢查這個值的合法性
+- **關鍵：是否在使用前有任何「檢查動作」**
+
+1. **如果沒有驗證，就會標記為問題**
+
+**例如：**
 
 ```csharp
-[HttpPost]
-public ActionResult RedirectToPageManagement(string sysId)
-{
-    try
-    {
-        if (string.IsNullOrWhiteSpace(sysId))
-        {
-            return Json(new { success = false, message = "系統ID不可為空" });
-        }
-
-        // 建立重導向 URL
-        string redirectUrl = Url.Action("PageManagement", "SYS", new { sysId = sysId });
-        
-        // **修復：驗證 URL 是否為本站內部路徑**
-        if (!IsValidLocalUrl(redirectUrl))
-        {
-            return Json(new { success = false, message = "無效的導向路徑" });
-        }
-
-        return Json(new { success = true, redirectUrl = redirectUrl });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "系統錯誤" });
-    }
+// ❌ Fortify 會報錯
+public void Process(string apgNo) {
+    string sql = "SELECT * FROM AP_USER WHERE APG_NO=@APG_NO";
+    cmd.Parameters.AddWithValue("@APG_NO", apgNo); // 直接使用，沒驗證
 }
 
-// **新增驗證方法**
-private bool IsValidLocalUrl(string url)
-{
-    if (string.IsNullOrWhiteSpace(url))
-        return false;
-
-    // 確保是相對路徑且不包含危險字元
-    if (url.StartsWith("/") && !url.StartsWith("//") && !url.Contains("://"))
-    {
-        // 額外檢查：不允許包含 javascript:, data:, vbscript: 等
-        string lowerUrl = url.ToLower();
-        if (lowerUrl.Contains("javascript:") || 
-            lowerUrl.Contains("data:") || 
-            lowerUrl.Contains("vbscript:") ||
-            lowerUrl.Contains("<script"))
-        {
-            return false;
-        }
-        return true;
+// ✅ Fortify 可能通過
+public void Process(string apgNo) {
+    // 有驗證動作
+    if (!IsValidGroup(apgNo)) {
+        throw new Exception("Invalid group");
     }
-
-    return false;
+    
+    string sql = "SELECT * FROM AP_USER WHERE APG_NO=@APG_NO";
+    cmd.Parameters.AddWithValue("@APG_NO", apgNo); // 驗證後使用
 }
 ```
+
+**但是！Fortify 不會理解業務邏輯**：
+
+- 它不知道你的群組 001 是最高權限
+- 它只看「有沒有檢查」，不管「檢查邏輯對不對」
 
 -----
 
-## 2. Access Control: Database
+## 我給的驗證邏輯解釋
 
-**問題**：未驗證 `apgNo` 參數，可能存取未授權的群組
-
-**修復方案**：在使用前驗證使用者對該群組的權限
+讓我重新看一下我之前給的程式碼：
 
 ```csharp
-[HttpPost]
-public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
-{
-    if (file == null || file.ContentLength == 0)
-        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
-
-    if (string.IsNullOrWhiteSpace(apgNo))
-        return Json(new { success = false, message = "請先選擇群組" });
-
-    // **修復：驗證使用者是否有權限操作此群組**
-    if (!ValidateGroupAccess(CurrentSystemId, apgNo, this.Emp_NO))
-    {
-        return Json(new { success = false, message = "無權限操作此群組" });
-    }
-
-    // 副檔名限制
-    var ext = Path.GetExtension(file.FileName).ToLower();
-    if (ext != ".xls" && ext != ".xlsx")
-        return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
-
-    // ... 其餘程式碼保持不變
-}
-
-// **新增權限驗證方法**
-private bool ValidateGroupAccess(string sysId, string apgNo, string empNo)
-{
-    try
-    {
-        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
-        {
-            con.Open();
-            
-            // 檢查該使用者是否為此群組的管理者或有相關權限
-            string sql = @"
-                SELECT COUNT(1) 
-                FROM AP_GROUP G
-                LEFT JOIN AP_USER U ON U.SYS_ID = G.SYS_ID AND U.APG_NO = G.APG_NO
-                WHERE G.SYS_ID = @SYS_ID 
-                  AND G.APG_NO = @APG_NO
-                  AND (G.CREATOR = @EMP_NO OR U.U_ID = @EMP_NO)";
-            
-            using (var cmd = new SqlCommand(sql, con))
-            {
-                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-                cmd.Parameters.AddWithValue("@EMP_NO", empNo);
-                
-                int count = (int)cmd.ExecuteScalar();
-                return count > 0;
-            }
-        }
-    }
-    catch
-    {
-        return false;
-    }
-}
+string authCheckSql = @"
+    SELECT COUNT(1) 
+    FROM AP_GROUP 
+    WHERE SYS_ID = @SYS_ID 
+      AND APG_NO = @APG_NO 
+      AND (CREATOR = @CREATOR OR EXISTS (
+          SELECT 1 FROM AP_USER 
+          WHERE SYS_ID = @SYS_ID 
+            AND APG_NO = @APG_NO 
+            AND U_ID = @CREATOR
+      ))";
 ```
 
-**Service 層也需要加入驗證**：
+**這段邏輯的意思是：**
+
+```
+檢查當前使用者（creator）是否有權限操作這個群組（apgNo）
+
+條件一：CREATOR = @CREATOR
+→ 如果當前使用者是這個群組的建立者
+
+條件二：OR EXISTS (SELECT 1 FROM AP_USER WHERE APG_NO = @APG_NO AND U_ID = @CREATOR)
+→ 或者當前使用者本身就在這個群組裡
+
+只要符合其中一個條件，就允許操作
+```
+
+**但這個邏輯有問題！**
+
+- 它沒有考慮「群組 001 是最高權限」
+- 它只允許「建立者」或「群組成員」操作，太嚴格了
+
+-----
+
+## 針對你的業務邏輯：正確的驗證方式
+
+**你的需求：**
+
+- 群組 001 的成員可以操作所有群組
+- 其他群組只能操作自己的群組
+
+### 修正後的驗證邏輯：
 
 ```csharp
 public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
@@ -139,15 +104,22 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
 
     try
     {
-        // **修復：再次驗證群組存在性與合法性**
-        if (!ValidateGroupExists(sysId, apgNo))
+        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
         {
-            result.IsSuccess = false;
-            result.ErrorMessage = "群組不存在或無效";
-            return result;
-        }
+            con.Open();
 
-        // ... 其餘程式碼保持不變
+            // **驗證權限：檢查使用者是否有權限操作目標群組**
+            if (!HasGroupPermission(con, sysId, apgNo, creator))
+            {
+                result.IsSuccess = false;
+                result.ErrorMessage = "無權限操作此群組";
+                return result;
+            }
+
+            // 讀 Excel
+            var rows = new List<(int RowNumber, string EmpNo)>();
+            // ... 原本的邏輯
+        }
     }
     catch (Exception ex)
     {
@@ -158,173 +130,114 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
     return result;
 }
 
-// **新增群組驗證方法**
-private bool ValidateGroupExists(string sysId, string apgNo)
+// **權限檢查方法**
+private bool HasGroupPermission(SqlConnection con, string sysId, string targetApgNo, string userId)
 {
-    using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+    // 方案一：檢查使用者是否在群組 001
+    string checkAdminSql = @"
+        SELECT COUNT(1) 
+        FROM AP_USER 
+        WHERE SYS_ID = @SYS_ID 
+          AND APG_NO = '001' 
+          AND U_ID = @U_ID";
+    
+    using (var cmd = new SqlCommand(checkAdminSql, con))
     {
-        con.Open();
-        string sql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
-        using (var cmd = new SqlCommand(sql, con))
-        {
-            cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-            cmd.Parameters.AddWithValue("@APG_NO", apgNo);
-            return (int)cmd.ExecuteScalar() > 0;
-        }
+        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+        cmd.Parameters.AddWithValue("@U_ID", userId);
+        
+        int isAdmin = (int)cmd.ExecuteScalar();
+        
+        // 如果是 001 群組成員，有權限操作所有群組
+        if (isAdmin > 0)
+            return true;
+    }
+    
+    // 方案二：檢查使用者是否在目標群組
+    string checkMemberSql = @"
+        SELECT COUNT(1) 
+        FROM AP_USER 
+        WHERE SYS_ID = @SYS_ID 
+          AND APG_NO = @APG_NO 
+          AND U_ID = @U_ID";
+    
+    using (var cmd = new SqlCommand(checkMemberSql, con))
+    {
+        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+        cmd.Parameters.AddWithValue("@APG_NO", targetApgNo);
+        cmd.Parameters.AddWithValue("@U_ID", userId);
+        
+        int isMember = (int)cmd.ExecuteScalar();
+        
+        // 如果是目標群組成員，有權限操作該群組
+        return isMember > 0;
     }
 }
 ```
 
+**邏輯說明：**
+
+1. **先檢查是否為 001 群組成員**
+   
+   ```sql
+   SELECT COUNT(1) FROM AP_USER 
+   WHERE SYS_ID = 'XXX' AND APG_NO = '001' AND U_ID = 'creator'
+   ```
+
+- 如果 COUNT > 0，表示是最高權限，直接 return true
+
+1. **如果不是 001，檢查是否為目標群組成員**
+   
+   ```sql
+   SELECT COUNT(1) FROM AP_USER 
+   WHERE SYS_ID = 'XXX' AND APG_NO = 'targetApgNo' AND U_ID = 'creator'
+   ```
+
+- 如果 COUNT > 0，表示是該群組成員，可以操作自己的群組
+
 -----
 
-## 3. SQL Injection
+## 進階：如果權限更複雜
 
-**問題**：動態組合 SQL 的 `IN` 子句可能有注入風險
-
-**修復方案**：改用 Table-Valued Parameters 或安全的參數化方式
+如果你的權限結構更複雜（例如有管理員角色、權限等級表），可以這樣設計：
 
 ```csharp
-internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+private bool HasGroupPermission(SqlConnection con, string sysId, string targetApgNo, string userId)
 {
-    var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
-
-    try
+    string permissionCheckSql = @"
+        SELECT 
+            CASE 
+                -- 情況1：使用者在 001 群組（最高權限）
+                WHEN EXISTS (
+                    SELECT 1 FROM AP_USER 
+                    WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
+                ) THEN 1
+                
+                -- 情況2：使用者是目標群組的建立者
+                WHEN EXISTS (
+                    SELECT 1 FROM AP_GROUP 
+                    WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND CREATOR = @U_ID
+                ) THEN 1
+                
+                -- 情況3：使用者是目標群組的成員
+                WHEN EXISTS (
+                    SELECT 1 FROM AP_USER 
+                    WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND U_ID = @U_ID
+                ) THEN 1
+                
+                -- 其他情況：無權限
+                ELSE 0
+            END AS HasPermission";
+    
+    using (var cmd = new SqlCommand(permissionCheckSql, con))
     {
-        // 環境檢查
-        if (environment != "TEST" && environment != "PROD" && environment != "DEV")
-        {
-            response.Result_code = Common.Codes.ENV_ERROR;
-            response.Msg = "環境錯誤，只接受 TEST 或 PROD";
-            return response;
-        }
-
-        // 系統授權檢查
-        var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
-        if (!authorizedSystems.Contains(sysId))
-        {
-            response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-            response.Msg = "系統未授權";
-            return response;
-        }
-
-        var resultList = new List<GetGroupAllUserModel.ResultData>();
-
-        using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-        {
-            conn.Open();
-
-            var groupIds = new List<string> { groupId };
-
-            if (isIncludeChildGroups)
-            {
-                string sqlChild = @"
-                    SELECT APG_NO
-                    FROM [HI-AUTOS].[dbo].[AP_GROUP]
-                    WHERE SYS_ID = @SysID
-                      AND (';' + REPLACE(LTRIM(RTRIM(PARENT_APG_NO)),'；',';') + ';') LIKE '%;' + @MY_GID + ';%'";
-
-                using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
-                {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    cmd.Parameters.AddWithValue("@MY_GID", groupId);
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            var gid = reader["APG_NO"]?.ToString();
-                            if (!string.IsNullOrWhiteSpace(gid))
-                                groupIds.Add(gid.Trim());
-                        }
-                    }
-                }
-            }
-
-            groupIds = groupIds
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Select(s => s.Trim())
-                .Distinct()
-                .ToList();
-
-            // **修復：使用暫存資料表取代動態 SQL**
-            // 建立暫存表
-            string createTempTable = @"
-                CREATE TABLE #TempGroups (APG_NO NVARCHAR(50));";
-            
-            using (SqlCommand cmd = new SqlCommand(createTempTable, conn))
-            {
-                cmd.ExecuteNonQuery();
-            }
-
-            // 批次插入群組 ID
-            foreach (var gid in groupIds)
-            {
-                string insertTemp = "INSERT INTO #TempGroups (APG_NO) VALUES (@GroupId)";
-                using (SqlCommand cmd = new SqlCommand(insertTemp, conn))
-                {
-                    cmd.Parameters.AddWithValue("@GroupId", gid);
-                    cmd.ExecuteNonQuery();
-                }
-            }
-
-            // **安全的 JOIN 查詢**
-            string sqlUser = @"
-                SELECT DISTINCT 
-                    U.U_ID   AS UserID,
-                    U.U_NAME AS UserName,
-                    ISNULL(E.EMP_DOM_ID,'') AS UserAD
-                FROM [HI-AUTOS].[dbo].[AP_USER] U
-                INNER JOIN #TempGroups T ON U.APG_NO = T.APG_NO
-                LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E ON E.EMP_ID = U.U_ID
-                WHERE U.SYS_ID = @SysID
-                ORDER BY U.U_ID";
-
-            using (SqlCommand cmd = new SqlCommand(sqlUser, conn))
-            {
-                cmd.Parameters.AddWithValue("@SysID", sysId);
-
-                using (var reader = cmd.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        resultList.Add(new GetGroupAllUserModel.ResultData
-                        {
-                            UserID = reader["UserID"].ToString(),
-                            UserName = reader["UserName"].ToString(),
-                            UserAD = reader["UserAD"].ToString(),
-                        });
-                    }
-                }
-            }
-
-            // 清理暫存表
-            string dropTemp = "DROP TABLE #TempGroups";
-            using (SqlCommand cmd = new SqlCommand(dropTemp, conn))
-            {
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        // 回傳
-        if (resultList.Count == 0)
-        {
-            response.Result_code = Common.Codes.NO_PERMISSION;
-            response.Msg = "查無人員";
-        }
-        else
-        {
-            response.Result_code = Common.Codes.SUCCESS;
-            response.Msg = "成功";
-            response.Result = resultList;
-        }
+        cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+        cmd.Parameters.AddWithValue("@APG_NO", targetApgNo);
+        cmd.Parameters.AddWithValue("@U_ID", userId);
+        
+        int hasPermission = (int)cmd.ExecuteScalar();
+        return hasPermission == 1;
     }
-    catch (Exception ex)
-    {
-        response.Result_code = Common.Codes.SYSTEM_ERROR;
-        response.Msg = "系統錯誤：" + ex.Message;
-    }
-
-    return response;
 }
 ```
 
@@ -332,12 +245,23 @@ internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, stri
 
 ## 總結
 
-所有修復都遵循以下原則：
+1. **Fortify 檢查方式**：
 
-1. ✅ **不改變原有邏輯**
-1. ✅ **不安裝任何套件**
-1. ✅ **使用參數化查詢**
-1. ✅ **加入輸入驗證**
-1. ✅ **加入存取控制檢查**
+- 看資料流有沒有被驗證過
+- 不理解業務邏輯
+- 只要有「檢查動作」就可能通過
 
-這些修改應該可以通過 Fortify 掃描。​​​​​​​​​​​​​​​​
+1. **正確的驗證邏輯**：
+   
+   ```
+   if (使用者在 001 群組) → 允許操作所有群組
+   else if (使用者在目標群組) → 只允許操作該群組
+   else → 拒絕
+   ```
+1. **關鍵點**：
+
+- 在使用 `apgNo` 之前必須先驗證
+- 驗證邏輯要符合業務需求
+- Fortify 只看「有沒有驗證」，不管「驗證對不對」
+
+**你需要根據實際的權限設計來調整驗證邏輯！**
