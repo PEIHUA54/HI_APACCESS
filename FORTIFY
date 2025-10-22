@@ -1,0 +1,388 @@
+FORTIFY
+
+1.Cross-Site Scripting: DOM 傳送未經驗證的資料至網路瀏覽器，會導致瀏覽器執行惡意的程式碼、
+Open Redirect允許未經驗證的輸入控制重新導向中的 URL，有助於網路釣魚攻擊
+ 
+// 導向頁面管理
+   function goToPageManagement() {
+       var sysId = $('#systemSelect').val();
+       if (!sysId) {
+           alert('請選擇系統');
+           return;
+       }
+
+       $.ajax({
+           url: '@Url.Action("RedirectToPageManagement", "SYS")',
+           type: 'POST',
+           data: { sysId: sysId },
+           dataType: 'json',
+           success: function (response) {
+               if (response.success) {
+                   window.location.href = response.redirectUrl;  //SINK
+               } else {
+                   alert(response.message);
+               }
+           },
+           error: function () {
+               alert('導向時發生錯誤');
+           }
+       });
+   }
+2.Access Control: Database 若沒有適當的 Access Control，執行包含使用者控制的主要金鑰的 SQL 陳述式，可讓攻擊者查看未經授權的
+記錄。
+SOURCE:
+     [HttpPost]
+     public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+     {
+         if (file == null || file.ContentLength == 0)
+             return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+
+         if (string.IsNullOrWhiteSpace(apgNo))
+             return Json(new { success = false, message = "請先選擇群組" });
+
+         // 副檔名限制
+         var ext = Path.GetExtension(file.FileName).ToLower();
+         if (ext != ".xls" && ext != ".xlsx")
+             return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+         // 上傳暫存
+         var uploadDir = Server.MapPath("~/Upload");
+         if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+         var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+         var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+         try
+         {
+             file.SaveAs(uploadPath);
+
+             var service = GetAPService();
+             var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+
+             if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+             {
+                 // 全部成功
+                 return Json(new
+                 {
+                     status = "success",
+                     message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+                 });
+             }
+             else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+             {
+                 // 全部失敗
+                 return Json(new
+                 {
+                     status = "fail",
+                     message = "匯入失敗：請重新上傳",
+                     errors = importResult.ErrorMessages
+                 });
+             }
+             else
+             {
+                 // 部分成功
+                 return Json(new
+                 {
+                     status = "partial",
+                     message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                     errors = importResult.ErrorMessages
+                 });
+             }
+         }
+         catch (Exception ex)
+         {
+             return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+         }
+         finally
+         {
+             if (System.IO.File.Exists(uploadPath))
+             {
+                 var fc = new F_Common();
+                 fc.SafeDeleteFile(uploadDir, safeName);
+             }
+         }
+     }
+ SINK:
+        // 批次匯入人員
+        public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
+        {
+            ImportResult result = new ImportResult()
+            {
+                ErrorMessages = new List<ImportError>()
+            };
+
+            try
+            {
+                var rows = new List<(int RowNumber, string EmpNo)>();
+
+                // 讀 Excel
+                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+                {
+                    int rowIndex = 0;
+                    while (reader.Read())
+                    {
+                        rowIndex++;
+
+                        // 第一列當表頭 → 檢查是否正確
+                        if (rowIndex == 1)
+                        {
+                            string header = reader.GetString(0)?.Trim();
+                            if (string.IsNullOrEmpty(header) || header != "員工編號")
+                            {
+                                result.IsSuccess = false;
+                                result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                                return result;
+                            }
+                            continue;
+                        }
+
+                        // 讀取資料
+                        string empNo = reader.GetValue(0)?.ToString().Trim();
+                        if (!string.IsNullOrEmpty(empNo))
+                        {
+                            rows.Add((rowIndex, empNo));
+                        }
+                    }
+                }
+
+                // 沒有資料
+                if (rows.Count == 0)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "Excel 無任何員工資料";
+                    return result;
+                }
+
+                int successCount = 0;
+
+                using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+                {
+                    con.Open();
+
+                    foreach (var row in rows)
+                    {
+                        try
+                        {
+                            // 檢查員工是否存在
+                            string checkEmpSql = "SELECT EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
+                            string empName = null;
+                            using (var cmd = new SqlCommand(checkEmpSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
+                                empName = cmd.ExecuteScalar() as string;
+                            }
+
+                            if (string.IsNullOrEmpty(empName))
+                            {
+                                result.ErrorMessages.Add(new ImportError
+                                {
+                                    RowNumber = row.RowNumber,
+                                    EmpNo = row.EmpNo,
+                                    Message = "查無此員工"
+                                });
+                                continue;
+                            }
+
+                            // 檢查是否已存在於同一個群組
+                            string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+                            using (var cmd = new SqlCommand(checkUserSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo); //SINK
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+
+                                int exists = (int)cmd.ExecuteScalar();
+                                if (exists > 0)
+                                {
+                                    result.ErrorMessages.Add(new ImportError
+                                    {
+                                        RowNumber = row.RowNumber,
+                                        EmpNo = row.EmpNo,
+                                        Message = "此群組已存在該員工"
+                                    });
+                                    continue;
+                                }
+                            }
+
+                            // 檢查是否已存在於該系統的其他群組
+                            string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
+                            using (var cmd = new SqlCommand(checkSystemSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo); //SINK
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                                if ((int)cmd.ExecuteScalar() > 0)
+                                {
+                                    result.ErrorMessages.Add(new ImportError
+                                    {
+                                        RowNumber = row.RowNumber,
+                                        EmpNo = row.EmpNo,
+                                        Message = "此系統其他群組已存在該員工"
+                                    });
+                                    continue;
+                                }
+                            }
+
+                            // 寫入 AP_USER
+                            string insertSql = @"
+                        INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+                        VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())
+";
+
+                            using (var cmd = new SqlCommand(insertSql, con))
+                            {
+                                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                                cmd.Parameters.AddWithValue("@APG_NO", apgNo);  //SINK
+                                cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                                cmd.Parameters.AddWithValue("@U_NAME", empName);
+                                cmd.Parameters.AddWithValue("@CREATOR", creator);
+
+                                cmd.ExecuteNonQuery();
+                                successCount++;
+                            }
+                        }
+                        catch (Exception exRow)
+                        {
+                            result.ErrorMessages.Add(new ImportError { RowNumber = row.RowNumber, EmpNo = row.EmpNo, Message = "寫入錯誤：" + exRow.Message });
+                        }
+                    }
+                }
+
+                result.SuccessCount = successCount;
+                result.IsSuccess = true;
+            }
+            catch (Exception ex)
+            {
+                result.IsSuccess = false;
+                result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+            }
+
+            return result;
+        }
+
+3.SQL Injection透過不可信賴來源的輸入來建構的動態 SQL 陳述式可讓攻擊者修改陳述式的意義或是執行任意的 SQL 指
+令。
+
+    internal class FGetGroupAllUser
+    {
+        internal GetGroupAllUserModel.GetGroupAllUserResponse Execute(string sysId, string groupId, bool isIncludeChildGroups, string environment)
+        {
+            var response = new GetGroupAllUserModel.GetGroupAllUserResponse();
+
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
+                }
+
+                // 2. 系統授權檢查
+                var authorizedSystems = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorizedSystems.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var resultList = new List<GetGroupAllUserModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    // 群組清單
+                    var groupIds = new List<string> { groupId };
+
+                    if (isIncludeChildGroups)
+                    {
+                        string sqlChild = @"
+SELECT APG_NO
+FROM [HI-AUTOS].[dbo].[AP_GROUP]
+WHERE SYS_ID = @SysID
+  AND (';' + REPLACE(LTRIM(RTRIM(PARENT_APG_NO)),'；',';') + ';') LIKE '%;' + @MY_GID + ';%';";
+
+                        using (SqlCommand cmd = new SqlCommand(sqlChild, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@SysID", sysId);
+                            cmd.Parameters.AddWithValue("@MY_GID", groupId);
+
+                            using (var reader = cmd.ExecuteReader()) //SOURCE
+                            {
+                                while (reader.Read())
+                                {
+                                    var gid = reader["APG_NO"]?.ToString();
+                                    if (!string.IsNullOrWhiteSpace(gid))
+                                        groupIds.Add(gid.Trim());
+                                }
+                            }
+                        }
+                    }
+
+                    // 去重複、去空白
+                    groupIds = groupIds
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .Distinct()
+                        .ToList();
+
+                    // 取使用者清單
+                    string sqlUser = $@"
+SELECT DISTINCT 
+    U.U_ID   AS UserID,
+    U.U_NAME AS UserName,
+    ISNULL(E.EMP_DOM_ID,'') AS UserAD
+FROM [HI-AUTOS].[dbo].[AP_USER] U
+LEFT JOIN [HILIFE_MTS].[HI_APUSER].dbo.[NT_EMP] E
+       ON E.EMP_ID = U.U_ID
+WHERE U.SYS_ID = @SysID
+  AND U.APG_NO IN ({string.Join(",", groupIds.Select((g, i) => $"@Group{i}"))})
+ORDER BY U.U_ID;";
+
+                    using (SqlCommand cmd = new SqlCommand(sqlUser, conn))  //SINK
+                    {
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        for (int i = 0; i < groupIds.Count; i++)
+                            cmd.Parameters.AddWithValue($"@Group{i}", groupIds[i]);
+
+                        using (var reader = cmd.ExecuteReader())  
+                        {
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetGroupAllUserModel.ResultData
+                                {
+                                    UserID = reader["UserID"].ToString(),
+                                    UserName = reader["UserName"].ToString(),
+                                    UserAD = reader["UserAD"].ToString(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 回傳
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無人員";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
