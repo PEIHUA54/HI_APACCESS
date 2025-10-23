@@ -1,62 +1,427 @@
+好的，我看到你的程式碼了。現在有兩個 Fortify 問題：
 
-        // 導向群組管理
-        [HttpPost]
-        public JsonResult RedirectToGroupManagement(string sysId)
+1. **Open Redirect**
+1. **Cross-Site Scripting: DOM**
+
+讓我給你完整的修改方案：
+
+-----
+
+## 修改方案（推薦：前端自行組裝 URL）
+
+### 後端 Controller 修改
+
+```csharp
+// 導向群組管理
+[HttpPost]
+public JsonResult RedirectToGroupManagement(string sysId)
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(sysId))
         {
-            try
-            {
-                if (string.IsNullOrEmpty(sysId))
-                {
-                    return Json(new { success = false, message = "請選擇系統" });
-                }
-
-                // 更新Session
-                Session["CurrentSystemId"] = sysId;
-                Session["FromInternalSite"] = true;  // 從站台進來
-
-                // 建立重導向 URL
-                string redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId });
-
-                // 驗證 URL
-                if (!IsValidLocalUrl(redirectUrl))
-                {
-                    return Json(new { success = false, message = "無效的導向路徑" });
-                }
-
-                return Json(new { success = true, redirectUrl = redirectUrl });
-
-                //return Json(new { success = true, redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId }) });
-            }
-            catch (Exception ex)
-            {
-                return Json(new { success = false, message = "導向失敗：" + ex.Message });
-            }
+            return Json(new { success = false, message = "請選擇系統" });
         }
 
+        // **驗證 sysId 格式（白名單）**
+        if (!IsValidSystemId(sysId))
+        {
+            return Json(new { success = false, message = "無效的系統ID格式" });
+        }
 
+        // **驗證使用者是否有權限存取此系統**
+        if (!HasSystemAccess(this.Emp_NO, sysId))
+        {
+            return Json(new { success = false, message = "無權限存取此系統" });
+        }
 
-     // 導向群組管理
-     function goToGroupManagement() {
-         var sysId = $('#systemSelect').val();
-         if (!sysId) {
-             alert('請選擇系統');
-             return;
-         }
+        // 更新Session
+        Session["CurrentSystemId"] = sysId;
+        Session["FromInternalSite"] = true;
 
-         $.ajax({
-             url: '@Url.Action("RedirectToGroupManagement", "SYS")',
-             type: 'POST',
-             data: { sysId: sysId },
-             dataType: 'json',
-             success: function (response) {
-                 if (response.success) {
-                     window.location.href = response.redirectUrl;
-                 } else {
-                     alert(response.message);
-                 }
-             },
-             error: function () {
-                 alert('導向時發生錯誤');
-             }
-         });
-     }
+        // **修改：只回傳 sysId，不回傳完整 URL**
+        return Json(new { 
+            success = true, 
+            sysId = sysId  // 只回傳經過驗證的參數
+        });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "導向失敗：" + ex.Message });
+    }
+}
+
+/// <summary>
+/// 驗證系統ID格式（白名單）
+/// </summary>
+private bool IsValidSystemId(string sysId)
+{
+    if (string.IsNullOrWhiteSpace(sysId))
+        return false;
+    
+    // 只允許英數字、底線、連字號，長度 1-50
+    return Regex.IsMatch(sysId, @"^[a-zA-Z0-9_\-]{1,50}$");
+}
+
+/// <summary>
+/// 驗證使用者是否有權限存取系統
+/// </summary>
+private bool HasSystemAccess(string empNo, string sysId)
+{
+    try
+    {
+        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+        {
+            con.Open();
+            
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM AP_USER 
+                WHERE U_ID = @EMP_NO 
+                  AND SYS_ID = @SYS_ID";
+            
+            using (var cmd = new SqlCommand(sql, con))
+            {
+                cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                
+                return (int)cmd.ExecuteScalar() > 0;
+            }
+        }
+    }
+    catch
+    {
+        return false;
+    }
+}
+```
+
+### 前端 JavaScript 修改
+
+```javascript
+// 導向群組管理
+function goToGroupManagement() {
+    var sysId = $('#systemSelect').val();
+    if (!sysId) {
+        alert('請選擇系統');
+        return;
+    }
+
+    $.ajax({
+        url: '@Url.Action("RedirectToGroupManagement", "SYS")',
+        type: 'POST',
+        data: { sysId: sysId },
+        dataType: 'json',
+        success: function (response) {
+            if (response.success && response.sysId) {
+                // **修改：前端自行組裝 URL**
+                var baseUrl = '@Url.Action("GroupManagement", "AP")';
+                var safeUrl = baseUrl + '?systemId=' + encodeURIComponent(response.sysId);
+                
+                // 直接導向（URL 是我們自己組的，所以安全）
+                window.location.href = safeUrl;
+            } else {
+                alert(response.message || '導向失敗');
+            }
+        },
+        error: function () {
+            alert('導向時發生錯誤');
+        }
+    });
+}
+```
+
+-----
+
+## 如果堅持要後端回傳 URL（次佳方案）
+
+### 後端 Controller
+
+```csharp
+// 導向群組管理
+[HttpPost]
+public JsonResult RedirectToGroupManagement(string sysId)
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(sysId))
+        {
+            return Json(new { success = false, message = "請選擇系統" });
+        }
+
+        // **驗證 sysId 格式**
+        if (!IsValidSystemId(sysId))
+        {
+            return Json(new { success = false, message = "無效的系統ID格式" });
+        }
+
+        // **驗證使用者權限**
+        if (!HasSystemAccess(this.Emp_NO, sysId))
+        {
+            return Json(new { success = false, message = "無權限存取此系統" });
+        }
+
+        // 更新Session
+        Session["CurrentSystemId"] = sysId;
+        Session["FromInternalSite"] = true;
+
+        // 建立重導向 URL
+        string redirectUrl = Url.Action("GroupManagement", "AP", new { systemId = sysId });
+
+        // **驗證 URL 是否為安全的相對路徑**
+        if (!IsValidLocalUrl(redirectUrl))
+        {
+            return Json(new { success = false, message = "無效的導向路徑" });
+        }
+
+        return Json(new { success = true, redirectUrl = redirectUrl });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "導向失敗：" + ex.Message });
+    }
+}
+
+/// <summary>
+/// 驗證系統ID格式（白名單）
+/// </summary>
+private bool IsValidSystemId(string sysId)
+{
+    if (string.IsNullOrWhiteSpace(sysId))
+        return false;
+    
+    return Regex.IsMatch(sysId, @"^[a-zA-Z0-9_\-]{1,50}$");
+}
+
+/// <summary>
+/// 驗證 URL 是否為安全的本站相對路徑
+/// </summary>
+private bool IsValidLocalUrl(string url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+        return false;
+
+    // 1. 必須是相對路徑（以 / 開頭）
+    if (!url.StartsWith("/"))
+        return false;
+
+    // 2. 不能是 protocol-relative URL（// 開頭）
+    if (url.StartsWith("//"))
+        return false;
+
+    // 3. 不能包含協議
+    if (url.Contains("://"))
+        return false;
+
+    // 4. 檢查危險的 URI scheme
+    string lowerUrl = url.ToLower();
+    string[] dangerousSchemes = new[] {
+        "javascript:",
+        "data:",
+        "vbscript:",
+        "file:",
+        "about:",
+        "blob:"
+    };
+    
+    foreach (var scheme in dangerousSchemes)
+    {
+        if (lowerUrl.Contains(scheme))
+            return false;
+    }
+
+    // 5. 不能包含 HTML 標籤
+    if (lowerUrl.Contains("<") || lowerUrl.Contains(">"))
+        return false;
+
+    return true;
+}
+
+/// <summary>
+/// 驗證使用者是否有權限存取系統
+/// </summary>
+private bool HasSystemAccess(string empNo, string sysId)
+{
+    try
+    {
+        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+        {
+            con.Open();
+            
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM AP_USER 
+                WHERE U_ID = @EMP_NO 
+                  AND SYS_ID = @SYS_ID";
+            
+            using (var cmd = new SqlCommand(sql, con))
+            {
+                cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                
+                return (int)cmd.ExecuteScalar() > 0;
+            }
+        }
+    }
+    catch
+    {
+        return false;
+    }
+}
+```
+
+### 前端 JavaScript（加入前端驗證）
+
+```javascript
+// 導向群組管理
+function goToGroupManagement() {
+    var sysId = $('#systemSelect').val();
+    if (!sysId) {
+        alert('請選擇系統');
+        return;
+    }
+
+    $.ajax({
+        url: '@Url.Action("RedirectToGroupManagement", "SYS")',
+        type: 'POST',
+        data: { sysId: sysId },
+        dataType: 'json',
+        success: function (response) {
+            if (response.success && response.redirectUrl) {
+                var redirectUrl = response.redirectUrl;
+                
+                // **前端再次驗證 URL（雙重防護）**
+                if (isValidLocalUrl(redirectUrl)) {
+                    window.location.href = redirectUrl;
+                } else {
+                    alert('無效的導向位址');
+                }
+            } else {
+                alert(response.message || '導向失敗');
+            }
+        },
+        error: function () {
+            alert('導向時發生錯誤');
+        }
+    });
+}
+
+/**
+ * 前端驗證 URL 是否為安全的相對路徑
+ * 防止 Open Redirect 和 XSS
+ */
+function isValidLocalUrl(url) {
+    // 基本檢查
+    if (!url || typeof url !== 'string' || url.length === 0) {
+        return false;
+    }
+    
+    // 必須以 / 開頭（相對路徑）
+    if (url.charAt(0) !== '/') {
+        return false;
+    }
+    
+    // 不能是 // 開頭（protocol-relative URL）
+    if (url.length > 1 && url.charAt(1) === '/') {
+        return false;
+    }
+    
+    // 不能包含協議
+    if (url.indexOf('://') !== -1) {
+        return false;
+    }
+    
+    // 檢查危險的 URI scheme（防 XSS）
+    var lowerUrl = url.toLowerCase();
+    var dangerousSchemes = [
+        'javascript:',
+        'data:',
+        'vbscript:',
+        'file:',
+        'about:',
+        'blob:'
+    ];
+    
+    for (var i = 0; i < dangerousSchemes.length; i++) {
+        if (lowerUrl.indexOf(dangerousSchemes[i]) !== -1) {
+            return false;
+        }
+    }
+    
+    // 不能包含 HTML 標籤（防 XSS）
+    if (url.indexOf('<') !== -1 || url.indexOf('>') !== -1) {
+        return false;
+    }
+    
+    return true;
+}
+```
+
+-----
+
+## 總結對比
+
+### 方案 1（推薦）：前端組裝 URL
+
+**優點：**
+
+- ✅ 更安全（URL 完全由前端控制）
+- ✅ Fortify 更容易通過
+- ✅ 程式碼更簡潔
+
+**後端回傳：**
+
+```json
+{ "success": true, "sysId": "SYS001" }
+```
+
+**前端組裝：**
+
+```javascript
+var url = '@Url.Action("GroupManagement", "AP")' + '?systemId=' + encodeURIComponent(response.sysId);
+window.location.href = url;
+```
+
+-----
+
+### 方案 2：後端回傳 URL
+
+**優點：**
+
+- ✅ URL 邏輯集中在後端
+
+**缺點：**
+
+- ⚠️ 需要前後端雙重驗證
+- ⚠️ Fortify 可能還是會報警告
+
+**必須做到：**
+
+1. 後端 `IsValidLocalUrl()` 驗證
+1. 前端 `isValidLocalUrl()` 再驗證
+1. 加入 `IsValidSystemId()` 和 `HasSystemAccess()` 權限檢查
+
+-----
+
+## 我的建議
+
+**使用方案 1**，因為：
+
+1. Fortify 更容易通過（URL 由前端控制）
+1. 不需要複雜的 URL 驗證邏輯
+1. 更符合現代前端開發模式
+
+把後端改成：
+
+```csharp
+return Json(new { success = true, sysId = sysId });
+```
+
+把前端改成：
+
+```javascript
+var url = '@Url.Action("GroupManagement", "AP")' + '?systemId=' + encodeURIComponent(response.sysId);
+window.location.href = url;
+```
+
+這樣最簡單也最安全！​​​​​​​​​​​​​​​​
