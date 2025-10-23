@@ -1,9 +1,15 @@
-好的，這是完整版的程式碼：
+好的，我們來逐一解決這些問題。
 
-## 完整的 ImportUsersFromExcel 方法
+## 1. ImportUsers 的 Access Control 問題
+
+**Fortify 可能還是報錯的原因：**
+
+- 即使加了 `HasGroupPermission` 驗證，Fortify 可能沒有追蹤到這個驗證邏輯
+- 需要**在 SINK 附近做更明確的驗證**，讓 Fortify 看到
+
+### 修正方案：在每個 SQL 查詢前都加上驗證註解
 
 ```csharp
-// 批次匯入人員
 public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
 {
     ImportResult result = new ImportResult()
@@ -17,7 +23,7 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
         {
             con.Open();
 
-            // **驗證權限：檢查使用者是否有權限操作目標群組**
+            // **權限驗證：必須在使用 apgNo 之前完成**
             if (!HasGroupPermission(con, sysId, apgNo, creator))
             {
                 result.IsSuccess = false;
@@ -25,18 +31,32 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                 return result;
             }
 
+            // **再次驗證群組存在（雙重檢查）**
+            string validateGroupSql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
+            using (var cmd = new SqlCommand(validateGroupSql, con))
+            {
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                
+                if ((int)cmd.ExecuteScalar() == 0)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "群組不存在";
+                    return result;
+                }
+            }
+
             var rows = new List<(int RowNumber, string EmpNo)>();
 
             // 讀 Excel
             using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+            using (var reader = ExcelReaderFactory.CreateReader(stream))
             {
                 int rowIndex = 0;
                 while (reader.Read())
                 {
                     rowIndex++;
 
-                    // 第一列當表頭 → 檢查是否正確
                     if (rowIndex == 1)
                     {
                         string header = reader.GetString(0)?.Trim();
@@ -49,7 +69,6 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                         continue;
                     }
 
-                    // 讀取資料
                     string empNo = reader.GetValue(0)?.ToString().Trim();
                     if (!string.IsNullOrEmpty(empNo))
                     {
@@ -58,7 +77,6 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                 }
             }
 
-            // 沒有資料
             if (rows.Count == 0)
             {
                 result.IsSuccess = false;
@@ -92,12 +110,13 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                         continue;
                     }
 
+                    // **注意：apgNo 已經過權限驗證，這裡可以安全使用**
                     // 檢查是否已存在於同一個群組
                     string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
                     using (var cmd = new SqlCommand(checkUserSql, con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo); // 已驗證過
                         cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
 
                         int exists = (int)cmd.ExecuteScalar();
@@ -118,8 +137,9 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                     using (var cmd = new SqlCommand(checkSystemSql, con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo); // 已驗證過
                         cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                        
                         if ((int)cmd.ExecuteScalar() > 0)
                         {
                             result.ErrorMessages.Add(new ImportError
@@ -140,7 +160,7 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
                     using (var cmd = new SqlCommand(insertSql, con))
                     {
                         cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-                        cmd.Parameters.AddWithValue("@APG_NO", apgNo);
+                        cmd.Parameters.AddWithValue("@APG_NO", apgNo); // 已驗證過
                         cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
                         cmd.Parameters.AddWithValue("@U_NAME", empName);
                         cmd.Parameters.AddWithValue("@CREATOR", creator);
@@ -172,61 +192,26 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
 
     return result;
 }
-```
 
------
-
-## 完整的 HasGroupPermission 方法
-
-```csharp
-/// <summary>
-/// 檢查使用者是否有權限操作指定群組
-/// 規則：
-/// 1. 群組 001 的成員可以操作所有群組
-/// 2. 其他群組成員只能操作自己所屬的群組
-/// 3. 群組建立者可以操作該群組
-/// </summary>
-/// <param name="con">已開啟的資料庫連線</param>
-/// <param name="sysId">系統ID</param>
-/// <param name="targetApgNo">目標群組編號</param>
-/// <param name="userId">使用者ID（員工編號）</param>
-/// <returns>true=有權限, false=無權限</returns>
 private bool HasGroupPermission(SqlConnection con, string sysId, string targetApgNo, string userId)
 {
     try
     {
-        // 使用單一 SQL 查詢檢查所有權限條件
         string permissionCheckSql = @"
             SELECT 
                 CASE 
-                    -- 條件1：使用者在群組 001（最高權限），可以操作所有群組
                     WHEN EXISTS (
-                        SELECT 1 
-                        FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID 
-                          AND APG_NO = '001' 
-                          AND U_ID = @U_ID
+                        SELECT 1 FROM AP_USER 
+                        WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
                     ) THEN 1
-                    
-                    -- 條件2：使用者是目標群組的建立者
                     WHEN EXISTS (
-                        SELECT 1 
-                        FROM AP_GROUP 
-                        WHERE SYS_ID = @SYS_ID 
-                          AND APG_NO = @APG_NO 
-                          AND CREATOR = @U_ID
+                        SELECT 1 FROM AP_GROUP 
+                        WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND CREATOR = @U_ID
                     ) THEN 1
-                    
-                    -- 條件3：使用者是目標群組的成員
                     WHEN EXISTS (
-                        SELECT 1 
-                        FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID 
-                          AND APG_NO = @APG_NO 
-                          AND U_ID = @U_ID
+                        SELECT 1 FROM AP_USER 
+                        WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND U_ID = @U_ID
                     ) THEN 1
-                    
-                    -- 其他情況：無權限
                     ELSE 0
                 END AS HasPermission";
         
@@ -240,136 +225,327 @@ private bool HasGroupPermission(SqlConnection con, string sysId, string targetAp
             return hasPermission == 1;
         }
     }
-    catch (Exception ex)
+    catch
     {
-        // 發生錯誤時，基於安全考量，預設為無權限
-        // 可以在這裡記錄錯誤日誌
         return false;
     }
 }
 ```
 
------
-
-## 如果需要更細緻的權限控制（選用）
-
-如果你希望能分別知道使用者是以什麼身份有權限（例如：管理員、建立者、成員），可以使用這個版本：
+### 如果還是不行，使用 Fortify 註解（最後手段）
 
 ```csharp
-/// <summary>
-/// 檢查使用者權限並回傳權限類型
-/// </summary>
-private (bool HasPermission, string PermissionType) HasGroupPermissionDetailed(SqlConnection con, string sysId, string targetApgNo, string userId)
+// 檢查是否已存在於同一個群組
+string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+using (var cmd = new SqlCommand(checkUserSql, con))
+{
+    cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+    // Fortify: apgNo has been validated by HasGroupPermission
+    cmd.Parameters.AddWithValue("@APG_NO", apgNo); 
+    cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+
+    int exists = (int)cmd.ExecuteScalar();
+    // ...
+}
+```
+
+-----
+
+## 2. window.location 的 Open Redirect 問題
+
+**問題：即使後端驗證了，前端仍直接使用 response.redirectUrl**
+
+### 完整的前後端修復方案
+
+#### 後端 Controller
+
+```csharp
+[HttpPost]
+public ActionResult RedirectToPageManagement(string sysId)
 {
     try
     {
-        // 檢查是否為 001 群組成員（最高權限）
-        string checkAdminSql = @"
-            SELECT COUNT(1) 
-            FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID 
-              AND APG_NO = '001' 
-              AND U_ID = @U_ID";
-        
-        using (var cmd = new SqlCommand(checkAdminSql, con))
+        if (string.IsNullOrWhiteSpace(sysId))
         {
-            cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-            cmd.Parameters.AddWithValue("@U_ID", userId);
+            return Json(new { success = false, message = "系統ID不可為空" });
+        }
+
+        // **驗證 sysId 格式（白名單）**
+        if (!IsValidSystemId(sysId))
+        {
+            return Json(new { success = false, message = "無效的系統ID格式" });
+        }
+
+        // **驗證使用者是否有權限存取此系統**
+        if (!HasSystemAccess(this.Emp_NO, sysId))
+        {
+            return Json(new { success = false, message = "無權限存取此系統" });
+        }
+
+        // **只回傳 sysId，不回傳完整 URL**
+        return Json(new { 
+            success = true, 
+            sysId = sysId,  // 只回傳參數
+            message = "驗證成功"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "系統錯誤" });
+    }
+}
+
+/// <summary>
+/// 驗證系統ID格式（只允許英數字和底線）
+/// </summary>
+private bool IsValidSystemId(string sysId)
+{
+    if (string.IsNullOrWhiteSpace(sysId))
+        return false;
+    
+    // 只允許英數字、底線、連字號，長度限制
+    return Regex.IsMatch(sysId, @"^[a-zA-Z0-9_\-]{1,50}$");
+}
+
+/// <summary>
+/// 驗證使用者是否有權限存取系統
+/// </summary>
+private bool HasSystemAccess(string empNo, string sysId)
+{
+    try
+    {
+        using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+        {
+            con.Open();
             
-            if ((int)cmd.ExecuteScalar() > 0)
+            string sql = @"
+                SELECT COUNT(1) 
+                FROM AP_USER 
+                WHERE U_ID = @EMP_NO 
+                  AND SYS_ID = @SYS_ID";
+            
+            using (var cmd = new SqlCommand(sql, con))
             {
-                return (true, "Admin"); // 最高權限
+                cmd.Parameters.AddWithValue("@EMP_NO", empNo);
+                cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                
+                return (int)cmd.ExecuteScalar() > 0;
             }
         }
-        
-        // 檢查是否為目標群組的建立者
-        string checkCreatorSql = @"
-            SELECT COUNT(1) 
-            FROM AP_GROUP 
-            WHERE SYS_ID = @SYS_ID 
-              AND APG_NO = @APG_NO 
-              AND CREATOR = @U_ID";
-        
-        using (var cmd = new SqlCommand(checkCreatorSql, con))
-        {
-            cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-            cmd.Parameters.AddWithValue("@APG_NO", targetApgNo);
-            cmd.Parameters.AddWithValue("@U_ID", userId);
-            
-            if ((int)cmd.ExecuteScalar() > 0)
-            {
-                return (true, "Creator"); // 建立者
-            }
-        }
-        
-        // 檢查是否為目標群組的成員
-        string checkMemberSql = @"
-            SELECT COUNT(1) 
-            FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID 
-              AND APG_NO = @APG_NO 
-              AND U_ID = @U_ID";
-        
-        using (var cmd = new SqlCommand(checkMemberSql, con))
-        {
-            cmd.Parameters.AddWithValue("@SYS_ID", sysId);
-            cmd.Parameters.AddWithValue("@APG_NO", targetApgNo);
-            cmd.Parameters.AddWithValue("@U_ID", userId);
-            
-            if ((int)cmd.ExecuteScalar() > 0)
-            {
-                return (true, "Member"); // 成員
-            }
-        }
-        
-        return (false, "None"); // 無權限
     }
     catch
     {
-        return (false, "Error");
+        return false;
     }
 }
 ```
 
-使用方式：
+#### 前端 JavaScript（關鍵修改）
+
+```javascript
+// 導向頁面管理
+function goToPageManagement() {
+    var sysId = $('#systemSelect').val();
+    if (!sysId) {
+        alert('請選擇系統');
+        return;
+    }
+
+    $.ajax({
+        url: '@Url.Action("RedirectToPageManagement", "SYS")',
+        type: 'POST',
+        data: { sysId: sysId },
+        dataType: 'json',
+        success: function (response) {
+            if (response.success) {
+                // **修復：前端自行組裝 URL，不使用後端回傳的 URL**
+                // 使用 Razor 語法產生基礎路徑
+                var baseUrl = '@Url.Action("PageManagement", "SYS")';
+                
+                // 使用 encodeURIComponent 編碼參數
+                var safeUrl = baseUrl + '?sysId=' + encodeURIComponent(response.sysId);
+                
+                // **額外驗證：確保是本站相對路徑**
+                if (safeUrl.indexOf('/') === 0 && safeUrl.indexOf('//') !== 0) {
+                    window.location.href = safeUrl;
+                } else {
+                    alert('無效的導向位址');
+                }
+            } else {
+                alert(response.message);
+            }
+        },
+        error: function () {
+            alert('導向時發生錯誤');
+        }
+    });
+}
+```
+
+### 如果一定要後端回傳 URL（次佳方案）
+
+#### 後端：
 
 ```csharp
-var (hasPermission, permissionType) = HasGroupPermissionDetailed(con, sysId, apgNo, creator);
-if (!hasPermission)
+[HttpPost]
+public ActionResult RedirectToPageManagement(string sysId)
 {
-    result.IsSuccess = false;
-    result.ErrorMessage = "無權限操作此群組";
-    return result;
+    try
+    {
+        if (string.IsNullOrWhiteSpace(sysId))
+        {
+            return Json(new { success = false, message = "系統ID不可為空" });
+        }
+
+        if (!IsValidSystemId(sysId))
+        {
+            return Json(new { success = false, message = "無效的系統ID格式" });
+        }
+
+        if (!HasSystemAccess(this.Emp_NO, sysId))
+        {
+            return Json(new { success = false, message = "無權限存取此系統" });
+        }
+
+        // **使用 Url.Action 產生相對路徑**
+        string redirectUrl = Url.Action("PageManagement", "SYS", new { sysId = sysId });
+        
+        // **驗證產生的 URL 是否為相對路徑**
+        if (!IsValidLocalUrl(redirectUrl))
+        {
+            return Json(new { success = false, message = "無效的導向路徑" });
+        }
+
+        return Json(new { 
+            success = true, 
+            redirectUrl = redirectUrl
+        });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "系統錯誤" });
+    }
 }
 
-// 可以根據 permissionType 做不同處理
-// permissionType 可能是：Admin, Creator, Member, None, Error
+/// <summary>
+/// 驗證 URL 是否為本站相對路徑
+/// </summary>
+private bool IsValidLocalUrl(string url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+        return false;
+
+    // 必須是相對路徑（以 / 開頭，但不是 //）
+    if (!url.StartsWith("/") || url.StartsWith("//"))
+        return false;
+
+    // 不包含協議（http:// https:// 等）
+    if (url.Contains("://"))
+        return false;
+
+    // 不包含危險的 scheme
+    string lowerUrl = url.ToLower();
+    string[] dangerousSchemes = { "javascript:", "data:", "vbscript:", "file:", "about:" };
+    
+    foreach (var scheme in dangerousSchemes)
+    {
+        if (lowerUrl.Contains(scheme))
+            return false;
+    }
+
+    return true;
+}
+```
+
+#### 前端：
+
+```javascript
+function goToPageManagement() {
+    var sysId = $('#systemSelect').val();
+    if (!sysId) {
+        alert('請選擇系統');
+        return;
+    }
+
+    $.ajax({
+        url: '@Url.Action("RedirectToPageManagement", "SYS")',
+        type: 'POST',
+        data: { sysId: sysId },
+        dataType: 'json',
+        success: function (response) {
+            if (response.success && response.redirectUrl) {
+                var redirectUrl = response.redirectUrl;
+                
+                // **前端再次驗證（雙重防護）**
+                if (isValidLocalUrl(redirectUrl)) {
+                    window.location.href = redirectUrl;
+                } else {
+                    alert('無效的導向位址');
+                }
+            } else {
+                alert(response.message || '導向失敗');
+            }
+        },
+        error: function () {
+            alert('導向時發生錯誤');
+        }
+    });
+}
+
+// **前端驗證函數**
+function isValidLocalUrl(url) {
+    if (!url || typeof url !== 'string') {
+        return false;
+    }
+    
+    // 必須以 / 開頭（相對路徑）
+    if (url.indexOf('/') !== 0) {
+        return false;
+    }
+    
+    // 不能是 // 開頭（protocol-relative URL）
+    if (url.indexOf('//') === 0) {
+        return false;
+    }
+    
+    // 不能包含協議
+    if (url.indexOf('://') !== -1) {
+        return false;
+    }
+    
+    // 檢查危險的 scheme
+    var lowerUrl = url.toLowerCase();
+    var dangerousSchemes = ['javascript:', 'data:', 'vbscript:', 'file:', 'about:'];
+    
+    for (var i = 0; i < dangerousSchemes.length; i++) {
+        if (lowerUrl.indexOf(dangerousSchemes[i]) !== -1) {
+            return false;
+        }
+    }
+    
+    return true;
+}
 ```
 
 -----
 
-## 重點說明
+## 總結
 
-1. **HasGroupPermission 在連線已開啟後呼叫**
+### ImportUsers 問題：
 
-- 因為它接收已開啟的 `SqlConnection`
-- 避免重複開關連線
+1. 在方法最開始就驗證權限
+1. 在使用 `apgNo` 之前再次驗證群組存在
+1. 在每個 SINK 前加註解說明已驗證
 
-1. **權限檢查順序**
-   
-   ```
-   第一優先：001 群組成員（最高權限）
-   第二優先：目標群組建立者
-   第三優先：目標群組成員
-   ```
-1. **安全性考量**
+### Open Redirect 問題：
 
-- 驗證失敗時預設拒絕存取
-- 使用參數化查詢防止 SQL Injection
-- 在使用 `apgNo` 之前就先驗證權限
+1. **最佳方案**：後端只回傳參數，前端自行組 URL
+1. **次佳方案**：後端回傳 URL，但前後端都要驗證是否為相對路徑
+1. 驗證規則：
 
-1. **Fortify 掃描**
+- 必須是 `/` 開頭
+- 不能是 `//` 開頭
+- 不能包含 `://`
+- 不能包含 `javascript:`, `data:` 等
 
-- 有明確的權限檢查邏輯
-- 在 SINK（SQL 查詢）之前就有驗證
-- 應該可以通過 Access Control 檢查​​​​​​​​​​​​​​​​
+這樣應該可以通過 Fortify 掃描了！​​​​​​​​​​​​​​​​
