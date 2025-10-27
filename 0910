@@ -1,21 +1,6 @@
-新增-匯出帳號清單-功能
-檔名-帳號清單_yyyyMMdd_HHmmss
-8個欄位
-UserModel
-帳號U_ID
-姓名U_NAME
-群組代號APG_NO
-群組名稱APG_NAME	
-建立日期CREATOR	
-建立人員CREATE_TIME	
-修改日期EDITOR	
-修改人員EDIT_TIME
+好的！我幫你修改，讓所有欄位都當成文字格式，這樣數字帳號和日期都會靠左對齊且不會有格式問題。
 
-當然可以！不安裝套件的話，可以用 **CSV 格式**匯出，這是最簡單的方式，不需要任何額外套件。
-
-## 方案：匯出 CSV 格式
-
-### 修改 APController.cs - 匯出 CSV
+## 修改 APController.cs
 
 ```csharp
 // 匯出帳號清單 (CSV格式)
@@ -51,14 +36,14 @@ public ActionResult ExportUserList()
         foreach (var user in userList)
         {
             csv.AppendLine(string.Format("{0},{1},{2},{3},{4},{5},{6},{7}",
-                EscapeCsvField(user.U_ID),
-                EscapeCsvField(user.U_NAME),
-                EscapeCsvField(user.APG_NO),
-                EscapeCsvField(user.APG_NAME),
-                EscapeCsvField(user.CREATOR),
-                user.CREATE_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
-                EscapeCsvField(user.EDITOR),
-                user.EDIT_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? ""
+                FormatAsText(user.U_ID),           // 👈 強制文字格式
+                FormatAsText(user.U_NAME),
+                FormatAsText(user.APG_NO),         // 👈 強制文字格式
+                FormatAsText(user.APG_NAME),
+                FormatAsText(user.CREATOR),
+                FormatAsText(user.CREATE_TIME),    // 👈 強制文字格式
+                FormatAsText(user.EDITOR),
+                FormatAsText(user.EDIT_TIME)       // 👈 強制文字格式
             ));
         }
 
@@ -76,23 +61,20 @@ public ActionResult ExportUserList()
     }
 }
 
-// CSV 欄位處理：處理逗號、引號、換行
-private string EscapeCsvField(string field)
+// 強制以文字格式顯示（在欄位前加上 = 和雙引號）
+private string FormatAsText(string field)
 {
     if (string.IsNullOrEmpty(field))
         return "";
     
-    // 如果包含逗號、引號或換行，需要用雙引號包起來，並且將內部的引號變成兩個引號
-    if (field.Contains(",") || field.Contains("\"") || field.Contains("\n") || field.Contains("\r"))
-    {
-        return "\"" + field.Replace("\"", "\"\"") + "\"";
-    }
-    
-    return field;
+    // 使用 ="..." 的方式強制 Excel 當成文字
+    // 如果欄位內含引號，需要跳脫
+    string escaped = field.Replace("\"", "\"\"");
+    return $"=\"{escaped}\"";
 }
 ```
 
-## F_Common.cs 的方法（與之前相同）
+## 修改 F_Common.cs - 改用 string
 
 ```csharp
 // 取得所有使用者清單(用於匯出)
@@ -105,9 +87,9 @@ public List<UserExportModel> GetAllUsersForExport(string systemId)
             u.[APG_NO],
             g.[APG_NAME],
             u.[CREATOR],
-            u.[CREATE_TIME],
+            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME,  -- 👈 轉成 string
             u.[EDITOR],
-            u.[EDIT_TIME]
+            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME      -- 👈 轉成 string
         FROM [HI-AUTOS].[dbo].[AP_USER] u
         LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
             ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
@@ -124,7 +106,7 @@ public List<UserExportModel> GetAllUsersForExport(string systemId)
 }
 ```
 
-## Model 定義（與之前相同）
+## 修改 Model - 改用 string
 
 ```csharp
 namespace HI_APACCESS.Models.M_SYS
@@ -137,110 +119,124 @@ namespace HI_APACCESS.Models.M_SYS
         public string APG_NO { get; set; }
         public string APG_NAME { get; set; }
         public string CREATOR { get; set; }
-        public DateTime? CREATE_TIME { get; set; }
+        public string CREATE_TIME { get; set; }  // 👈 改成 string
         public string EDITOR { get; set; }
-        public DateTime? EDIT_TIME { get; set; }
+        public string EDIT_TIME { get; set; }    // 👈 改成 string
     }
 }
 ```
 
-## GroupManagement.cshtml 按鈕（與之前相同）
+## 說明
 
-```html
-@if (showSwitchButton)
+### **方法1：使用 `="..."` 格式（推薦）**
+
+```csharp
+private string FormatAsText(string field)
 {
-    <div class="row mb-3">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-info" id="btnSwitchSystem">
-                <i class="fas fa-exchange-alt"></i> 切換系統
-            </button>
-            <button type="button" class="btn btn-success" id="btnExportUsers">
-                <i class="fas fa-file-download"></i> 匯出帳號清單
-            </button>
-        </div>
-    </div>
-}
-
-@section Scripts {
-    <script>
-        @if (showSwitchButton)
-        {
-            <text>
-            // 切換系統按鈕事件
-            $('#btnSwitchSystem').click(function() {
-                if (confirm('確定要切換系統嗎？')) {
-                    window.location.href = '@Url.Action("SYS_PERMISSION_SET", "SYS")';
-                }
-            });
-
-            // 匯出帳號清單按鈕事件
-            $('#btnExportUsers').click(function() {
-                window.location.href = '@Url.Action("ExportUserList", "AP")';
-            });
-            </text>
-        }
-    </script>
+    if (string.IsNullOrEmpty(field))
+        return "";
+    
+    string escaped = field.Replace("\"", "\"\"");
+    return $"=\"{escaped}\"";  // 👈 Excel 會把這個當成文字
 }
 ```
 
-## CSV 格式的優點
+**效果：**
 
-✅ **不需要安裝任何套件** - 純 C# 內建功能  
-✅ **檔案小** - CSV 比 Excel 檔案小很多  
-✅ **相容性好** - Excel、Google Sheets、記事本都能開啟  
-✅ **簡單可靠** - 不會有套件版本或授權問題  
-✅ **UTF-8 編碼** - 中文顯示正常（加了 BOM）
+- `="E12345"` → Excel 顯示為文字 `E12345`，靠左對齊
+- `="001"` → Excel 顯示為文字 `001`，不會變成數字 `1`
+- `="2024-12-27 10:30:00"` → Excel 顯示為文字，不會轉換成日期格式
 
-## 匯出檔案範例
+### **方法2：使用 Tab 字元分隔（替代方案）**
 
-**檔名：** `帳號清單_20241227_153045.csv`
+如果上面的方法在某些 Excel 版本有問題，可以改用 Tab 分隔：
 
-**內容：**
+```csharp
+// 匯出帳號清單 (Tab分隔的文字檔)
+[HttpGet]
+public ActionResult ExportUserList()
+{
+    try
+    {
+        string systemId = Session["CurrentSystemId"] as string;
+        if (string.IsNullOrEmpty(systemId))
+        {
+            return Content("<script>alert('系統ID遺失'); window.history.back();</script>", "text/html");
+        }
+
+        var userList = F_Common.GetAllUsersForExport(systemId);
+
+        if (userList == null || userList.Count == 0)
+        {
+            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+        }
+
+        var txt = new System.Text.StringBuilder();
+        txt.Append("\uFEFF");
+        
+        // 標題列（用 Tab 分隔）
+        txt.AppendLine("帳號\t姓名\t群組代號\t群組名稱\t建立人員\t建立日期\t修改人員\t修改日期");
+        
+        // 資料列
+        foreach (var user in userList)
+        {
+            txt.AppendLine(string.Format("{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}",
+                user.U_ID ?? "",
+                user.U_NAME ?? "",
+                user.APG_NO ?? "",
+                user.APG_NAME ?? "",
+                user.CREATOR ?? "",
+                user.CREATE_TIME ?? "",
+                user.EDITOR ?? "",
+                user.EDIT_TIME ?? ""
+            ));
+        }
+
+        byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(txt.ToString());
+        string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+        
+        return File(fileBytes, "text/plain", fileName);
+    }
+    catch (Exception ex)
+    {
+        return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
+    }
+}
+```
+
+使用 Tab 分隔的檔案，Excel 開啟時所有欄位都會自動當成文字。
+
+## SQL 日期格式說明
+
+```sql
+CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME
+```
+
+**120 格式** = `yyyy-MM-dd HH:mm:ss` (例如：2024-12-27 15:30:45)
+
+其他常用格式：
+
+- **120**: `2024-12-27 15:30:45`
+- **23**: `2024-12-27`
+- **108**: `15:30:45`
+
+## 匯出結果範例
+
+### **CSV 內容（使用 =”…” 格式）：**
 
 ```csv
 帳號,姓名,群組代號,群組名稱,建立人員,建立日期,修改人員,修改日期
-E12345,王小明,001,管理員(資訊),E11111,2024-12-27 10:30:00,E22222,2024-12-27 15:20:00
-E67890,李小華,002,一般使用者,E11111,2024-12-27 11:00:00,,
+="E12345",="王小明",="001",="管理員(資訊)",="E11111",="2024-12-27 10:30:00",="E22222",="2024-12-27 15:20:00"
+="00123",="李小華",="002",="一般使用者",="E11111",="2024-12-27 11:00:00",,
 ```
 
-## 重點說明
+### **Excel 顯示效果：**
 
-### **1. UTF-8 BOM**
+|帳號    |姓名 |群組代號|群組名稱   |建立人員  |建立日期               |修改人員  |修改日期               |
+|------|---|----|-------|------|-------------------|------|-------------------|
+|E12345|王小明|001 |管理員(資訊)|E11111|2024-12-27 10:30:00|E22222|2024-12-27 15:20:00|
+|00123 |李小華|002 |一般使用者  |E11111|2024-12-27 11:00:00|      |                   |
 
-```csharp
-csv.Append("\uFEFF");
-```
+**所有欄位都靠左對齊，統一為文字格式！** ✅
 
-加上 BOM (Byte Order Mark) 讓 Excel 能正確識別 UTF-8 編碼，中文才不會亂碼。
-
-### **2. CSV 欄位處理**
-
-```csharp
-private string EscapeCsvField(string field)
-{
-    // 處理包含逗號、引號、換行的欄位
-    if (field.Contains(",") || field.Contains("\"") || field.Contains("\n"))
-    {
-        return "\"" + field.Replace("\"", "\"\"") + "\"";
-    }
-    return field;
-}
-```
-
-這個方法確保資料中如果有逗號或引號，CSV 格式不會出錯。
-
-### **3. 日期格式**
-
-```csharp
-user.CREATE_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? ""
-```
-
-統一使用 `yyyy-MM-dd HH:mm:ss` 格式，Excel 可以正確識別為日期。
-
-## 使用方式
-
-1. 點擊「**匯出帳號清單**」
-1. 瀏覽器自動下載 `帳號清單_20241227_153045.csv`
-1. 用 Excel 開啟即可看到完整資料
-
-這樣就不需要安裝任何套件了！簡單又實用！👍​​​​​​​​​​​​​​​​
+推薦使用**方法1（`="..."`）**，這是最標準且相容性最好的做法。如果有問題再試試方法2（Tab分隔）。👍​​​​​​​​​​​​​​​​
