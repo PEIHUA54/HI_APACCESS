@@ -10,3 +10,237 @@ UserModel
 建立人員CREATE_TIME	
 修改日期EDITOR	
 修改人員EDIT_TIME
+
+當然可以！不安裝套件的話，可以用 **CSV 格式**匯出，這是最簡單的方式，不需要任何額外套件。
+
+## 方案：匯出 CSV 格式
+
+### 修改 APController.cs - 匯出 CSV
+
+```csharp
+// 匯出帳號清單 (CSV格式)
+[HttpGet]
+public ActionResult ExportUserList()
+{
+    try
+    {
+        string systemId = Session["CurrentSystemId"] as string;
+        if (string.IsNullOrEmpty(systemId))
+        {
+            return Content("<script>alert('系統ID遺失'); window.history.back();</script>", "text/html");
+        }
+
+        // 取得帳號清單
+        var userList = F_Common.GetAllUsersForExport(systemId);
+
+        if (userList == null || userList.Count == 0)
+        {
+            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+        }
+
+        // 建立 CSV 內容
+        var csv = new System.Text.StringBuilder();
+        
+        // 加入 BOM 讓 Excel 正確識別 UTF-8 編碼
+        csv.Append("\uFEFF");
+        
+        // 標題列
+        csv.AppendLine("帳號,姓名,群組代號,群組名稱,建立人員,建立日期,修改人員,修改日期");
+        
+        // 資料列
+        foreach (var user in userList)
+        {
+            csv.AppendLine(string.Format("{0},{1},{2},{3},{4},{5},{6},{7}",
+                EscapeCsvField(user.U_ID),
+                EscapeCsvField(user.U_NAME),
+                EscapeCsvField(user.APG_NO),
+                EscapeCsvField(user.APG_NAME),
+                EscapeCsvField(user.CREATOR),
+                user.CREATE_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                EscapeCsvField(user.EDITOR),
+                user.EDIT_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? ""
+            ));
+        }
+
+        // 轉換成 byte array
+        byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
+        
+        // 產生檔案
+        string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+        
+        return File(fileBytes, "text/csv", fileName);
+    }
+    catch (Exception ex)
+    {
+        return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
+    }
+}
+
+// CSV 欄位處理：處理逗號、引號、換行
+private string EscapeCsvField(string field)
+{
+    if (string.IsNullOrEmpty(field))
+        return "";
+    
+    // 如果包含逗號、引號或換行，需要用雙引號包起來，並且將內部的引號變成兩個引號
+    if (field.Contains(",") || field.Contains("\"") || field.Contains("\n") || field.Contains("\r"))
+    {
+        return "\"" + field.Replace("\"", "\"\"") + "\"";
+    }
+    
+    return field;
+}
+```
+
+## F_Common.cs 的方法（與之前相同）
+
+```csharp
+// 取得所有使用者清單(用於匯出)
+public List<UserExportModel> GetAllUsersForExport(string systemId)
+{
+    string sql = @"
+        SELECT 
+            u.[U_ID],
+            u.[U_NAME],
+            u.[APG_NO],
+            g.[APG_NAME],
+            u.[CREATOR],
+            u.[CREATE_TIME],
+            u.[EDITOR],
+            u.[EDIT_TIME]
+        FROM [HI-AUTOS].[dbo].[AP_USER] u
+        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
+            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+        WHERE u.[SYS_ID] = @SYS_ID
+        ORDER BY u.[APG_NO], u.[U_ID]";
+
+    List<SqlParameter> parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", systemId)
+    };
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    return SVS_DBmanager.ConvertToList<UserExportModel>(dt);
+}
+```
+
+## Model 定義（與之前相同）
+
+```csharp
+namespace HI_APACCESS.Models.M_SYS
+{
+    // 帳號匯出模型
+    public class UserExportModel
+    {
+        public string U_ID { get; set; }
+        public string U_NAME { get; set; }
+        public string APG_NO { get; set; }
+        public string APG_NAME { get; set; }
+        public string CREATOR { get; set; }
+        public DateTime? CREATE_TIME { get; set; }
+        public string EDITOR { get; set; }
+        public DateTime? EDIT_TIME { get; set; }
+    }
+}
+```
+
+## GroupManagement.cshtml 按鈕（與之前相同）
+
+```html
+@if (showSwitchButton)
+{
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <button type="button" class="btn btn-info" id="btnSwitchSystem">
+                <i class="fas fa-exchange-alt"></i> 切換系統
+            </button>
+            <button type="button" class="btn btn-success" id="btnExportUsers">
+                <i class="fas fa-file-download"></i> 匯出帳號清單
+            </button>
+        </div>
+    </div>
+}
+
+@section Scripts {
+    <script>
+        @if (showSwitchButton)
+        {
+            <text>
+            // 切換系統按鈕事件
+            $('#btnSwitchSystem').click(function() {
+                if (confirm('確定要切換系統嗎？')) {
+                    window.location.href = '@Url.Action("SYS_PERMISSION_SET", "SYS")';
+                }
+            });
+
+            // 匯出帳號清單按鈕事件
+            $('#btnExportUsers').click(function() {
+                window.location.href = '@Url.Action("ExportUserList", "AP")';
+            });
+            </text>
+        }
+    </script>
+}
+```
+
+## CSV 格式的優點
+
+✅ **不需要安裝任何套件** - 純 C# 內建功能  
+✅ **檔案小** - CSV 比 Excel 檔案小很多  
+✅ **相容性好** - Excel、Google Sheets、記事本都能開啟  
+✅ **簡單可靠** - 不會有套件版本或授權問題  
+✅ **UTF-8 編碼** - 中文顯示正常（加了 BOM）
+
+## 匯出檔案範例
+
+**檔名：** `帳號清單_20241227_153045.csv`
+
+**內容：**
+
+```csv
+帳號,姓名,群組代號,群組名稱,建立人員,建立日期,修改人員,修改日期
+E12345,王小明,001,管理員(資訊),E11111,2024-12-27 10:30:00,E22222,2024-12-27 15:20:00
+E67890,李小華,002,一般使用者,E11111,2024-12-27 11:00:00,,
+```
+
+## 重點說明
+
+### **1. UTF-8 BOM**
+
+```csharp
+csv.Append("\uFEFF");
+```
+
+加上 BOM (Byte Order Mark) 讓 Excel 能正確識別 UTF-8 編碼，中文才不會亂碼。
+
+### **2. CSV 欄位處理**
+
+```csharp
+private string EscapeCsvField(string field)
+{
+    // 處理包含逗號、引號、換行的欄位
+    if (field.Contains(",") || field.Contains("\"") || field.Contains("\n"))
+    {
+        return "\"" + field.Replace("\"", "\"\"") + "\"";
+    }
+    return field;
+}
+```
+
+這個方法確保資料中如果有逗號或引號，CSV 格式不會出錯。
+
+### **3. 日期格式**
+
+```csharp
+user.CREATE_TIME?.ToString("yyyy-MM-dd HH:mm:ss") ?? ""
+```
+
+統一使用 `yyyy-MM-dd HH:mm:ss` 格式，Excel 可以正確識別為日期。
+
+## 使用方式
+
+1. 點擊「**匯出帳號清單**」
+1. 瀏覽器自動下載 `帳號清單_20241227_153045.csv`
+1. 用 Excel 開啟即可看到完整資料
+
+這樣就不需要安裝任何套件了！簡單又實用！👍​​​​​​​​​​​​​​​​
