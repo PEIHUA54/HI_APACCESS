@@ -1,242 +1,183 @@
-好的！我幫你修改，讓所有欄位都當成文字格式，這樣數字帳號和日期都會靠左對齊且不會有格式問題。
+傳入參數要增加群組ID(GroupID)，TOKEN要多帶GROUPID過去
 
-## 修改 APController.cs
-
-```csharp
-// 匯出帳號清單 (CSV格式)
-[HttpGet]
-public ActionResult ExportUserList()
-{
-    try
+APACCESS_DLL 呼叫方法:
+          internal class FGetFunctionAndAccessUrl
     {
-        string systemId = Session["CurrentSystemId"] as string;
-        if (string.IsNullOrEmpty(systemId))
+        // 環境設定
+        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
         {
-            return Content("<script>alert('系統ID遺失'); window.history.back();</script>", "text/html");
+            { "DEV", "http://localhost:53088" },
+            { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+            { "PROD", "http://10.8.254.68/HI_APACCESS" },
+        };
+
+        // 類型設定
+        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+        {
+            { "1", "TokenEntry_FUNC" },
+            { "2", "TokenEntry" }
+        };
+
+        // 取得授權系統清單（呼叫 FCommon）
+        internal List<string> GetAuthorizedSystemsList(string environment)
+        {
+            return FCommon.GetAuthorizedSystemsList(environment);
         }
 
-        // 取得帳號清單
-        var userList = F_Common.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
+        // 產 JWT Token  10/30 -增加群組
+        internal string GenerateJwtToken(string systemId)
         {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-        }
+            var claims = new[]
+            {
+                new Claim("systemId", systemId),
+            };
 
-        // 建立 CSV 內容
-        var csv = new System.Text.StringBuilder();
-        
-        // 加入 BOM 讓 Excel 正確識別 UTF-8 編碼
-        csv.Append("\uFEFF");
-        
-        // 標題列
-        csv.AppendLine("帳號,姓名,群組代號,群組名稱,建立人員,建立日期,修改人員,修改日期");
-        
-        // 資料列
-        foreach (var user in userList)
-        {
-            csv.AppendLine(string.Format("{0},{1},{2},{3},{4},{5},{6},{7}",
-                FormatAsText(user.U_ID),           // 👈 強制文字格式
-                FormatAsText(user.U_NAME),
-                FormatAsText(user.APG_NO),         // 👈 強制文字格式
-                FormatAsText(user.APG_NAME),
-                FormatAsText(user.CREATOR),
-                FormatAsText(user.CREATE_TIME),    // 👈 強制文字格式
-                FormatAsText(user.EDITOR),
-                FormatAsText(user.EDIT_TIME)       // 👈 強制文字格式
-            ));
-        }
+            string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
 
-        // 轉換成 byte array
-        byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
-        
-        // 產生檔案
-        string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
-        
-        return File(fileBytes, "text/csv", fileName);
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: "hi_ap_access_dll",
+                audience: "hi_ap_access_web",
+                claims: claims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
     }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
-    }
-}
 
-// 強制以文字格式顯示（在欄位前加上 = 和雙引號）
-private string FormatAsText(string field)
-{
-    if (string.IsNullOrEmpty(field))
-        return "";
-    
-    // 使用 ="..." 的方式強制 Excel 當成文字
-    // 如果欄位內含引號，需要跳脫
-    string escaped = field.Replace("\"", "\"\"");
-    return $"=\"{escaped}\"";
-}
-```
-
-## 修改 F_Common.cs - 改用 string
-
-```csharp
-// 取得所有使用者清單(用於匯出)
-public List<UserExportModel> GetAllUsersForExport(string systemId)
-{
-    string sql = @"
-        SELECT 
-            u.[U_ID],
-            u.[U_NAME],
-            u.[APG_NO],
-            g.[APG_NAME],
-            u.[CREATOR],
-            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME,  -- 👈 轉成 string
-            u.[EDITOR],
-            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME      -- 👈 轉成 string
-        FROM [HI-AUTOS].[dbo].[AP_USER] u
-        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
-            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-        WHERE u.[SYS_ID] = @SYS_ID
-        ORDER BY u.[APG_NO], u.[U_ID]";
-
-    List<SqlParameter> parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", systemId)
-    };
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    return SVS_DBmanager.ConvertToList<UserExportModel>(dt);
-}
-```
-
-## 修改 Model - 改用 string
-
-```csharp
-namespace HI_APACCESS.Models.M_SYS
-{
-    // 帳號匯出模型
-    public class UserExportModel
-    {
-        public string U_ID { get; set; }
-        public string U_NAME { get; set; }
-        public string APG_NO { get; set; }
-        public string APG_NAME { get; set; }
-        public string CREATOR { get; set; }
-        public string CREATE_TIME { get; set; }  // 👈 改成 string
-        public string EDITOR { get; set; }
-        public string EDIT_TIME { get; set; }    // 👈 改成 string
-    }
-}
-```
-
-## 說明
-
-### **方法1：使用 `="..."` 格式（推薦）**
-
-```csharp
-private string FormatAsText(string field)
-{
-    if (string.IsNullOrEmpty(field))
-        return "";
-    
-    string escaped = field.Replace("\"", "\"\"");
-    return $"=\"{escaped}\"";  // 👈 Excel 會把這個當成文字
-}
-```
-
-**效果：**
-
-- `="E12345"` → Excel 顯示為文字 `E12345`，靠左對齊
-- `="001"` → Excel 顯示為文字 `001`，不會變成數字 `1`
-- `="2024-12-27 10:30:00"` → Excel 顯示為文字，不會轉換成日期格式
-
-### **方法2：使用 Tab 字元分隔（替代方案）**
-
-如果上面的方法在某些 Excel 版本有問題，可以改用 Tab 分隔：
-
-```csharp
-// 匯出帳號清單 (Tab分隔的文字檔)
-[HttpGet]
-public ActionResult ExportUserList()
-{
-    try
-    {
-        string systemId = Session["CurrentSystemId"] as string;
-        if (string.IsNullOrEmpty(systemId))
+APACCESS_DLL主方法:
+// 取得頁面跟權限設定功能連結
+        public string GetFunctionAndAccessUrl(string requestJson)
         {
-            return Content("<script>alert('系統ID遺失'); window.history.back();</script>", "text/html");
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
+
+                // 檢查類型
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response.Result_code = Codes.TYPE_ERROR;
+                    response.Msg = "類型錯誤，只接受 1 或 2";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查環境
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response.Result_code = Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 檢查系統授權
+                var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response.Result_code = Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
+
+                // 產生 Token
+                string token = func.GenerateJwtToken(request.SysID);
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+
+                // 成功
+                response.Result_code = Codes.SUCCESS;
+                response.Msg = "成功";
+                response.Url = finalUrl;
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+                response.Url = "";
+            }
+
+            return JsonConvert.SerializeObject(response);
         }
 
-        var userList = F_Common.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
+別的站台連接入口:
+        // 權限管理導向 URL
+        public ActionResult AP_ACCESS_SYS()
         {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+            try
+            {
+                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+                {
+                    SysID = "HI_POSIMG",
+                    Type = "2" ,
+                    Environment = "DEV"
+                };
+
+                string json_input = JsonConvert.SerializeObject(req_para);
+                string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
+                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+
+                if (response_.Result_code == "0000")
+                {
+                    string script = $@"
+                    <script>
+                       window.open('{response_.Url}', '_blank');                       
+                       window.location.href='{Url.Action("Main", "Home")}';
+                    </script>";
+                    return Content(script, "text/html");
+                }
+                else
+                {
+                    return Content($"<script>alert('取得權限管理連結失敗：{response_.Msg}');</script>", "text/html");
+                }
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
         }
 
-        var txt = new System.Text.StringBuilder();
-        txt.Append("\uFEFF");
-        
-        // 標題列（用 Tab 分隔）
-        txt.AppendLine("帳號\t姓名\t群組代號\t群組名稱\t建立人員\t建立日期\t修改人員\t修改日期");
-        
-        // 資料列
-        foreach (var user in userList)
+        // 系統頁面管理導向
+        public ActionResult AP_ACCESS_SYS_FUNC()
         {
-            txt.AppendLine(string.Format("{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}",
-                user.U_ID ?? "",
-                user.U_NAME ?? "",
-                user.APG_NO ?? "",
-                user.APG_NAME ?? "",
-                user.CREATOR ?? "",
-                user.CREATE_TIME ?? "",
-                user.EDITOR ?? "",
-                user.EDIT_TIME ?? ""
-            ));
+            try
+            {
+                var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+                {
+                    SysID = "HI_POSIMG",
+                    Type = "1" ,         
+                    Environment = "DEV"
+                };
+
+                string json_input = JsonConvert.SerializeObject(req_para);
+                string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
+                POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+
+                if (response_.Result_code == "0000")
+                {
+                    string script = $@"
+                    <script>
+                       window.open('{response_.Url}', '_blank');                       
+                       window.location.href='{Url.Action("Main", "Home")}';
+                    </script>";
+                    return Content(script, "text/html");
+                }
+                else
+                {
+                    return Content($"<script>alert('取得頁面功能管理連結失敗：{response_.Msg}');</script>", "text/html");
+                }
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+            }
         }
-
-        byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(txt.ToString());
-        string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
-        
-        return File(fileBytes, "text/plain", fileName);
-    }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
-    }
-}
-```
-
-使用 Tab 分隔的檔案，Excel 開啟時所有欄位都會自動當成文字。
-
-## SQL 日期格式說明
-
-```sql
-CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME
-```
-
-**120 格式** = `yyyy-MM-dd HH:mm:ss` (例如：2024-12-27 15:30:45)
-
-其他常用格式：
-
-- **120**: `2024-12-27 15:30:45`
-- **23**: `2024-12-27`
-- **108**: `15:30:45`
-
-## 匯出結果範例
-
-### **CSV 內容（使用 =”…” 格式）：**
-
-```csv
-帳號,姓名,群組代號,群組名稱,建立人員,建立日期,修改人員,修改日期
-="E12345",="王小明",="001",="管理員(資訊)",="E11111",="2024-12-27 10:30:00",="E22222",="2024-12-27 15:20:00"
-="00123",="李小華",="002",="一般使用者",="E11111",="2024-12-27 11:00:00",,
-```
-
-### **Excel 顯示效果：**
-
-|帳號    |姓名 |群組代號|群組名稱   |建立人員  |建立日期               |修改人員  |修改日期               |
-|------|---|----|-------|------|-------------------|------|-------------------|
-|E12345|王小明|001 |管理員(資訊)|E11111|2024-12-27 10:30:00|E22222|2024-12-27 15:20:00|
-|00123 |李小華|002 |一般使用者  |E11111|2024-12-27 11:00:00|      |                   |
-
-**所有欄位都靠左對齊，統一為文字格式！** ✅
-
-推薦使用**方法1（`="..."`）**，這是最標準且相容性最好的做法。如果有問題再試試方法2（Tab分隔）。👍​​​​​​​​​​​​​​​​
