@@ -1,46 +1,42 @@
-// 產生單一頁面項目 (含父/子階層、顏色區分、唯讀控制)
-function renderPageItem(func, isChild) {
-    const funcId = getFuncId(func);
-    const funcName = getFuncName(func);
+ // 頁面項目渲染 - 一列顯示
+ function renderPageItem(func, isChild) {
+     const funcId = getFuncId(func);
+     const funcName = getFuncName(func);
 
-    const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-    const checkedAttr = hasPermission ? 'checked' : '';
+     const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+     const checkedAttr = hasPermission ? 'checked' : '';
 
-    const isParent = isParentPage(func);
-    const isAdmin = (currentGroupID === '001');
+     const isParent = isParentPage(func);
+     const isAdmin = (currentGroupID === '001');
 
-    // 🎨 顏色規則：
-    // 父頁面 → 淺藍 (#E8F1FB)
-    // FUNC_TYPE = 1 → 淺綠 (#E8F5E9)
-    // FUNC_TYPE = 2 → 淺橘 (#FFF4E1)
-    // 預設白底
+     let itemClass = hasPermission ? 'page-item has-permission' : 'page-item';
+     if (isParent) {
+         itemClass += ' parent-page';
+     }
+
+     const childClass = isChild ? 'child-page-item' : '';
+
     let bgStyle = '';
-    if (isParent) {
-        bgStyle = 'background-color:#E8F1FB;';
-    } else if (func.FUNC_TYPE === '1') {
-        bgStyle = 'background-color:#E8F5E9;';
-    } else if (func.FUNC_TYPE === '2') {
-        bgStyle = 'background-color:#FFF4E1;';
-    } else {
-        bgStyle = 'background-color:#FFFFFF;';
-    }
+     if (func.FUNC_TYPE === '1') {
+         bgStyle = 'background-color:#e8f5e8;';
+     } else if (func.FUNC_TYPE === '2') {
+         bgStyle = 'background-color:#fdf7e8;';
+     }
+     console.log(func.FUNC_TYPE)
 
-    // 非 001 → 唯讀（不顯示 checkbox，不可點擊）
-    const checkboxHtml = isAdmin
-        ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>`
-        : '';
-    const clickAttr = isAdmin
-        ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"`
-        : 'style="cursor:default;"';
+     const checkboxHtml = isAdmin
+         ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>`
+         : '';
+     const clickAttr = isAdmin
+         ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"`
+         : 'style="cursor:default;"';
 
-    const itemClass = `page-item ${isParent ? 'parent-page' : ''} ${isChild ? 'child-page-item' : ''}`;
-
-    return `
-        <div class="${itemClass}" data-func-id="${funcId}" ${clickAttr} style="${bgStyle}">
-            <div class="permission-content">
-                ${checkboxHtml}
-                <span class="permission-title">${funcName}</span>
-                <span class="permission-info">頁面ID: ${funcId}</span>
-            </div>
-        </div>`;
-}
+     return `
+ <div class="${itemClass} ${childClass}" data-func-id="${funcId}" ${clickAttr} style="${bgStyle}">
+     <div class="permission-content">
+         ${checkboxHtml}
+         <span class="permission-title">${funcName}</span>
+         <span class="permission-info">頁面ID: ${funcId}</span>
+     </div>
+ </div>`;
+ }
