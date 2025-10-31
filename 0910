@@ -1,13 +1,3 @@
-完美 👍 我幫你重新整理一份 最終可直接取代的 renderPageItem() 函式，
-這版是「跟你之前成功版本的色彩邏輯一致」，
-並且補回「FUNC_TYPE=2 → 淺橘 (#FFF4E1)」這一層顏色。
-
-我也幫你保留原本結構與註解，直接貼上即可用。
-
-⸻
-
-✅ 最終版 renderPageItem()（完整可替換）
-
 // 產生單一頁面項目 (含父/子階層、顏色區分、唯讀控制)
 function renderPageItem(func, isChild) {
     const funcId = getFuncId(func);
@@ -25,7 +15,6 @@ function renderPageItem(func, isChild) {
     // FUNC_TYPE = 2 → 淺橘 (#FFF4E1)
     // 預設白底
     let bgStyle = '';
-
     if (isParent) {
         bgStyle = 'background-color:#E8F1FB;';
     } else if (func.FUNC_TYPE === '1') {
@@ -36,9 +25,6 @@ function renderPageItem(func, isChild) {
         bgStyle = 'background-color:#FFFFFF;';
     }
 
-    // ✅ 目前選中的頁面高亮顯示
-    const activeClass = (currentSelectedPage === funcId) ? 'active-page' : '';
-
     // 非 001 → 唯讀（不顯示 checkbox，不可點擊）
     const checkboxHtml = isAdmin
         ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>`
@@ -47,7 +33,7 @@ function renderPageItem(func, isChild) {
         ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"`
         : 'style="cursor:default;"';
 
-    const itemClass = `page-item ${activeClass} ${isParent ? 'parent-page' : ''} ${isChild ? 'child-page-item' : ''}`;
+    const itemClass = `page-item ${isParent ? 'parent-page' : ''} ${isChild ? 'child-page-item' : ''}`;
 
     return `
         <div class="${itemClass}" data-func-id="${funcId}" ${clickAttr} style="${bgStyle}">
@@ -58,34 +44,3 @@ function renderPageItem(func, isChild) {
             </div>
         </div>`;
 }
-
-
-⸻
-
-💡 顏色一覽（視覺對照）
-
-類型	顏色值	意義
-父頁面	#E8F1FB	淺藍
-FUNC_TYPE = 1	#E8F5E9	淺綠（Tree）
-FUNC_TYPE = 2	#FFF4E1	淺橘（PartialView）
-其他 / 預設	#FFFFFF	白色
-
-
-⸻
-
-✨ 額外建議（可選擇加入）
-
-若你想讓被選取的頁面更明顯，可在 CSS 加上：
-
-.page-item.active-page {
-  border: 2px solid #4A89DC;
-  box-shadow: 0 0 6px rgba(74,137,220,0.6);
-}
-
-
-⸻
-
-這版是跟你「之前成功有顏色」的版本一致（色碼與分支邏輯都保持），
-保證 FUNC_TYPE = 2 淺橘會出現。
-
-要我幫你順便加「滑過 hover 效果」讓測試更清楚嗎？
