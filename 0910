@@ -1,69 +1,74 @@
-看起來 FUNC_TYPE 的「2」不是單純字串 '2'（可能是數字 2、' 2 '、或欄位名根本不是 FUNC_TYPE）。另外，如果該頁被判定成「父頁」也會用父頁色（淺藍）覆蓋掉橘色。
+讚！console 已經印出 fType: "2"，表示前端有拿到類型值。
+但你看到 type2 仍是白底，最大嫌疑是 .has-permission（或其它樣式）把底色蓋掉了。type1 會顯示淺綠，多半是那些頁面「沒被勾選」→ 沒有 .has-permission，所以不會被覆蓋；而 type2 通常已被勾選，有 .has-permission，就被白底覆蓋。
 
-直接給你兩段可貼上用的修正：
+給你可直接貼上的兩段修正，採「用 class 管色、不用 inline style」並提高優先度，同時避免 .has-permission 再去改背景色。
 
 ⸻
 
-1) 新增工具函式（放在輔助函式區）
+1) CSS（放在你的樣式區，確保在任何舊的 .has-permission 後面，或加 !important）
+
+/* 顏色基準 */
+.page-item.parent-page { background: #E8F1FB !important; }  /* 父頁：淺藍 */
+.page-item.type-1      { background: #E8F5E9 !important; }  /* 類型1：淺綠 */
+.page-item.type-2      { background: #FFF4E1 !important; }  /* 類型2：淺橘 */
+
+/* 不要用 .has-permission 來改背景，用外框/陰影表達勾選狀態 */
+.page-item.has-permission {
+  /* 移除任何 background 設定（避免覆蓋色塊）*/
+  background: inherit !important;
+  outline: 2px solid #4CAF50;            /* 勾選的視覺提示 */
+  box-shadow: 0 0 0 2px rgba(76,175,80,.15);
+}
+
+/* 若仍有舊樣式強制白底，這三條是終極保險（權重更高） */
+.page-item.has-permission.parent-page { background: #E8F1FB !important; }
+.page-item.has-permission.type-1      { background: #E8F5E9 !important; }
+.page-item.has-permission.type-2      { background: #FFF4E1 !important; }
+
+
+⸻
+
+2) renderPageItem（改成用類別決定顏色，不再用 inline style）
 
 function getFuncType(func) {
-  const raw =
-    func.FUNC_TYPE ??
-    func.FuncType ??
-    func.FUNC_TP ??
-    func.PAGE_TYPE ??
-    func.PageType ??
-    '';
-  const v = String(raw).trim();       // 統一成字串
-  if (v === '1' || v === '2') return v;
-  if (v === '1.0' || v === '2.0') return v[0];
+  const raw = func.FUNC_TYPE ?? func.FuncType ?? func.FUNC_TP ?? func.PAGE_TYPE ?? func.PageType ?? '';
+  const v = String(raw).trim();
+  if (v.startsWith('1')) return '1';
+  if (v.startsWith('2')) return '2';
   return '';
 }
 
-
-⸻
-
-2) 覆蓋你的 renderPageItem（父頁優先淺藍，其它依 1=綠 / 2=橘）
-
 function renderPageItem(func, isChild) {
-  const funcId    = getFuncId(func);
-  const funcName  = getFuncName(func);
-  const isAdmin   = (currentGroupID === '001');
+  const funcId   = getFuncId(func);
+  const funcName = getFuncName(func);
+  const fType    = getFuncType(func);
+  const isAdmin  = (currentGroupID === '001');
 
   const hasPermission = !!(groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission);
   const checkedAttr   = hasPermission ? 'checked' : '';
 
   const isParent = isParentPage(func);
-  const fType    = getFuncType(func);   // ← 使用新工具函式
 
-  // ---- 背景色：父頁優先淺藍，其它再看 type ----
-  let bgStyle = 'background-color:#ffffff;';
-  if (isParent) {
-    bgStyle = 'background-color:#E8F1FB;';      // 父頁：淺藍
-  } else if (fType === '1') {
-    bgStyle = 'background-color:#E8F5E9;';      // 類型1：淺綠
-  } else if (fType === '2') {
-    bgStyle = 'background-color:#FFF4E1;';      // 類型2：淺橘
-  }
+  // 組合 class：父頁、子頁、type、has-permission
+  const classList = ['page-item'];
+  if (isParent) classList.push('parent-page');
+  if (isChild)  classList.push('child-page-item');
+  if (fType === '1') classList.push('type-1');
+  if (fType === '2') classList.push('type-2');
+  if (hasPermission) classList.push('has-permission');
 
-  const itemClass = [
-    'page-item',
-    hasPermission ? 'has-permission' : '',
-    isParent ? 'parent-page' : '',
-    isChild ? 'child-page-item' : ''
-  ].join(' ').trim();
-
-  // 非001 → 唯讀（不顯示checkbox、不綁點擊）
+  // 非 001 → 唯讀（不顯示 checkbox、不綁點擊）
   const checkboxHtml = isAdmin ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
   const clickAttr    = isAdmin ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : `style="cursor:default;"`;
 
-  // 偵錯：幫你確認為何沒上色
-  console.debug('[renderPageItem]', { id: funcId, name: funcName, isParent, fType,
+  // 偵錯
+  console.debug('[renderPageItem]', {
+    id: funcId, name: funcName, isParent, fType,
     raw: { FUNC_TYPE: func.FUNC_TYPE, FuncType: func.FuncType, FUNC_TP: func.FUNC_TP, PAGE_TYPE: func.PAGE_TYPE }
   });
 
   return `
-    <div class="${itemClass}" data-func-id="${funcId}" ${clickAttr} style="${bgStyle}">
+    <div class="${classList.join(' ')}" data-func-id="${funcId}" ${clickAttr}>
       <div class="permission-content">
         ${checkboxHtml}
         <span class="permission-title">${funcName}</span>
@@ -75,11 +80,9 @@ function renderPageItem(func, isChild) {
 
 ⸻
 
-如果還是看不到淺橘色：
-	•	Console 會印出 fType 與原始欄位，確認是否真的取到 '2'。
-	•	若 isParent === true，這一筆會被當父頁 → 會吃到淺藍（不是橘色）。
-	•	極少數情況是 CSS 有 !important 蓋掉背景；如有需要，可先加這段排除：
+為什麼這樣能解決？
+	•	你 console 已確認 fType: "2"，問題不是資料，而是樣式被覆蓋。
+	•	我把顏色綁在 .parent-page / .type-1 / .type-2 上，並用 !important 壓住任何可能的白底。
+	•	.has-permission 不再設定背景，只用 outline/陰影表達狀態；就算你需要它保留，也有三條「終極保險」讓 type 顏色最後勝出。
 
-.page-item { background-color: transparent !important; }
-
-這樣改完，type=2 只要不是父頁，就一定會是淺橘色。
+照這兩段貼上後，type2 一定會出現淺橘（除非外部還有更兇的 !important 白底；那就找出並移掉，或靠上面的終極保險三條壓回去）。
