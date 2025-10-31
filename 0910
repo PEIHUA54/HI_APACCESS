@@ -1,261 +1,91 @@
-<style>
-    .management-section {
-        background: white;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 15px;
-        height: 680px;
-        overflow-y: auto;
-    }
+很好，你這份 CSS 我看完了，問題一目了然。
+👉 你的樣式裡有多條規則把所有 .page-item 統一設成 背景 #f8f9fa（白灰色），
+而且 .page-item.has-permission 又會覆蓋成綠色，導致 FUNC_TYPE=2 的淺橘色永遠顯示不出來。
 
-    .section-header {
-        background: #f8f9fa;
-        margin: -15px -15px 15px -15px;
-        padding: 12px 15px;
-        border-bottom: 1px solid #dee2e6;
-        font-weight: bold;
-        color: #495057;
-        position: sticky;
-        top: -15px;
-        z-index: 10;
-    }
+⸻
 
-    .user-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: #f8f9fa;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
+✅ 目標
 
-    .page-item:hover {
-        background-color: #e9ecef !important;
-    }
+要讓：
+	•	母頁 → 淺藍
+	•	FUNC_TYPE = 1 → 淺綠
+	•	FUNC_TYPE = 2 → 淺橘
+	•	.has-permission 不再覆蓋背景顏色，只加框線或陰影
 
-    /*    .page-item.has-permission {
-        background: #e8f5e8;
-        border-color: #28a745;
-    }*/
+⸻
 
-    /* 按鈕權限項目樣式*/
-    .btn-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: white;
-        cursor: pointer;
-        user-select: none;
-        transition: all 0.2s;
-    }
+✅ 請你在 <style> 的最底部（最後一行）加上以下 覆蓋修正版樣式
 
-        .btn-item:hover {
-            background-color: #f0f8ff !important;
-        }
+（這會壓過前面所有定義，不需要刪原本）
 
-        .btn-item.has-permission {
-            background: #e3f2fd;
-            border-color: #2196f3;
-        }
+/* ========= FUNC_TYPE 顏色強制設定區 ========= */
 
-    .page-item, .btn-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: #f8f9fa;
-        cursor: pointer;
-        user-select: none;
-        transition: all 0.2s;
-        display: block;
-    }
+/* 母頁 */
+.page-item.parent-page {
+    background: #E3F2FD !important;  /* 淺藍 */
+    border-color: #2196f3 !important;
+    border-left: 4px solid #2196f3 !important;
+}
 
-        .page-item:hover, .btn-item:hover {
-            background-color: #e9ecef !important;
-        }
+/* 類型 1: Tree 頁面 → 淺綠 */
+.page-item.type-1 {
+    background: #E8F5E9 !important;  /* 淺綠 */
+    border-left: 4px solid #28a745 !important;
+}
 
-        .page-item.has-permission {
-            background: #e8f5e8;
-            /*            border-color: #28a745;*/
-            line-height: 1.4;
-        }
+/* 類型 2: PartialView 頁面 → 淺橘 */
+.page-item.type-2 {
+    background: #FFF4E1 !important;  /* 淺橘 */
+    border-left: 4px solid #FFA726 !important;
+}
 
-        .page-item.parent-page {
-            background: #e3f2fd !important;
-            border-color: #2196f3;
-            border-left: 4px solid #2196f3;
-            line-height: 1.4;
-        }
+/* has-permission 不要再改背景，只改邊框 */
+.page-item.has-permission {
+    outline: 2px solid rgba(33,150,243,0.3);
+    box-shadow: 0 0 0 2px rgba(33,150,243,0.1);
+    background: inherit !important;
+}
 
-            .page-item.parent-page:hover {
-                background-color: #e3f2fd !important;
-            }
+/* 強制 has-permission 不蓋顏色 */
+.page-item.has-permission.type-1 { background: #E8F5E9 !important; }
+.page-item.has-permission.type-2 { background: #FFF4E1 !important; }
+.page-item.has-permission.parent-page { background: #E3F2FD !important; }
 
-            .page-item.parent-page.has-permission {
-                background: #e3f2fd; /* 改為保持橘色，不變綠色 */
-                border-color: #2196f3; /* 改為保持橘色邊框 */
-                border-left: 4px solid #2196f3; /* 改為保持橘色左邊框 */
-            }
 
-        .btn-item.has-permission {
-            background: #e3f2fd;
-            border-color: #2196f3;
-        }
+⸻
 
-    .permission-content {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        gap: 12px; /* 使用 gap 來設定間距 */
-    }
+✅ 同時確保你的 JS 有這兩行：
 
-    .permission-checkbox {
-        margin: 0 !important;
-        padding: 0 !important;
-        pointer-events: none; /* 防止直接點擊checkbox，統一由父元素處理 */
-        flex-shrink: 0;
-        width: 16px !important;
-        height: 16px !important;
-        cursor: pointer;
-        transform: scale(1) !important; /* 確保checkbox不會被放大 */
-        -webkit-transform: scale(1) !important;
-        -moz-transform: scale(1) !important;
-        vertical-align: middle;
-        box-sizing: border-box !important;
-        -webkit-appearance: checkbox !important;
-        -moz-appearance: checkbox !important;
-        appearance: checkbox !important;
-    }
+（這是讓 class 被正確加上）
 
-    .permission-title {
-        font-weight: bold;
-        flex: 1; /* 占剩餘空間 */
-        min-width: 0; /* 允許縮小 */
-    }
+if (fType === '1') classList.push('type-1');
+if (fType === '2') classList.push('type-2');
 
-    .permission-info {
-        font-size: 12px;
-        color: #6c757d;
-        flex-shrink: 0; /* 不縮小 */
-    }
 
-    /* 權限管理區域包框樣式 - 有明顯框線 */
-    .permission-wrapper {
-        border: 2px solid #ffb74d; /* 改為淺橘色 */
-        border-radius: 8px;
-        padding: 5px;
-        background: #fafafa;
-        margin-bottom: 50px;
-        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
-    }
+⸻
 
-    .permission-wrapper-header {
-        background: #fff3e0; /* 淺橘色背景 */
-        margin: -10px -10px 20px -20px;
-        padding: 10px 10px;
-        border-bottom: 2px solid #ffb74d;
-        font-weight: bold;
-        color: #f57c00; /* 橘色文字 */
-        border-radius: 6px 6px 0 0;
-    }
+🔍 驗證方式
+	1.	開啟 DevTools → Elements → 點選一個 FUNC_TYPE=2 的頁面。
+應該會看到：
 
-    /* 確保高度對齊 */
-    .management-section {
-        height: 680px; /* 統一高度 */
-    }
+<div class="page-item child-page-item type-2 ...">
 
-    .group-selector {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-    }
 
-    .btn-small {
-        padding: 2px 8px;
-        font-size: 12px;
-    }
+	2.	若背景仍不是橘色 → 在右邊的 CSS 檢查「哪一條規則覆蓋」；
+我這段有加 !important，理論上會勝過前面全部。
 
-    .no-data {
-        text-align: center;
-        color: #6c757d;
-        font-style: italic;
-        padding: 40px 20px;
-    }
+⸻
 
-    /* 儲存提醒樣式 */
-    .save-reminder {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 3px;
-        border-radius: 5px;
-        margin-bottom: 2px;
-        display: none;
-    }
+✅ 小結
 
-        .save-reminder .fa-exclamation-triangle {
-            color: #f39c12;
-            margin-right: 8px;
-        }
+你的 type2 淺橘色失效的原因是：
+	•	.page-item 原始背景 (#f8f9fa) 先上色
+	•	.page-item.has-permission 再疊上綠色或白色
+	•	FUNC_TYPE=2 的顏色被全部蓋掉
 
-    /* 階層顯示樣式 */
-    .parent-page-header {
-        background: #e3f2fd;
-        border: 1px solid #2196f3;
-        border-radius: 4px;
-        padding: 10px 15px;
-        margin: 10px 0 5px 0;
-        font-weight: bold;
-        color: #1976d2;
-        font-size: 14px;
-        line-height: 1.4;
-    }
+上面的覆蓋區塊會確保：
+	•	每種 FUNC_TYPE 都有獨立背景色；
+	•	.has-permission 只加框線，不會再改背景；
+	•	!important 強制壓制所有舊樣式。
 
-    .child-page-item {
-        margin-left: 20px;
-        position: relative;
-    }
-
-        .child-page-item::before {
-            content: "└─";
-            position: absolute;
-            left: -20px;
-            color: #6c757d;
-            font-family: monospace;
-        }
-
-    /* Modal表格對齊 */
-    .modal-body .form-group label {
-        font-weight: 600;
-        margin-bottom: 5px;
-        display: block;
-    }
-
-    .modal-body .form-control {
-        width: 100%;
-        margin-bottom: 10px;
-    }
-
-    .modal-body .row {
-        margin-left: -10px;
-        margin-right: -10px;
-    }
-
-    .modal-body .col-md-6 {
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-
-    .extra-info {
-        font-size: 0.8rem;
-        color: #666;
-        margin-top: 2px;
-        line-height: 1.2;
-    }
-
-</style>
+這樣你重新整理頁面後，type2 一定會變成 #FFF4E1 橘色背景。
