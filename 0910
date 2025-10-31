@@ -1,88 +1,261 @@
-讚！console 已經印出 fType: "2"，表示前端有拿到類型值。
-但你看到 type2 仍是白底，最大嫌疑是 .has-permission（或其它樣式）把底色蓋掉了。type1 會顯示淺綠，多半是那些頁面「沒被勾選」→ 沒有 .has-permission，所以不會被覆蓋；而 type2 通常已被勾選，有 .has-permission，就被白底覆蓋。
+<style>
+    .management-section {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        height: 680px;
+        overflow-y: auto;
+    }
 
-給你可直接貼上的兩段修正，採「用 class 管色、不用 inline style」並提高優先度，同時避免 .has-permission 再去改背景色。
+    .section-header {
+        background: #f8f9fa;
+        margin: -15px -15px 15px -15px;
+        padding: 12px 15px;
+        border-bottom: 1px solid #dee2e6;
+        font-weight: bold;
+        color: #495057;
+        position: sticky;
+        top: -15px;
+        z-index: 10;
+    }
 
-⸻
+    .user-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
 
-1) CSS（放在你的樣式區，確保在任何舊的 .has-permission 後面，或加 !important）
+    .page-item:hover {
+        background-color: #e9ecef !important;
+    }
 
-/* 顏色基準 */
-.page-item.parent-page { background: #E8F1FB !important; }  /* 父頁：淺藍 */
-.page-item.type-1      { background: #E8F5E9 !important; }  /* 類型1：淺綠 */
-.page-item.type-2      { background: #FFF4E1 !important; }  /* 類型2：淺橘 */
+    /*    .page-item.has-permission {
+        background: #e8f5e8;
+        border-color: #28a745;
+    }*/
 
-/* 不要用 .has-permission 來改背景，用外框/陰影表達勾選狀態 */
-.page-item.has-permission {
-  /* 移除任何 background 設定（避免覆蓋色塊）*/
-  background: inherit !important;
-  outline: 2px solid #4CAF50;            /* 勾選的視覺提示 */
-  box-shadow: 0 0 0 2px rgba(76,175,80,.15);
-}
+    /* 按鈕權限項目樣式*/
+    .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: white;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+    }
 
-/* 若仍有舊樣式強制白底，這三條是終極保險（權重更高） */
-.page-item.has-permission.parent-page { background: #E8F1FB !important; }
-.page-item.has-permission.type-1      { background: #E8F5E9 !important; }
-.page-item.has-permission.type-2      { background: #FFF4E1 !important; }
+        .btn-item:hover {
+            background-color: #f0f8ff !important;
+        }
 
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
 
-⸻
+    .page-item, .btn-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        background: #f8f9fa;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s;
+        display: block;
+    }
 
-2) renderPageItem（改成用類別決定顏色，不再用 inline style）
+        .page-item:hover, .btn-item:hover {
+            background-color: #e9ecef !important;
+        }
 
-function getFuncType(func) {
-  const raw = func.FUNC_TYPE ?? func.FuncType ?? func.FUNC_TP ?? func.PAGE_TYPE ?? func.PageType ?? '';
-  const v = String(raw).trim();
-  if (v.startsWith('1')) return '1';
-  if (v.startsWith('2')) return '2';
-  return '';
-}
+        .page-item.has-permission {
+            background: #e8f5e8;
+            /*            border-color: #28a745;*/
+            line-height: 1.4;
+        }
 
-function renderPageItem(func, isChild) {
-  const funcId   = getFuncId(func);
-  const funcName = getFuncName(func);
-  const fType    = getFuncType(func);
-  const isAdmin  = (currentGroupID === '001');
+        .page-item.parent-page {
+            background: #e3f2fd !important;
+            border-color: #2196f3;
+            border-left: 4px solid #2196f3;
+            line-height: 1.4;
+        }
 
-  const hasPermission = !!(groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission);
-  const checkedAttr   = hasPermission ? 'checked' : '';
+            .page-item.parent-page:hover {
+                background-color: #e3f2fd !important;
+            }
 
-  const isParent = isParentPage(func);
+            .page-item.parent-page.has-permission {
+                background: #e3f2fd; /* 改為保持橘色，不變綠色 */
+                border-color: #2196f3; /* 改為保持橘色邊框 */
+                border-left: 4px solid #2196f3; /* 改為保持橘色左邊框 */
+            }
 
-  // 組合 class：父頁、子頁、type、has-permission
-  const classList = ['page-item'];
-  if (isParent) classList.push('parent-page');
-  if (isChild)  classList.push('child-page-item');
-  if (fType === '1') classList.push('type-1');
-  if (fType === '2') classList.push('type-2');
-  if (hasPermission) classList.push('has-permission');
+        .btn-item.has-permission {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
 
-  // 非 001 → 唯讀（不顯示 checkbox、不綁點擊）
-  const checkboxHtml = isAdmin ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
-  const clickAttr    = isAdmin ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : `style="cursor:default;"`;
+    .permission-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 12px; /* 使用 gap 來設定間距 */
+    }
 
-  // 偵錯
-  console.debug('[renderPageItem]', {
-    id: funcId, name: funcName, isParent, fType,
-    raw: { FUNC_TYPE: func.FUNC_TYPE, FuncType: func.FuncType, FUNC_TP: func.FUNC_TP, PAGE_TYPE: func.PAGE_TYPE }
-  });
+    .permission-checkbox {
+        margin: 0 !important;
+        padding: 0 !important;
+        pointer-events: none; /* 防止直接點擊checkbox，統一由父元素處理 */
+        flex-shrink: 0;
+        width: 16px !important;
+        height: 16px !important;
+        cursor: pointer;
+        transform: scale(1) !important; /* 確保checkbox不會被放大 */
+        -webkit-transform: scale(1) !important;
+        -moz-transform: scale(1) !important;
+        vertical-align: middle;
+        box-sizing: border-box !important;
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+    }
 
-  return `
-    <div class="${classList.join(' ')}" data-func-id="${funcId}" ${clickAttr}>
-      <div class="permission-content">
-        ${checkboxHtml}
-        <span class="permission-title">${funcName}</span>
-        <span class="permission-info">頁面ID: ${funcId}${fType ? `｜Type:${fType}` : ''}</span>
-      </div>
-    </div>`;
-}
+    .permission-title {
+        font-weight: bold;
+        flex: 1; /* 占剩餘空間 */
+        min-width: 0; /* 允許縮小 */
+    }
 
+    .permission-info {
+        font-size: 12px;
+        color: #6c757d;
+        flex-shrink: 0; /* 不縮小 */
+    }
 
-⸻
+    /* 權限管理區域包框樣式 - 有明顯框線 */
+    .permission-wrapper {
+        border: 2px solid #ffb74d; /* 改為淺橘色 */
+        border-radius: 8px;
+        padding: 5px;
+        background: #fafafa;
+        margin-bottom: 50px;
+        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
+    }
 
-為什麼這樣能解決？
-	•	你 console 已確認 fType: "2"，問題不是資料，而是樣式被覆蓋。
-	•	我把顏色綁在 .parent-page / .type-1 / .type-2 上，並用 !important 壓住任何可能的白底。
-	•	.has-permission 不再設定背景，只用 outline/陰影表達狀態；就算你需要它保留，也有三條「終極保險」讓 type 顏色最後勝出。
+    .permission-wrapper-header {
+        background: #fff3e0; /* 淺橘色背景 */
+        margin: -10px -10px 20px -20px;
+        padding: 10px 10px;
+        border-bottom: 2px solid #ffb74d;
+        font-weight: bold;
+        color: #f57c00; /* 橘色文字 */
+        border-radius: 6px 6px 0 0;
+    }
 
-照這兩段貼上後，type2 一定會出現淺橘（除非外部還有更兇的 !important 白底；那就找出並移掉，或靠上面的終極保險三條壓回去）。
+    /* 確保高度對齊 */
+    .management-section {
+        height: 680px; /* 統一高度 */
+    }
+
+    .group-selector {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+
+    .btn-small {
+        padding: 2px 8px;
+        font-size: 12px;
+    }
+
+    .no-data {
+        text-align: center;
+        color: #6c757d;
+        font-style: italic;
+        padding: 40px 20px;
+    }
+
+    /* 儲存提醒樣式 */
+    .save-reminder {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 3px;
+        border-radius: 5px;
+        margin-bottom: 2px;
+        display: none;
+    }
+
+        .save-reminder .fa-exclamation-triangle {
+            color: #f39c12;
+            margin-right: 8px;
+        }
+
+    /* 階層顯示樣式 */
+    .parent-page-header {
+        background: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 10px 15px;
+        margin: 10px 0 5px 0;
+        font-weight: bold;
+        color: #1976d2;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+
+    .child-page-item {
+        margin-left: 20px;
+        position: relative;
+    }
+
+        .child-page-item::before {
+            content: "└─";
+            position: absolute;
+            left: -20px;
+            color: #6c757d;
+            font-family: monospace;
+        }
+
+    /* Modal表格對齊 */
+    .modal-body .form-group label {
+        font-weight: 600;
+        margin-bottom: 5px;
+        display: block;
+    }
+
+    .modal-body .form-control {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .modal-body .row {
+        margin-left: -10px;
+        margin-right: -10px;
+    }
+
+    .modal-body .col-md-6 {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .extra-info {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 2px;
+        line-height: 1.2;
+    }
+
+</style>
