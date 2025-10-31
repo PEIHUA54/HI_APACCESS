@@ -1,91 +1,75 @@
-很好，你這份 CSS 我看完了，問題一目了然。
-👉 你的樣式裡有多條規則把所有 .page-item 統一設成 背景 #f8f9fa（白灰色），
-而且 .page-item.has-permission 又會覆蓋成綠色，導致 FUNC_TYPE=2 的淺橘色永遠顯示不出來。
+你看到「母頁藍底 + 綠色框」是因為母頁元素同時被套到 type-1/type-2 類別，而 type-1 的綠色左框線把母頁的藍色左框線蓋掉了（同等 specificity、後宣告或 !important 蓋過）。
+
+給你兩個修法，採其中一個就好；我建議用 A（最乾淨）。
 
 ⸻
 
-✅ 目標
+A. JS 不要把 type-1/2 加在母頁
 
-要讓：
-	•	母頁 → 淺藍
-	•	FUNC_TYPE = 1 → 淺綠
-	•	FUNC_TYPE = 2 → 淺橘
-	•	.has-permission 不再覆蓋背景顏色，只加框線或陰影
+把 renderPageItem 裡組 class 的段落換成這個（只改 classList 那段；其餘保留）：
 
-⸻
+function renderPageItem(func, isChild) {
+  const funcId = getFuncId(func);
+  const funcName = getFuncName(func);
+  const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+  const checkedAttr = hasPermission ? 'checked' : '';
+  const isParent = isParentPage(func);
+  const fType = String(func.FUNC_TYPE ?? '');
 
-✅ 請你在 <style> 的最底部（最後一行）加上以下 覆蓋修正版樣式
+  const classList = ['page-item'];
+  if (hasPermission) classList.push('has-permission');
+  if (isChild) classList.push('child-page-item');
 
-（這會壓過前面所有定義，不需要刪原本）
+  if (isParent) {
+    // 母頁一律藍色樣式，不混 type-* 顏色
+    classList.push('parent-page');
+  } else {
+    // 只有子頁/一般頁才套 type 顏色
+    if (fType === '1') classList.push('type-1');
+    if (fType === '2') classList.push('type-2');
+  }
 
-/* ========= FUNC_TYPE 顏色強制設定區 ========= */
+  const isAdminUser = (currentGroupID === '001');
+  const checkboxHtml = isAdminUser ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
+  const clickAttr = isAdminUser ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : 'style="cursor:default;"';
 
-/* 母頁 */
-.page-item.parent-page {
-    background: #E3F2FD !important;  /* 淺藍 */
-    border-color: #2196f3 !important;
-    border-left: 4px solid #2196f3 !important;
+  return `
+    <div class="${classList.join(' ')}" data-func-id="${funcId}" ${clickAttr}>
+      <div class="permission-content">
+        ${checkboxHtml}
+        <span class="permission-title">${funcName}</span>
+        <span class="permission-info">頁面ID: ${funcId}</span>
+      </div>
+    </div>`;
 }
 
-/* 類型 1: Tree 頁面 → 淺綠 */
-.page-item.type-1 {
-    background: #E8F5E9 !important;  /* 淺綠 */
-    border-left: 4px solid #28a745 !important;
-}
-
-/* 類型 2: PartialView 頁面 → 淺橘 */
-.page-item.type-2 {
-    background: #FFF4E1 !important;  /* 淺橘 */
-    border-left: 4px solid #FFA726 !important;
-}
-
-/* has-permission 不要再改背景，只改邊框 */
-.page-item.has-permission {
-    outline: 2px solid rgba(33,150,243,0.3);
-    box-shadow: 0 0 0 2px rgba(33,150,243,0.1);
-    background: inherit !important;
-}
-
-/* 強制 has-permission 不蓋顏色 */
-.page-item.has-permission.type-1 { background: #E8F5E9 !important; }
-.page-item.has-permission.type-2 { background: #FFF4E1 !important; }
-.page-item.has-permission.parent-page { background: #E3F2FD !important; }
-
 
 ⸻
 
-✅ 同時確保你的 JS 有這兩行：
+B. 保留現況，但用 CSS 強制母頁蓋過 type-*（若你不想動 JS）
 
-（這是讓 class 被正確加上）
+把這段放在你的 <style> 最底部、在所有 type-* 規則之後：
 
-if (fType === '1') classList.push('type-1');
-if (fType === '2') classList.push('type-2');
+/* 母頁贏過 type-1/type-2：永遠藍色 */
+.page-item.parent-page,
+.page-item.parent-page.type-1,
+.page-item.parent-page.type-2 {
+  background: #E3F2FD !important;
+  border-color: #2196f3 !important;
+  border-left: 4px solid #2196f3 !important;
+}
 
+/* has-permission 只做描邊，不改背景顏色 */
+.page-item.has-permission { 
+  outline: 2px solid rgba(33,150,243,0.2);
+  box-shadow: 0 0 0 2px rgba(33,150,243,0.08);
+  background: inherit !important;
+}
+
+另外確認你的 type-2 規則顏色與命名一致（例如 #FFF4E1）且在樣式表中早於上面的母頁覆蓋區塊。
 
 ⸻
 
-🔍 驗證方式
-	1.	開啟 DevTools → Elements → 點選一個 FUNC_TYPE=2 的頁面。
-應該會看到：
-
-<div class="page-item child-page-item type-2 ...">
-
-
-	2.	若背景仍不是橘色 → 在右邊的 CSS 檢查「哪一條規則覆蓋」；
-我這段有加 !important，理論上會勝過前面全部。
-
-⸻
-
-✅ 小結
-
-你的 type2 淺橘色失效的原因是：
-	•	.page-item 原始背景 (#f8f9fa) 先上色
-	•	.page-item.has-permission 再疊上綠色或白色
-	•	FUNC_TYPE=2 的顏色被全部蓋掉
-
-上面的覆蓋區塊會確保：
-	•	每種 FUNC_TYPE 都有獨立背景色；
-	•	.has-permission 只加框線，不會再改背景；
-	•	!important 強制壓制所有舊樣式。
-
-這樣你重新整理頁面後，type2 一定會變成 #FFF4E1 橘色背景。
+快速驗證
+	•	DevTools 檢查母頁元素 class，應該只有 page-item parent-page ...（A 作法），或即便有 type-1/2，最終仍顯示藍色（B 作法）。
+	•	子頁 type-1 → 淺綠、type-2 → 淺橘；母頁 → 淺藍且左框線藍色。
