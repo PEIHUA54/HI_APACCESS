@@ -1,75 +1,188 @@
-你看到「母頁藍底 + 綠色框」是因為母頁元素同時被套到 type-1/type-2 類別，而 type-1 的綠色左框線把母頁的藍色左框線蓋掉了（同等 specificity、後宣告或 !important 蓋過）。
+HOME:
+        [HttpGet]
+        [TokenAuthorize]
+        public ActionResult TokenEntry()
+        {
+            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+            var groupId = ((ClaimsPrincipal)User).FindFirst("groupId")?.Value;
 
-給你兩個修法，採其中一個就好；我建議用 A（最乾淨）。
+            Session["CurrentSystemId"] = systemId;
+            Session["CurrentGroupId"] = groupId;
+            Session["FromInternalSite"] = false; // TOKEN 進來
 
-⸻
+            if (systemId == null || groupId == null)
+            {
+                return Content("Token無效");
+            }
 
-A. JS 不要把 type-1/2 加在母頁
+            // 導向到群組管理
+            return RedirectToAction("GroupManagement", "AP", new { systemId = systemId , groupId = groupId });
+        }
 
-把 renderPageItem 裡組 class 的段落換成這個（只改 classList 那段；其餘保留）：
+APACCESS_DLL:
+        public string GetFunctionAndAccessUrl(string requestJson)
+        {
+            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
+            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
 
-function renderPageItem(func, isChild) {
-  const funcId = getFuncId(func);
-  const funcName = getFuncName(func);
-  const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-  const checkedAttr = hasPermission ? 'checked' : '';
-  const isParent = isParentPage(func);
-  const fType = String(func.FUNC_TYPE ?? '');
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
 
-  const classList = ['page-item'];
-  if (hasPermission) classList.push('has-permission');
-  if (isChild) classList.push('child-page-item');
+                // 檢查類型
+                if (!func.TypeActions.ContainsKey(request.Type))
+                {
+                    response.Result_code = Codes.TYPE_ERROR;
+                    response.Msg = "類型錯誤，只接受 1 或 2";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
 
-  if (isParent) {
-    // 母頁一律藍色樣式，不混 type-* 顏色
-    classList.push('parent-page');
-  } else {
-    // 只有子頁/一般頁才套 type 顏色
-    if (fType === '1') classList.push('type-1');
-    if (fType === '2') classList.push('type-2');
-  }
+                // 檢查環境
+                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
+                {
+                    response.Result_code = Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
 
-  const isAdminUser = (currentGroupID === '001');
-  const checkboxHtml = isAdminUser ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
-  const clickAttr = isAdminUser ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : 'style="cursor:default;"';
+                // 檢查系統授權
+                var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
+                if (!authorizedSystems.Contains(request.SysID))
+                {
+                    response.Result_code = Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
+                    response.Url = "";
+                    return JsonConvert.SerializeObject(response);
+                }
 
-  return `
-    <div class="${classList.join(' ')}" data-func-id="${funcId}" ${clickAttr}>
-      <div class="permission-content">
-        ${checkboxHtml}
-        <span class="permission-title">${funcName}</span>
-        <span class="permission-info">頁面ID: ${funcId}</span>
-      </div>
-    </div>`;
-}
+                // 產生 Token
+                string token = func.GenerateJwtToken(request.SysID, request.GroupID);
+                string baseUrl = func.EnvironmentUrls[request.Environment];
+                string action = func.TypeActions[request.Type];
+                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
 
+                // 成功
+                response.Result_code = Codes.SUCCESS;
+                response.Msg = "成功";
+                response.Url = finalUrl;
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+                response.Url = "";
+            }
 
-⸻
+            return JsonConvert.SerializeObject(response);
+        }
+DLL_FACTORY:
+    internal class FGetFunctionAndAccessUrl
+    {
+        // 環境設定
+        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
+        {
+            { "DEV", "http://localhost:53088" },
+            { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
+            { "PROD", "http://10.8.254.68/HI_APACCESS" },
+        };
 
-B. 保留現況，但用 CSS 強制母頁蓋過 type-*（若你不想動 JS）
+        // 類型設定
+        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
+        {
+            { "1", "TokenEntry_FUNC" },
+            { "2", "TokenEntry" }
+        };
 
-把這段放在你的 <style> 最底部、在所有 type-* 規則之後：
+        // 取得授權系統清單（呼叫 FCommon）
+        internal List<string> GetAuthorizedSystemsList(string environment)
+        {
+            return FCommon.GetAuthorizedSystemsList(environment);
+        }
 
-/* 母頁贏過 type-1/type-2：永遠藍色 */
-.page-item.parent-page,
-.page-item.parent-page.type-1,
-.page-item.parent-page.type-2 {
-  background: #E3F2FD !important;
-  border-color: #2196f3 !important;
-  border-left: 4px solid #2196f3 !important;
-}
+        // 產 JWT Token  10/30 增加群組
+        internal string GenerateJwtToken(string systemId, string groupId)
+        {
+            var claims = new[]
+            {
+                new Claim("systemId", systemId),
+                new Claim("groupId",  groupId  ?? string.Empty),
+            };
 
-/* has-permission 只做描邊，不改背景顏色 */
-.page-item.has-permission { 
-  outline: 2px solid rgba(33,150,243,0.2);
-  box-shadow: 0 0 0 2px rgba(33,150,243,0.08);
-  background: inherit !important;
-}
+            string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-另外確認你的 type-2 規則顏色與命名一致（例如 #FFF4E1）且在樣式表中早於上面的母頁覆蓋區塊。
+            var token = new JwtSecurityToken(
+                issuer: "hi_ap_access_dll",
+                audience: "hi_ap_access_web",
+                claims: claims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
 
-⸻
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+    }
+AP:
+    // 群組管理頁面
+    public ActionResult GroupManagement(string systemId, string groupId)
+    {
+        if (string.IsNullOrEmpty(systemId))
+        {
+            systemId = Session["CurrentSystemId"]?.ToString();
+            groupId = Session["CurrentGroupId"]?.ToString();
+        }
+        else
+        {
+            // 同步更新 Session
+            Session["CurrentSystemId"] = systemId;
+            Session["CurrentGroupId"] = groupId;
+        }
 
-快速驗證
-	•	DevTools 檢查母頁元素 class，應該只有 page-item parent-page ...（A 作法），或即便有 type-1/2，最終仍顯示藍色（B 作法）。
-	•	子頁 type-1 → 淺綠、type-2 → 淺橘；母頁 → 淺藍且左框線藍色。
+        bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
+
+        ViewBag.SystemId = systemId;
+        ViewBag.Title = "群組權限管理 - " + systemId;
+        ViewBag.ShowSwitchButton = isFromInternalSite; 
+
+        return View();
+    }
+別站台呼叫DLL:
+   // 權限管理導向 URL
+   public ActionResult AP_ACCESS_SYS()
+   {
+       try
+       {
+           var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
+           {
+               SysID = "HI_POSIMG",
+               Type = "2" ,
+               Environment = "DEV",
+               GroupID = this.APG_NO
+           };
+
+           string json_input = JsonConvert.SerializeObject(req_para);
+           string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
+           POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+
+           if (response_.Result_code == "0000")
+           {
+               string script = $@"
+               <script>
+                  window.open('{response_.Url}', '_blank');                       
+                  window.location.href='{Url.Action("Main", "Home")}';
+               </script>";
+               return Content(script, "text/html");
+           }
+           else
+           {
+               return Content($"<script>alert('取得權限管理連結失敗：{response_.Msg}');</script>", "text/html");
+           }
+       }
+       catch (Exception ex)
+       {
+           return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
+       }
+   }
