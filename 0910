@@ -7,3 +7,213 @@ const currentGroupID = '@Session["CurrentGroupId"]'; 帶群組id
 其他按鈕都不可以有(隱藏)，管理頁面跟按鈕權限部分只可以看(不可以操作、沒有checkbox那些跟儲存按鈕)
 然後user不可以變更使用者到001群(其他群是可以的)
 也不可以新增或批次新增使用者到001群組(其他群是可以的)
+OK，我直接在你「GroupManagement」這支 View/JS 上加最少變更，達成：
+	•	入口多帶 groupid 後：用 @Session["CurrentGroupId"] 判斷是否為系統管理群（001）。
+	•	非 001 群：
+	•	只能「管理使用者」、「查詢人員權限」。
+	•	「群組維護按鈕」（修改群組/刪除群組/儲存所有權限/批次匯入）隱藏。
+	•	「頁面與按鈕權限區」唯讀（不顯示 checkbox，無全勾選/全取消，不可點擊切換）。
+	•	「變更群組」目的群不可選 001；「新增/批次新增使用者」時，若當前群是 001 則不允許；也不得把任何人變更到 001。
+	•	001 群：全功能維護可用（保持你原本行為）。
+
+⸻
+
+1) View：宣告身分旗標＋進場鎖 UI
+
+放在你檔案頂端變數後面（已有 currentSysID 的附近）
+
+// [新增] 從 Session 取得目前入口群組（001 = 超管）
+const currentGroupID = '@Session["CurrentGroupId"]';
+const isAdmin = (currentGroupID === '001');
+
+在 $(document).ready(...) 裡最後加一行：
+
+$(document).ready(function () {
+    loadGroups();
+    loadAllFunctions();
+    // [新增] 依身分套用畫面鎖定
+    applyRoleGate();
+});
+
+加入這個函式（控制整體 UI）
+
+// [新增] 依身分鎖 UI（非 001 僅能管理使用者與查詢）
+function applyRoleGate() {
+    if (!isAdmin) {
+        // 隱藏「群組維護/權限儲存/批次匯入」相關按鈕
+        $('#editGroupBtn, #deleteGroupBtn, #saveAllBtn, #importUserBtn').hide();
+
+        // 將權限操作 API 導向 no-op，避免誤觸
+        window.togglePagePermissionByClick = function(){};
+        window.togglePagePermission = function(){};
+        window.selectAllButtons = function(){};
+        window.clearAllButtons = function(){};
+        window.toggleButtonPermissionByClick = function(){};
+        window.toggleButtonPermission = function(){};
+    }
+}
+
+
+⸻
+
+2) 當切換群組時，非 001 不得對 001 群做新增/匯入
+
+在 loadGroupData() 裡判定選到的群組後，加這段（放在 currentGroup = newGroup; 之後、hideSaveReminder(); 之後即可）
+
+// [新增] 非 001 身分 → 選到 001 群時不得新增/匯入；選到其它群可新增/匯入
+if (!isAdmin) {
+    if (currentGroup === '001') {
+        $('#addUserBtn, #importUserBtn').hide();   // 不能在 001 群新增或批次新增
+    } else {
+        $('#addUserBtn, #importUserBtn').show();   // 其它群可新增/批次新增
+    }
+}
+
+
+⸻
+
+3) 「變更使用者群組」Modal：目的群不得是 001（對非 001 身分）
+
+在 openChangeGroupModal() 產生新群組選項時，原本排除「目前群組」，再加一個條件：非 001 身分排除 value = ‘001’
+
+// 建立 newGroupSelect 選項 時的迴圈內修改：
+if (Array.isArray(response)) {
+    response.forEach(function (group) {
+        // [修改] 非 001 身分 → 目的群不可是 001；仍排除目前群組
+        if (group.value !== currentGroup && (isAdmin || group.value !== '001')) {
+            options += `<option value="${group.value}">${group.text}</option>`;
+        }
+    });
+}
+
+
+⸻
+
+4) 權限頁面：列表「唯讀化」
+
+(a) 頁面清單 render（不顯示 checkbox、不可點擊）
+
+在 renderPageItem(func, isChild) 裡，把 checkbox 與 onclick 依 isAdmin 決定是否輸出
+
+const funcId = getFuncId(func);
+const funcName = getFuncName(func);
+const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+const checkedAttr = hasPermission ? 'checked' : '';
+
+// [新增] 非 001 身分 → 不顯示 checkbox、不可點擊
+const checkboxHtml = isAdmin ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
+const clickAttr = isAdmin ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : '';
+
+return `
+  <div class="page-item ${hasPermission ? 'has-permission' : ''} ${isChild ? 'child-page-item' : ''}"
+       data-func-id="${funcId}" ${clickAttr}>
+    <div class="permission-content">
+      ${checkboxHtml}
+      <span class="permission-title">${funcName}</span>
+      <span class="permission-info">頁面ID: ${funcId}</span>
+    </div>
+  </div>`;
+
+(b) 按鈕區塊 render（無「全勾選/全取消」、不顯示按鈕 checkbox、不綁 onclick）
+
+在 updateButtonListHierarchical() 內組「父頁面 header」與「子頁面 header」的地方，把「全勾選/全取消」按鈕依 isAdmin 隱藏：
+
+// 父頁面 header 兩顆按鈕區塊
+${ isAdmin ? `
+  <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" ...>全勾選</button>
+  <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" ...>全取消</button>
+` : '' }
+
+子頁面 header 同理改成 isAdmin ? ... : ''。
+
+在 loadButtonsForPage(funcId) 內，產生單顆按鈕卡片時，不顯示 checkbox、不綁 onclick（唯讀文字）：
+
+if (response.success && response.data && response.data.length > 0) {
+    response.data.forEach(function (btn) {
+        const hasPermission = (groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission && groupPermissions[funcId].buttons[btn.BTNSEQ]) || false;
+
+        if (isAdmin) {
+            // 可編輯版（原樣）
+            buttonHtml += `
+              <div class="btn-item ${hasPermission ? 'has-permission' : ''}"
+                   onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')">
+                <div class="permission-content">
+                  <input type="checkbox" class="permission-checkbox" ${hasPermission ? 'checked' : ''}>
+                  <span class="permission-title">${btn.BTN_NAME}</span>
+                  <span class="permission-info">ID: ${btn.BTNID}</span>
+                </div>
+              </div>`;
+        } else {
+            // [新增] 唯讀版（無 checkbox、無 onclick）
+            buttonHtml += `
+              <div class="btn-item ${hasPermission ? 'has-permission' : ''}" style="pointer-events:none;">
+                <div class="permission-content">
+                  <span class="permission-title">${btn.BTN_NAME}</span>
+                  <span class="permission-info">ID: ${btn.BTNID}</span>
+                </div>
+              </div>`;
+        }
+    });
+
+    $(`#buttons-${funcId}`).html(buttonHtml).css({'padding':'10px','min-height':'auto'});
+} else {
+    // 無按鈕時保持原本緊湊樣式
+    ...
+}
+
+
+⸻
+
+5) 使用者新增／變更到 001 的前端防呆
+
+(a) saveUser()：當前群組若為 001 且非 001 身分 → 直接擋
+
+function saveUser() {
+    if (!isAdmin && currentGroup === '001') {
+        alert('無法在 001 群組新增使用者。');
+        return;
+    }
+    ...
+}
+
+(b) confirmChangeGroup()：非 001 身分不得把任何人變更到 001
+
+const newGroup = $('#newGroupSelect').val();
+if (!isAdmin && newGroup === '001') {
+    alert('無法將使用者變更至 001 群組。');
+    return;
+}
+
+
+⸻
+
+6)（建議）後端 Action 的安全閘門（避免繞前端）
+
+只給你最小必要的防線寫法，你把它套在對應 Action 最上面即可：
+
+// [新增] 共用：是否為 001 管理身分
+private bool IsAdmin {
+    get { return (Session["CurrentGroupId"] as string) == "001"; }
+}
+
+// AddUser：非 001 不可新增到 001
+if (!IsAdmin && model.APG_NO == "001")
+    return Json(new { success = false, message = "無法在 001 群組新增使用者" });
+
+// ImportUsers：非 001 不可匯入到 001
+if (!IsAdmin && (apg_no == "001" || targetGroup == "001"))
+    return Json(new { status = "fail", message = "無法對 001 群組批次匯入" });
+
+// ChangeUserGroup：非 001 不可變更至 001
+if (!IsAdmin && new_apg_no == "001")
+    return Json(new { success = false, message = "無法將使用者變更至 001 群組" });
+
+// BatchSetPermissions / UpdateGroup / DeleteGroup：非 001 直接擋
+if (!IsAdmin)
+    return Json(new { success = false, message = "僅限 001 管理群使用" });
+
+
+⸻
+
+以上改完，非 001 入口群就只能做「管理使用者」與「查詢人員」，其餘權限畫面純瀏覽；而001 入口群保有完整維護功能。
+需要我幫你把 renderPageItem() 同時加上你前面「母頁面/子頁面色塊」的選取深色效果一起合併嗎？
