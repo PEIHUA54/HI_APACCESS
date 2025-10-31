@@ -1,182 +1,91 @@
-可以、GroupID 不用放在網址上也沒問題。做法是：
-	1.	在 TokenEntry 解完 JWT 後，把 systemId、groupId 存進 Session。
-	2.	GroupManagement（以及後續該頁的所有 Action / Ajax）都改成只讀 Session，不再接受 QueryString 的 systemId、groupId。
-	3.	View 需要顯示或使用這兩個值，就由 Controller 先放進 ViewBag（或用強型別 Model），前端不必從網址拿參數。
-
-下面給你「直接可貼」的改法。
-
-⸻
-
-1) HomeController：TokenEntry 改法
-
-[HttpGet]
-[TokenAuthorize]
-public ActionResult TokenEntry()
-{
-    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-    var groupId  = ((ClaimsPrincipal)User).FindFirst("groupId")?.Value;
-
-    if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
-        return Content("Token無效");
-
-    Session["CurrentSystemId"] = systemId;
-    Session["CurrentGroupId"]  = groupId;
-    Session["FromInternalSite"] = false; // TOKEN 進來
-
-    // ✅ 不再把參數放在網址上
-    return RedirectToAction("GroupManagement", "AP");
-}
+SYSCONTROLLER: 
+// 2. 權限設定頁面
+ [HttpGet]
+ public ActionResult SYS_PERMISSION_SET()
+ {
+     return View();
+ }
 
 
-⸻
+ // 取得可維護系統選項(下拉選單用)
+ [HttpPost]
+ public JsonResult GetSystemOptions()
+ {
+     try
+     {
+         var options = F_SYS.GetMaintainableSystemOptions(Emp_NO);
+         return Json(new { success = true, data = options });
+     }
+     catch (Exception ex)
+     {
+         return Json(new { success = false, message = "取得系統選項失敗：" + ex.Message });
+     }
+ }
 
-2) APController：GroupManagement 改成只讀 Session
+ // 導向群組管理
+ [HttpPost]
+ public JsonResult RedirectToGroupManagement(string sysId,string groupId)
+ {
+     try
+     {
+         if (string.IsNullOrWhiteSpace(sysId))
+         {
+             return Json(new { success = false, message = "請選擇系統" });
+         }
 
-[TokenAuthorize] // 建議加這個，下面第 5 點有範本
-public class APController : Controller
-{
-    // ✅ 只透過 Session 取得，而非 QueryString
-    public ActionResult GroupManagement()
-    {
-        var systemId = Session["CurrentSystemId"] as string;
-        var groupId  = Session["CurrentGroupId"]  as string;
+         // **驗證 sysId 格式（白名單）**
+         if (!IsValidSystemId(sysId))
+         {
+             return Json(new { success = false, message = "無效的系統ID格式" });
+         }
 
-        if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
-            return Content("未授權或 Session 已失效");
+         // 更新Session
+         Session["CurrentSystemId"] = sysId;
+         Session["FromInternalSite"] = true;
+         groupId = "001";
 
-        // 要給 View 用，就塞進 ViewBag（或用強型別 Model）
-        ViewBag.SystemId = systemId;
-        ViewBag.GroupId  = groupId;
-        ViewBag.Title    = "群組權限管理 - " + systemId;
-        ViewBag.ShowSwitchButton = (Session["FromInternalSite"] as bool?) == true;
+         return Json(new
+         {
+             success = true,
+             sysId = sysId ,
+             groupId = groupId 
+         });
+     }
+     catch (Exception ex)
+     {
+         return Json(new { success = false, message = "導向失敗：" + ex.Message });
+     }
+ }
 
-        return View();
-    }
-}
+SYS_PERMISSION_SET:
+   // 導向群組管理
+   function goToGroupManagement() {
+       var sysId = $('#systemSelect').val();
+       var groupId = $('#systemSelect').val();
 
-之後這個頁面上的 任何 Action 或 Ajax API，都採用同一原則：
-需要 systemId / groupId 時，都在伺服器端從 Session 取，不要再接受前端傳來的值。
+       if (!sysId) {
+           alert('請選擇系統');
+           return;
+       }
 
-⸻
+       $.ajax({
+           url: '@Url.Action("RedirectToGroupManagement", "SYS")',
+           type: 'POST',
+           data: { sysId: sysId, groupId: groupId },
+           dataType: 'json',
+           success: function (response) {
+               if (response.success && response.sysId && response.groupId) {
+                   // **修改：前端自行組裝 URL**
+                   var baseUrl = '@Url.Action("GroupManagement", "AP")';
+                   var safeUrl = baseUrl + '?systemId=' + encodeURIComponent(response.sysId) + '&groupId=' + encodeURIComponent(response.groupId);
 
-3) 如果頁面真的「需要顯示」 systemId / groupId？
-
-直接在 Controller 塞進 ViewBag（或 Model），View 用就好，無需從網址讀：
-
-@* View (GroupManagement.cshtml) *@
-<h3>System: @ViewBag.SystemId / Group: @ViewBag.GroupId</h3>
-
-前端 JS/Ajax 要用時，也建議從頁面輸出 hidden 欄位或 data-* 屬性，但這些只用於 UI 顯示；
-真正送出時，後端 不要信任前端，仍然以 Session 為主：
-
-<input type="hidden" id="sysId"  value="@ViewBag.SystemId" />
-<input type="hidden" id="grpId"  value="@ViewBag.GroupId" />
-
-
-⸻
-
-4) 後端 API（給該頁 Ajax 用）的寫法範例
-
-把原本 public JsonResult GetMembers(string systemId, string groupId)
-改成只讀 Session：
-
-[HttpPost]
-public JsonResult GetMembers()
-{
-    var systemId = Session["CurrentSystemId"] as string;
-    var groupId  = Session["CurrentGroupId"]  as string;
-
-    if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
-        return Json(new { ok = false, msg = "未授權或 Session 失效" });
-
-    // ... 用 systemId/groupId 做查詢
-    var data = _service.GetGroupMembers(systemId, groupId);
-    return Json(new { ok = true, data });
-}
-
-✅ 這樣就算前端硬改參數也沒用，因為你根本不收參數。
-✅ 一律以「TokenEntry 寫進 Session 的值」為唯一依據。
-
-⸻
-
-5) 建議加保護：[TokenAuthorize] 範本
-
-沒有合法 Session（或 JWT 驗證通過）就不讓進頁面：
-
-public class TokenAuthorizeAttribute : AuthorizeAttribute
-{
-    protected override bool AuthorizeCore(HttpContextBase httpContext)
-    {
-        var sys = httpContext.Session["CurrentSystemId"] as string;
-        var grp = httpContext.Session["CurrentGroupId"]  as string;
-        return !(string.IsNullOrEmpty(sys) || string.IsNullOrEmpty(grp));
-    }
-
-    protected override void HandleUnauthorizedRequest(AuthorizationContext filterContext)
-    {
-        filterContext.Result = new RedirectToRouteResult(
-            new RouteValueDictionary(new { controller = "Account", action = "Login" })
-        );
-    }
-}
-
-在需要保護的 Controller 或 Action 上標註：
-
-[TokenAuthorize]
-public class APController : Controller
-{
-    ...
-}
-
-
-⸻
-
-6) 如果你「非得」讓 URL 帶參數（不建議）
-
-至少要比對 QueryString 與 Session 是否一致，不一致就擋掉：
-
-public ActionResult GroupManagement(string systemId, string groupId)
-{
-    var sSys = Session["CurrentSystemId"] as string;
-    var sGrp = Session["CurrentGroupId"]  as string;
-
-    if (string.IsNullOrEmpty(sSys) || string.IsNullOrEmpty(sGrp))
-        return Content("未授權或 Session 失效");
-
-    if (!string.Equals(sSys, systemId, StringComparison.OrdinalIgnoreCase) ||
-        !string.Equals(sGrp, groupId,  StringComparison.OrdinalIgnoreCase))
-        return Content("參數無效，請勿修改網址");
-
-    ViewBag.SystemId = sSys;
-    ViewBag.GroupId  = sGrp;
-    return View();
-}
-
-
-⸻
-
-重點小抄
-	•	✅ TokenEntry → 寫 Session → Redirect 不帶參數
-	•	✅ 所有後端邏輯都只看 Session（不信任前端/網址）
-	•	✅ View 要顯示就用 ViewBag/Model；Ajax 也不要送 systemId/groupId
-	•	✅ 加上 [TokenAuthorize] 讓沒 Session 的人直接被擋
-	•	❌ 不要把敏感的 groupId 放在網址當作授權依據
-
-你直接照上面把 TokenEntry、GroupManagement 改掉就行了。
-如果你需要，我也可以幫你把頁面上用到 systemId/groupId 的 所有 Action/Ajax 一次列出改法。
-
-
-@section Scripts {
-<script>
-  const currentSysID   = @Html.Raw(Json.Encode(Session["CurrentSystemId"] ?? ""));
-  const currentGroupID = @Html.Raw(Json.Encode(Session["CurrentGroupId"]  ?? ""));
-  const isAdmin        = (currentGroupID === '001');
-
-  if (!currentSysID || !currentGroupID) {
-    alert('授權逾時，請重新登入');
-    window.location.href = '@Url.Action("Login","Account")';
-  }
-
-  // 其餘原本的程式…
-</script>
-}
+                   window.location.href = safeUrl;
+               } else {
+                   alert(response.message || '導向失敗');
+               }
+           },
+           error: function () {
+               alert('導向時發生錯誤');
+           }
+       });
+   }
