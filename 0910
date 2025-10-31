@@ -1,173 +1,73 @@
-非常棒，你整個架構邏輯我完全看懂了 👍
-你現在的系統其實有 兩種入口 進入「群組權限設定（GroupManagement）」頁面：
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using System;
+using System.Web.Mvc;
 
-⸻
-
-🧭 目前兩種入口邏輯概況
-
-來源	說明	權限來源	網址是否帶參數	Session 是否設定
-✅ 1️⃣ Token（從 DLL 進來）	外部系統按「權限設定」導入	由 Token 驗證 systemId、groupId	❌ 不帶參數	✅ TokenEntry 寫入 Session
-✅ 2️⃣ SYS_PERMISSION_SET（從站台內進）	權限管理主控台「系統下拉選擇」進入	內部管理員（001 群組）	✅ 帶參數（sysId、groupId=001）	✅ RedirectToGroupManagement 寫入 Session
-
-
-⸻
-
-🚨 問題點
-
-你擔心的沒錯：
-
-「從站台內進」的 goToGroupManagement() 目前是直接組 URL 帶參數。
-這表示任何人都可以手動改網址進到別的 sysId 或 groupId。
-
-⸻
-
-✅ 建議最佳架構（簡潔 + 安全）
-
-讓兩種情況都統一到同樣的邏輯：
-	•	都不帶參數進 /AP/GroupManagement
-	•	都透過 Session 驗證 來辨識進入來源
-
-⸻
-
-🧩 Step 1：修改 RedirectToGroupManagement
-
-這個 Action 不用讓前端自己組 URL，
-由後端直接 Redirect（或回傳統一 URL，不帶參數）。
-
-[HttpPost]
-public JsonResult RedirectToGroupManagement(string sysId)
+namespace HI_APACCESS.Service.Validation
 {
-    try
+    public class TokenAuthorizeAttribute : ActionFilterAttribute
     {
-        if (string.IsNullOrWhiteSpace(sysId))
-            return Json(new { success = false, message = "請選擇系統" });
+        private static readonly string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
 
-        if (!IsValidSystemId(sysId))
-            return Json(new { success = false, message = "無效的系統ID格式" });
-
-        // 寫 Session
-        Session["CurrentSystemId"] = sysId;
-        Session["CurrentGroupId"] = "001";       // 系統管理員固定群組
-        Session["FromInternalSite"] = true;
-
-        return Json(new { success = true });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = "導向失敗：" + ex.Message });
-    }
-}
-
-
-⸻
-
-🧩 Step 2：修改前端 goToGroupManagement()
-
-不再自己組 URL，只要成功就導向固定的頁面 /AP/GroupManagement：
-
-function goToGroupManagement() {
-    var sysId = $('#systemSelect').val();
-    if (!sysId) {
-        alert('請選擇系統');
-        return;
-    }
-
-    $.ajax({
-        url: '@Url.Action("RedirectToGroupManagement", "SYS")',
-        type: 'POST',
-        data: { sysId: sysId },
-        dataType: 'json',
-        success: function (response) {
-            if (response.success) {
-                window.location.href = '@Url.Action("GroupManagement", "AP")';
-            } else {
-                alert(response.message || '導向失敗');
+        public override void OnActionExecuting(ActionExecutingContext filterContext)
+        {
+            var token = filterContext.HttpContext.Request.QueryString["token"];
+            if (string.IsNullOrEmpty(token))
+            {
+                RedirectWithError(filterContext, "缺少 Token，請重新登入");
+                return;
             }
-        },
-        error: function () {
-            alert('導向時發生錯誤');
+
+            var principal = ValidateToken(token);
+            if (principal == null)
+            {
+                RedirectWithError(filterContext, "TOKEN 已失效，請重新登入");
+                return;
+            }
+
+            filterContext.HttpContext.User = principal;
+            base.OnActionExecuting(filterContext);
         }
-    });
+
+        private void RedirectWithError(ActionExecutingContext filterContext, string message)
+        {
+            filterContext.Result = new ContentResult
+            {
+                Content = $@"<script>
+                                alert('{message}');
+                                window.location.href='/Home/Login';
+                             </script>",
+                ContentType = "text/html"
+            };
+        }
+
+        public static ClaimsPrincipal ValidateToken(string token)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(SecretKey);
+
+            var parameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidIssuer = "hi_ap_access_dll",
+                ValidAudience = "hi_ap_access_web",
+                ValidateLifetime = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ClockSkew = TimeSpan.Zero
+            };
+
+            try
+            {
+                var principal = tokenHandler.ValidateToken(token, parameters, out SecurityToken validatedToken);
+                return principal;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
 }
-
-
-⸻
-
-🧩 Step 3：APController.GroupManagement 統一只讀 Session
-
-[TokenAuthorize]
-public ActionResult GroupManagement()
-{
-    var systemId = Session["CurrentSystemId"] as string;
-    var groupId  = Session["CurrentGroupId"]  as string;
-
-    if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
-        return Content("未授權或 Session 已失效");
-
-    bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
-
-    ViewBag.SystemId = systemId;
-    ViewBag.GroupId = groupId;
-    ViewBag.Title = "群組權限管理 - " + systemId;
-    ViewBag.ShowSwitchButton = isFromInternalSite; // 從站台進來才顯示切換按鈕
-
-    return View();
-}
-
-
-⸻
-
-🧩 Step 4：讓 View 判斷顯示按鈕
-
-在 GroupManagement.cshtml：
-
-@if (ViewBag.ShowSwitchButton)
-{
-    <button class="btn btn-secondary" onclick="location.href='@Url.Action("SYS_PERMISSION_SET","SYS")'">返回系統選擇</button>
-}
-
-
-⸻
-
-✅ 實際效果比較
-
-來源	是否帶參數	Session 寫入位置	權限控制	結果
-Token 入口	❌ 不帶	TokenEntry	JWT 驗證	安全
-SYS 入口	❌ 不帶	RedirectToGroupManagement	固定群組 001	安全
-惡意手改網址	❌ 不生效	無合法 Session	被擋	✅ 無法越權
-
-
-⸻
-
-✅ 延伸建議
-
-你也可以在 TokenAuthorize 加強安全性：
-若是 FromInternalSite = true 則允許群組 001，
-否則必須通過 Token。
-
-例如：
-
-protected override bool AuthorizeCore(HttpContextBase httpContext)
-{
-    var sys = httpContext.Session["CurrentSystemId"] as string;
-    var grp = httpContext.Session["CurrentGroupId"]  as string;
-    var internalSite = (bool?)httpContext.Session["FromInternalSite"] ?? false;
-
-    if (internalSite && grp == "001") return true;  // 站台內進來可用
-    return !(string.IsNullOrEmpty(sys) || string.IsNullOrEmpty(grp));
-}
-
-
-⸻
-
-✅ 總結
-
-你的設計邏輯是對的，只要加這三點就完美安全：
-	1.	兩種入口都統一進入 /AP/GroupManagement，不帶任何參數。
-	2.	Session 控制來源（TokenEntry 或站台內部），視情況設 GroupId / Flag。
-	3.	後端全程用 Session 驗證，不信任網址或前端輸入。
-
-⸻
-
-要不要我幫你順便把 [TokenAuthorize] 加上這個「站台來源白名單」的完整版本？
-這樣你之後所有從內部開啟的頁面也不用重寫判斷。
