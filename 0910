@@ -164,3 +164,19 @@ public ActionResult GroupManagement(string systemId, string groupId)
 
 你直接照上面把 TokenEntry、GroupManagement 改掉就行了。
 如果你需要，我也可以幫你把頁面上用到 systemId/groupId 的 所有 Action/Ajax 一次列出改法。
+
+
+@section Scripts {
+<script>
+  const currentSysID   = @Html.Raw(Json.Encode(Session["CurrentSystemId"] ?? ""));
+  const currentGroupID = @Html.Raw(Json.Encode(Session["CurrentGroupId"]  ?? ""));
+  const isAdmin        = (currentGroupID === '001');
+
+  if (!currentSysID || !currentGroupID) {
+    alert('授權逾時，請重新登入');
+    window.location.href = '@Url.Action("Login","Account")';
+  }
+
+  // 其餘原本的程式…
+</script>
+}
