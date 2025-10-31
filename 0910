@@ -1,188 +1,166 @@
-HOME:
-        [HttpGet]
-        [TokenAuthorize]
-        public ActionResult TokenEntry()
-        {
-            var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
-            var groupId = ((ClaimsPrincipal)User).FindFirst("groupId")?.Value;
+可以、GroupID 不用放在網址上也沒問題。做法是：
+	1.	在 TokenEntry 解完 JWT 後，把 systemId、groupId 存進 Session。
+	2.	GroupManagement（以及後續該頁的所有 Action / Ajax）都改成只讀 Session，不再接受 QueryString 的 systemId、groupId。
+	3.	View 需要顯示或使用這兩個值，就由 Controller 先放進 ViewBag（或用強型別 Model），前端不必從網址拿參數。
 
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentGroupId"] = groupId;
-            Session["FromInternalSite"] = false; // TOKEN 進來
+下面給你「直接可貼」的改法。
 
-            if (systemId == null || groupId == null)
-            {
-                return Content("Token無效");
-            }
+⸻
 
-            // 導向到群組管理
-            return RedirectToAction("GroupManagement", "AP", new { systemId = systemId , groupId = groupId });
-        }
+1) HomeController：TokenEntry 改法
 
-APACCESS_DLL:
-        public string GetFunctionAndAccessUrl(string requestJson)
-        {
-            FGetFunctionAndAccessUrl func = new FGetFunctionAndAccessUrl();
-            var response = new GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlResponse();
+[HttpGet]
+[TokenAuthorize]
+public ActionResult TokenEntry()
+{
+    var systemId = ((ClaimsPrincipal)User).FindFirst("systemId")?.Value;
+    var groupId  = ((ClaimsPrincipal)User).FindFirst("groupId")?.Value;
 
-            try
-            {
-                var request = JsonConvert.DeserializeObject<GetFunctionAndAccessUrlModel.GetFunctionAndAccessUrlRequest>(requestJson);
+    if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
+        return Content("Token無效");
 
-                // 檢查類型
-                if (!func.TypeActions.ContainsKey(request.Type))
-                {
-                    response.Result_code = Codes.TYPE_ERROR;
-                    response.Msg = "類型錯誤，只接受 1 或 2";
-                    response.Url = "";
-                    return JsonConvert.SerializeObject(response);
-                }
+    Session["CurrentSystemId"] = systemId;
+    Session["CurrentGroupId"]  = groupId;
+    Session["FromInternalSite"] = false; // TOKEN 進來
 
-                // 檢查環境
-                if (!func.EnvironmentUrls.ContainsKey(request.Environment))
-                {
-                    response.Result_code = Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD";
-                    response.Url = "";
-                    return JsonConvert.SerializeObject(response);
-                }
+    // ✅ 不再把參數放在網址上
+    return RedirectToAction("GroupManagement", "AP");
+}
 
-                // 檢查系統授權
-                var authorizedSystems = func.GetAuthorizedSystemsList(request.Environment);
-                if (!authorizedSystems.Contains(request.SysID))
-                {
-                    response.Result_code = Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
-                    response.Url = "";
-                    return JsonConvert.SerializeObject(response);
-                }
 
-                // 產生 Token
-                string token = func.GenerateJwtToken(request.SysID, request.GroupID);
-                string baseUrl = func.EnvironmentUrls[request.Environment];
-                string action = func.TypeActions[request.Type];
-                string finalUrl = $"{baseUrl}/Home/{action}?token={token}";
+⸻
 
-                // 成功
-                response.Result_code = Codes.SUCCESS;
-                response.Msg = "成功";
-                response.Url = finalUrl;
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
-                response.Url = "";
-            }
+2) APController：GroupManagement 改成只讀 Session
 
-            return JsonConvert.SerializeObject(response);
-        }
-DLL_FACTORY:
-    internal class FGetFunctionAndAccessUrl
+[TokenAuthorize] // 建議加這個，下面第 5 點有範本
+public class APController : Controller
+{
+    // ✅ 只透過 Session 取得，而非 QueryString
+    public ActionResult GroupManagement()
     {
-        // 環境設定
-        internal readonly Dictionary<string, string> EnvironmentUrls = new Dictionary<string, string>
-        {
-            { "DEV", "http://localhost:53088" },
-            { "TEST", "http://10.8.254.68/HI_APACCESS_TEST" },
-            { "PROD", "http://10.8.254.68/HI_APACCESS" },
-        };
+        var systemId = Session["CurrentSystemId"] as string;
+        var groupId  = Session["CurrentGroupId"]  as string;
 
-        // 類型設定
-        internal readonly Dictionary<string, string> TypeActions = new Dictionary<string, string>
-        {
-            { "1", "TokenEntry_FUNC" },
-            { "2", "TokenEntry" }
-        };
+        if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
+            return Content("未授權或 Session 已失效");
 
-        // 取得授權系統清單（呼叫 FCommon）
-        internal List<string> GetAuthorizedSystemsList(string environment)
-        {
-            return FCommon.GetAuthorizedSystemsList(environment);
-        }
-
-        // 產 JWT Token  10/30 增加群組
-        internal string GenerateJwtToken(string systemId, string groupId)
-        {
-            var claims = new[]
-            {
-                new Claim("systemId", systemId),
-                new Claim("groupId",  groupId  ?? string.Empty),
-            };
-
-            string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SecretKey));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-            var token = new JwtSecurityToken(
-                issuer: "hi_ap_access_dll",
-                audience: "hi_ap_access_web",
-                claims: claims,
-                expires: DateTime.Now.AddHours(1),
-                signingCredentials: creds
-            );
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
-        }
-    }
-AP:
-    // 群組管理頁面
-    public ActionResult GroupManagement(string systemId, string groupId)
-    {
-        if (string.IsNullOrEmpty(systemId))
-        {
-            systemId = Session["CurrentSystemId"]?.ToString();
-            groupId = Session["CurrentGroupId"]?.ToString();
-        }
-        else
-        {
-            // 同步更新 Session
-            Session["CurrentSystemId"] = systemId;
-            Session["CurrentGroupId"] = groupId;
-        }
-
-        bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
-
+        // 要給 View 用，就塞進 ViewBag（或用強型別 Model）
         ViewBag.SystemId = systemId;
-        ViewBag.Title = "群組權限管理 - " + systemId;
-        ViewBag.ShowSwitchButton = isFromInternalSite; 
+        ViewBag.GroupId  = groupId;
+        ViewBag.Title    = "群組權限管理 - " + systemId;
+        ViewBag.ShowSwitchButton = (Session["FromInternalSite"] as bool?) == true;
 
         return View();
     }
-別站台呼叫DLL:
-   // 權限管理導向 URL
-   public ActionResult AP_ACCESS_SYS()
-   {
-       try
-       {
-           var req_para = new POSFILE_APPLY.Models.M_AP.GetUrlRequsetModel()
-           {
-               SysID = "HI_POSIMG",
-               Type = "2" ,
-               Environment = "DEV",
-               GroupID = this.APG_NO
-           };
+}
 
-           string json_input = JsonConvert.SerializeObject(req_para);
-           string response = new HI_APACCESS_DLL.APACCESS().GetFunctionAndAccessUrl(json_input);
-           POSFILE_APPLY.Models.M_AP.GetUrlResponseModel response_ = JsonConvert.DeserializeObject<POSFILE_APPLY.Models.M_AP.GetUrlResponseModel>(response);
+之後這個頁面上的 任何 Action 或 Ajax API，都採用同一原則：
+需要 systemId / groupId 時，都在伺服器端從 Session 取，不要再接受前端傳來的值。
 
-           if (response_.Result_code == "0000")
-           {
-               string script = $@"
-               <script>
-                  window.open('{response_.Url}', '_blank');                       
-                  window.location.href='{Url.Action("Main", "Home")}';
-               </script>";
-               return Content(script, "text/html");
-           }
-           else
-           {
-               return Content($"<script>alert('取得權限管理連結失敗：{response_.Msg}');</script>", "text/html");
-           }
-       }
-       catch (Exception ex)
-       {
-           return Content($"<script>alert('導向權限管理系統發生錯誤：{ex.Message}');</script>", "text/html");
-       }
-   }
+⸻
+
+3) 如果頁面真的「需要顯示」 systemId / groupId？
+
+直接在 Controller 塞進 ViewBag（或 Model），View 用就好，無需從網址讀：
+
+@* View (GroupManagement.cshtml) *@
+<h3>System: @ViewBag.SystemId / Group: @ViewBag.GroupId</h3>
+
+前端 JS/Ajax 要用時，也建議從頁面輸出 hidden 欄位或 data-* 屬性，但這些只用於 UI 顯示；
+真正送出時，後端 不要信任前端，仍然以 Session 為主：
+
+<input type="hidden" id="sysId"  value="@ViewBag.SystemId" />
+<input type="hidden" id="grpId"  value="@ViewBag.GroupId" />
+
+
+⸻
+
+4) 後端 API（給該頁 Ajax 用）的寫法範例
+
+把原本 public JsonResult GetMembers(string systemId, string groupId)
+改成只讀 Session：
+
+[HttpPost]
+public JsonResult GetMembers()
+{
+    var systemId = Session["CurrentSystemId"] as string;
+    var groupId  = Session["CurrentGroupId"]  as string;
+
+    if (string.IsNullOrEmpty(systemId) || string.IsNullOrEmpty(groupId))
+        return Json(new { ok = false, msg = "未授權或 Session 失效" });
+
+    // ... 用 systemId/groupId 做查詢
+    var data = _service.GetGroupMembers(systemId, groupId);
+    return Json(new { ok = true, data });
+}
+
+✅ 這樣就算前端硬改參數也沒用，因為你根本不收參數。
+✅ 一律以「TokenEntry 寫進 Session 的值」為唯一依據。
+
+⸻
+
+5) 建議加保護：[TokenAuthorize] 範本
+
+沒有合法 Session（或 JWT 驗證通過）就不讓進頁面：
+
+public class TokenAuthorizeAttribute : AuthorizeAttribute
+{
+    protected override bool AuthorizeCore(HttpContextBase httpContext)
+    {
+        var sys = httpContext.Session["CurrentSystemId"] as string;
+        var grp = httpContext.Session["CurrentGroupId"]  as string;
+        return !(string.IsNullOrEmpty(sys) || string.IsNullOrEmpty(grp));
+    }
+
+    protected override void HandleUnauthorizedRequest(AuthorizationContext filterContext)
+    {
+        filterContext.Result = new RedirectToRouteResult(
+            new RouteValueDictionary(new { controller = "Account", action = "Login" })
+        );
+    }
+}
+
+在需要保護的 Controller 或 Action 上標註：
+
+[TokenAuthorize]
+public class APController : Controller
+{
+    ...
+}
+
+
+⸻
+
+6) 如果你「非得」讓 URL 帶參數（不建議）
+
+至少要比對 QueryString 與 Session 是否一致，不一致就擋掉：
+
+public ActionResult GroupManagement(string systemId, string groupId)
+{
+    var sSys = Session["CurrentSystemId"] as string;
+    var sGrp = Session["CurrentGroupId"]  as string;
+
+    if (string.IsNullOrEmpty(sSys) || string.IsNullOrEmpty(sGrp))
+        return Content("未授權或 Session 失效");
+
+    if (!string.Equals(sSys, systemId, StringComparison.OrdinalIgnoreCase) ||
+        !string.Equals(sGrp, groupId,  StringComparison.OrdinalIgnoreCase))
+        return Content("參數無效，請勿修改網址");
+
+    ViewBag.SystemId = sSys;
+    ViewBag.GroupId  = sGrp;
+    return View();
+}
+
+
+⸻
+
+重點小抄
+	•	✅ TokenEntry → 寫 Session → Redirect 不帶參數
+	•	✅ 所有後端邏輯都只看 Session（不信任前端/網址）
+	•	✅ View 要顯示就用 ViewBag/Model；Ajax 也不要送 systemId/groupId
+	•	✅ 加上 [TokenAuthorize] 讓沒 Session 的人直接被擋
+	•	❌ 不要把敏感的 groupId 放在網址當作授權依據
+
+你直接照上面把 TokenEntry、GroupManagement 改掉就行了。
+如果你需要，我也可以幫你把頁面上用到 systemId/groupId 的 所有 Action/Ajax 一次列出改法。
