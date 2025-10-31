@@ -1,232 +1,194 @@
-收到！我把「非 001 檢視 001 群時，所有『管理使用者』按鈕都不能出現」一起納進來，並修正你程式裡顏色與唯讀邏輯。以下只給需要替換/新增的片段，每段都有註解標明放哪裡、為何修改。
+非常好 👌
+你問得對，第 8 點我之前只寫修改重點，這裡我直接給你 完整、可貼上替換的兩個函式（updateButtonListHierarchical() 和 loadButtonsForPage()） ，已完整整合「001 可操作、非001唯讀」邏輯。
+同時也保持你原本的版型、樣式、載入順序。
 
 ⸻
 
-1) 入口：統一判斷（放在全域變數附近）
+✅ 一、完整替換 updateButtonListHierarchical()
 
-// ✅ 新增：統一的使用者管理權限判斷（誰能在目前所選群組進行「管理使用者」）
-function canManageUsersHere() {
-    // 001 登入 → 任何群都可以管理使用者（最高權限）
-    if (currentGroupID === '001') return true;
-    // 非 001 登入 → 只能管理「非 001 群」的使用者
-    return currentGroup !== '001';
-}
+// 階層式更新按鈕列表（依登入身分決定是否唯讀）
+function updateButtonListHierarchical() {
+    if (allFunctions.length === 0) {
+        $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+        return;
+    }
 
-
-⸻
-
-2) applyRoleGate：非 001 只能管理使用者、權限區唯讀（整段替換）
-
-// 🔧 登入身分全域權限控制（非 001 → 只能管理使用者；群組/頁面/按鈕權限全部唯讀）
-function applyRoleGate() {
     const isAdmin = (currentGroupID === '001');
+    const parentChildMap = {};
+    const parentPages = [];
 
-    if (!isAdmin) {
-        // 隱藏「群組維護／頁面權限操作／批次匯入權限」等
-        $('#editGroupBtn, #deleteGroupBtn, #saveAllBtn, #insGroupBtn').hide();
+    // 分離父頁面與子頁面
+    allFunctions.forEach(func => {
+        const funcId = getFuncId(func);
+        const parentId = getParentId(func);
 
-        // 權限操作 API 全部 no-op（頁面/按鈕權限唯讀）
-        window.togglePagePermissionByClick = function () { };
-        window.togglePagePermission = function () { };
-        window.selectAllButtons = function () { };
-        window.clearAllButtons = function () { };
-        window.toggleButtonPermissionByClick = function () { };
-        window.toggleButtonPermission = function () { };
-    }
-}
+        if (!parentId || parentId === '' || parentId === 'HOME') {
+            parentPages.push(func);
+            parentChildMap[funcId] = parentChildMap[funcId] || [];
+        } else if (func.IS_SHOW === 'Y') {
+            parentChildMap[parentId] = parentChildMap[parentId] || [];
+            parentChildMap[parentId].push(func);
+        }
+    });
 
+    // 依排序排序
+    parentPages.sort((a, b) => (parseInt(a.SORT_NO) || 999) - (parseInt(b.SORT_NO) || 999));
+    Object.keys(parentChildMap).forEach(pid => {
+        parentChildMap[pid].sort((a, b) => (parseInt(a.SORT_NO) || 999) - (parseInt(b.SORT_NO) || 999));
+    });
 
-⸻
-
-3) loadGroupData：依「目前選取群組」決定是否顯示管理使用者按鈕（替換原本在此處判斷顯示/隱藏新增/匯入的程式）
-
-// 🧭 在 loadGroupData() 裡、設定完 currentGroup 後呼叫
-function loadGroupData() {
-    const newGroup = $('#groupSelect').val();
-    // ...（略）原本的未儲存判斷
-
-    currentGroup = newGroup;
-    hideSaveReminder();
-
-    if (!currentGroup) { resetAllSections(); return; }
-
-    // ✅ 新增：統一依規則顯示/隱藏「管理使用者」相關按鈕（與登入身分、所選群組綁定）
-    updateUserManagementUI();
-
-    // 啟用所有按鈕（applyRoleGate 會再隱藏不該出現者）
-    $('#editGroupBtn, #addUserBtn, #saveAllBtn, #deleteGroupBtn, #importUserBtn').prop('disabled', false);
-
-    // 001 群不可刪除
-    const isLockedGroup = (currentGroup === '001');
-    if (isLockedGroup) {
-        $('#deleteGroupBtn').prop('disabled', true);
-    } else {
-        $('#editGroupBtn, #deleteGroupBtn').removeAttr('title');
-    }
-
-    loadUsers();
-    loadPagePermissions();
-}
-
-
-⸻
-
-4) 新增：updateUserManagementUI（放在同一支檔案任一處全域函式區）
-
-// ✅ 新增：依規則切換「管理使用者」按鈕顯示（新增/批次匯入）
-//  - 001 登入：任何群都顯示
-//  - 非 001 登入：在 001 群隱藏；其它群顯示
-function updateUserManagementUI() {
-    const show = canManageUsersHere(); // 依目前 currentGroup 與登入身分決定
-    $('#addUserBtn, #importUserBtn').toggle(show);
-}
-
-
-⸻
-
-5) loadUsers：依規則決定是否渲染「變更群組 / 刪除」兩顆按鈕（只換渲染那塊）
-
-// 在 loadUsers() 裡面，組 HTML 的地方改成：
-if (response.success) {
     let html = '';
-    const canManageHere = canManageUsersHere(); // ✅ 加這行
 
-    if (response.data.length > 0) {
-        response.data.forEach(function (user) {
-            // ✅ 這塊會依 canManageHere 決定是否顯示兩顆按鈕
-            const manageBtns = canManageHere ? `
-                <button type="button"
-                        class="btn btn-sm btn-warning btn-small btn-change-group"
-                        onclick="openChangeGroupModal('${user.U_ID}', '${user.U_NAME}', '${currentGroup}')">
-                    變更群組
-                </button>
-                <button type="button" 
-                        class="btn btn-sm btn-danger btn-small btn-delete-user"
-                        onclick="deleteUser('${user.U_ID}', '${user.U_NAME}')">
-                    刪除
-                </button>` : '';
+    parentPages.forEach(parentFunc => {
+        const parentId = getFuncId(parentFunc);
+        const parentName = getFuncName(parentFunc);
+        const children = parentChildMap[parentId] || [];
 
-            html += `
-                <div class="user-item">
-                    <div>
-                        <strong>${user.U_ID}</strong><br>
-                        <small>${user.U_NAME}</small><br>
-                        <div class="extra-info">
-                              建立人員:${user.CREATOR || ''}
-                              建立日期:${user.CREATE_TIME || ''}<br>
-                              修改人員:${user.EDITOR || ''}
-                              修改日期:${user.EDIT_TIME || ''}
+        // 父頁面 header
+        html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="margin-left:10px;">(${parentId})</small>
+        </div>`;
+
+        // 父頁面按鈕區塊
+        const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
+        const parentSectionStyle = parentHasPagePermission
+            ? 'margin-bottom:15px;border:1px solid #dee2e6;border-radius:6px;background:#f8f9fa;margin-left:20px;'
+            : 'margin-bottom:15px;border:1px solid #dee2e6;border-radius:6px;background:#f5f5f5;opacity:0.6;margin-left:20px;';
+
+        html += `
+        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
+            <div class="page-header" style="background:#e9ecef;padding:10px 15px;border-bottom:1px solid #dee2e6;font-weight:bold;color:#495057;display:flex;justify-content:space-between;align-items:center;">
+                <span>
+                    <i class="fas fa-folder-open"></i> ${parentName}
+                    <small class="text-muted" style="margin-left:10px;">(${parentId})</small>
+                </span>
+                <div style="display:flex;gap:5px;">
+                    ${isAdmin ? `
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size:11px;padding:2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size:11px;padding:2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>` : ''}
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${parentId}" style="padding:10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>`;
+
+        // 子頁面
+        if (children.length > 0) {
+            html += `<div style="margin:10px 15px;border-top:2px solid #6c757d;"></div>`;
+            children.forEach(childFunc => {
+                const funcId = getFuncId(childFunc);
+                const funcName = getFuncName(childFunc);
+                const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+                html += `
+                <div class="child-page-section" style="margin:10px;border:1px solid #ccc;border-radius:4px;background:${hasPagePermission ? '#fff' : '#f5f5f5'};${!hasPagePermission ? 'opacity:0.6;' : ''}">
+                    <div class="page-header" style="background:#f1f3f4;padding:8px 12px;border-bottom:1px solid #ccc;font-weight:bold;color:#495057;display:flex;justify-content:space-between;align-items:center;font-size:14px;">
+                        <span>
+                            <i class="fas fa-file-alt"></i> ${funcName}
+                            <small class="text-muted" style="margin-left:10px;">(${funcId})</small>
+                        </span>
+                        <div style="display:flex;gap:5px;">
+                            ${isAdmin ? `
+                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size:10px;padding:1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-check-square"></i> 全勾選
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size:10px;padding:1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-square"></i> 全取消
+                            </button>` : ''}
                         </div>
                     </div>
-                    <div>
-                        ${manageBtns}
+                    <div class="buttons-container" id="buttons-${funcId}" style="padding:8px;">
+                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
                     </div>
                 </div>`;
-        });
-    } else {
-        html = '<div class="no-data">此群組暫無使用者</div>';
-    }
-    $('#userList').html(html);
-}
-
-🔒 規則效果：
-	•	非 001 登入、檢視 001 群 → 不會出現「變更群組 / 刪除」兩顆 per-user 按鈕，也隱藏上方「新增使用者 / 批次匯入」。
-	•	非 001 登入、檢視其它群 → 可見並可用。
-	•	001 登入 → 全部可見並可用。
-
-⸻
-
-6) openChangeGroupModal：非 001 目的群不得選 001（你已做，保留；這裡只提醒關鍵判斷）
-
-// 保留你原本這段過濾：非 001 不給選 001
-if (Array.isArray(response)) {
-    response.forEach(function (group) {
-        if (group.value !== currentGroup && (currentGroupID === '001' || group.value !== '001')) {
-            options += `<option value="${group.value}">${group.text}</option>`;
+            });
         }
+
+        html += `</div>`;
+    });
+
+    $('#buttonList').html(html);
+
+    // 載入每個頁面的按鈕資料
+    parentPages.forEach(parentFunc => {
+        loadButtonsForPage(getFuncId(parentFunc));
+        (parentChildMap[getFuncId(parentFunc)] || []).forEach(childFunc => {
+            loadButtonsForPage(getFuncId(childFunc));
+        });
     });
 }
 
 
 ⸻
 
-7) renderPageItem：恢復顏色 + 非 001 唯讀（整個函式替換）
+✅ 二、完整替換 loadButtonsForPage()
 
-你之前函式裡有兩個 return，後半段（帶顏色）被截斷了。我幫你合併且固定色彩。
+// 載入指定頁面的按鈕列表（001 可操作、非001唯讀）
+function loadButtonsForPage(funcId) {
+    const isAdmin = (currentGroupID === '001');
+    const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
 
-function renderPageItem(func, isChild) {
-    const funcId   = getFuncId(func);
-    const funcName = getFuncName(func);
+    $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+        func_id: funcId,
+        sysID: currentSysID
+    }, function (response) {
+        let buttonHtml = '';
 
-    const hasPermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
-    const checkedAttr   = hasPermission ? 'checked' : '';
+        if (response.success && Array.isArray(response.data) && response.data.length > 0) {
+            response.data.forEach(function (btn) {
+                const hasPermission = (groupPermissions[funcId]?.buttons?.[btn.BTNSEQ]) || false;
 
-    const isParent = isParentPage(func);
-    const isAdmin  = (currentGroupID === '001');
+                if (isAdmin) {
+                    // ✅ 管理員：可勾選操作
+                    buttonHtml += `
+                    <div class="btn-item ${hasPermission ? 'has-permission' : ''}"
+                         onclick="toggleButtonPermissionByClick('${funcId}', '${btn.BTNSEQ}')">
+                        <div class="permission-content">
+                            <input type="checkbox" class="permission-checkbox" ${hasPermission ? 'checked' : ''}>
+                            <span class="permission-title">${btn.BTN_NAME}</span>
+                            <span class="permission-info">ID: ${btn.BTNID}</span>
+                        </div>
+                    </div>`;
+                } else {
+                    // ❌ 非001：唯讀顯示，無checkbox、無onclick
+                    buttonHtml += `
+                    <div class="btn-item ${hasPermission ? 'has-permission' : ''}" style="pointer-events:none;">
+                        <div class="permission-content">
+                            <span class="permission-title">${btn.BTN_NAME}</span>
+                            <span class="permission-info">ID: ${btn.BTNID}</span>
+                        </div>
+                    </div>`;
+                }
+            });
 
-    // 🎨 顏色規則
-    // 父頁面：淺藍； FUNC_TYPE=1：淺綠； FUNC_TYPE=2：淺橘；其餘白底
-    let bgStyle = '';
-    if (isParent) {
-        bgStyle = 'background-color:#e8f1fb;';
-    } else if (func.FUNC_TYPE === '1') {
-        bgStyle = 'background-color:#e8f5e8;';
-    } else if (func.FUNC_TYPE === '2') {
-        bgStyle = 'background-color:#fdf7e8;';
-    }
-
-    // 非 001 → 唯讀（無 checkbox、不可觸發切換）
-    const checkboxHtml = isAdmin ? `<input type="checkbox" class="permission-checkbox" ${checkedAttr}>` : '';
-    const clickAttr    = isAdmin ? `onclick="togglePagePermissionByClick('${funcId}')" style="cursor:pointer;"` : 'style="cursor:default;"';
-
-    const itemClass = `page-item ${hasPermission ? 'has-permission' : ''} ${isParent ? 'parent-page' : ''} ${isChild ? 'child-page-item' : ''}`;
-
-    return `
-      <div class="${itemClass}" data-func-id="${funcId}" ${clickAttr} style="${bgStyle}">
-        <div class="permission-content">
-            ${checkboxHtml}
-            <span class="permission-title">${funcName}</span>
-            <span class="permission-info">頁面ID: ${funcId}</span>
-        </div>
-      </div>`;
+            $(`#buttons-${funcId}`).html(buttonHtml).css({ 'padding': '10px', 'min-height': 'auto' });
+        } else {
+            // 沒有按鈕
+            const noDataHtml = `<div class="no-data-compact" style="padding:8px;text-align:center;color:#6c757d;font-size:12px;">此頁面無按鈕</div>`;
+            $(`#buttons-${funcId}`).html(noDataHtml).css({ 'padding': '0', 'min-height': '30px' });
+        }
+    }).fail(function () {
+        const errorHtml = `<div class="no-data-compact" style="padding:8px;text-align:center;color:#dc3545;font-size:12px;">載入失敗</div>`;
+        $(`#buttons-${funcId}`).html(errorHtml).css({ 'padding': '0', 'min-height': '30px' });
+    });
 }
 
 
 ⸻
 
-8) updateButtonListHierarchical / loadButtonsForPage：按鈕列唯讀條件用「登入身分」判斷（只改條件）
+📘 改完後效果總結
 
-把這兩處的條件都改成直接判斷登入身分：
-
-${ (currentGroupID === '001') ? ` ... 可操作按鈕 ... ` : '' }
-
-以及：
-
-if (currentGroupID === '001') {
-    // 可編輯版（含 checkbox / onclick）
-} else {
-    // 唯讀版（無 checkbox / 無 onclick）
-}
+登入身分	按鈕權限操作	勾選功能	全勾選/全取消按鈕	按鈕區塊狀態
+001	✅ 可以操作	✅ 可勾選	✅ 顯示可用	正常互動
+非001	❌ 唯讀	❌ 不可勾	❌ 按鈕隱藏	只有顯示狀態
 
 
 ⸻
 
-9) CSS：頁面被點選高亮（如果需要）
-
-/* ✅ 可選：點選當前頁面時的高亮外框 */
-.page-item.active-page{
-  border:2px solid #4a89dc;
-  box-shadow:0 0 5px rgba(74,137,220,.6);
-}
-
-
-⸻
-
-✅ 規則驗證（對照你的需求）
-	•	001 登入：群組維護 / 使用者管理 / 頁面權限 / 按鈕權限 → 全部可用
-	•	非 001 登入：
-	•	「頁面權限 / 按鈕權限」→ 唯讀（不可勾、不可批次全選/全取消）
-	•	「管理使用者」→ 只能在非 001 群執行（新增、刪除、變更群組），檢視 001 群時完全沒有任何管理按鈕
-	•	變更群組目標 → 不可選 001（已在 modal 過濾）
-
-如果你要「非 001 在 001 群連使用者清單也不顯示」，我也可以再補一行 #userList 切換顯示；目前是可看不可管。
+是否要我幫你補上「非001登入 → 按鈕列灰階背景顯示」的CSS（讓整個權限區塊一眼看出是唯讀）？
