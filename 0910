@@ -1,11 +1,88 @@
-我理解您的問題。Fortify 掃描出 “Access Control: Database” 問題,主要是因為 `apgNo` 參數直接用於 SQL 查詢,可能存在權限控制風險。讓我提供幾個解決方案:
+明白了！調整權限邏輯如下：
 
-## 解決方案 1: 使用 Service 層進行參數化查詢(推薦)
+## 調整後的權限規則：
 
-修改您的 `F_AP.cs`,使用現有的 `SVS_DBmanager`:
+1. **001群組使用者** → 可以操作所有群組（包括001）
+1. **非001群組使用者** → 不可以操作001群組，但可以操作其他所有群組
+
+## 修改後的程式碼：
 
 ```csharp
-// F_AP.cs - 修改後的方法
+/// <summary>
+/// 檢查使用者是否有權限操作指定群組（批次匯入專用）
+/// 規則：
+/// 1. 001群組成員可以操作所有群組
+/// 2. 非001群組成員不能操作001群組
+/// 3. 非001群組成員可以操作其他所有群組
+/// </summary>
+private bool HasGroupPermissionViaSP(SVS_DBmanager dbManager, string sysId, string targetApgNo, string userId)
+{
+    try
+    {
+        var parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = targetApgNo },
+            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = userId }
+        };
+
+        string permissionCheckSql = @"
+            SELECT 
+                CASE 
+                    -- 規則1：使用者在001群組，可以操作所有群組（包括001）
+                    WHEN EXISTS (
+                        SELECT 1 FROM AP_USER 
+                        WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
+                    ) THEN 1
+                    
+                    -- 規則2：目標群組是001，但使用者不在001群組 → 拒絕
+                    WHEN @APG_NO = '001' THEN 0
+                    
+                    -- 規則3：目標群組不是001 → 允許（不限制）
+                    ELSE 1
+                END AS HasPermission";
+
+        var result = dbManager.QueryBySQL(permissionCheckSql, parameters);
+        
+        return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
+    }
+    catch (Exception ex)
+    {
+        // Log error
+        return false;
+    }
+}
+```
+
+## 如果要使用 Stored Procedure 方式：
+
+```sql
+CREATE PROCEDURE [dbo].[USP_CheckGroupPermissionForImport]
+    @SYS_ID NVARCHAR(50),
+    @APG_NO NVARCHAR(50),
+    @U_ID NVARCHAR(50)
+AS
+BEGIN
+    SELECT 
+        CASE 
+            -- 規則1：使用者在001群組，可以操作所有群組
+            WHEN EXISTS (
+                SELECT 1 FROM AP_USER 
+                WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
+            ) THEN 1
+            
+            -- 規則2：目標群組是001，但使用者不在001群組 → 拒絕
+            WHEN @APG_NO = '001' THEN 0
+            
+            -- 規則3：目標群組不是001 → 允許
+            ELSE 1
+        END AS HasPermission
+END
+```
+
+## 完整的 ImportUsersFromExcel 方法：
+
+```csharp
 public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
 {
     ImportResult result = new ImportResult()
@@ -17,11 +94,13 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
     {
         var dbManager = new SVS_DBmanager();
         
-        // **1. 驗證權限**
+        // **1. 驗證權限（批次匯入專用規則）**
         if (!HasGroupPermissionViaSP(dbManager, sysId, apgNo, creator))
         {
             result.IsSuccess = false;
-            result.ErrorMessage = "無權限操作此群組";
+            result.ErrorMessage = apgNo == "001" 
+                ? "僅001群組成員可以操作001群組的批次匯入" 
+                : "無權限操作此群組";
             return result;
         }
 
@@ -66,49 +145,6 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
     }
 
     return result;
-}
-
-/// <summary>
-/// 使用參數化查詢檢查權限
-/// </summary>
-private bool HasGroupPermissionViaSP(SVS_DBmanager dbManager, string sysId, string targetApgNo, string userId)
-{
-    try
-    {
-        var parameters = new List<SqlParameter>
-        {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = targetApgNo },
-            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = userId }
-        };
-
-        string permissionCheckSql = @"
-            SELECT 
-                CASE 
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
-                    ) THEN 1
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_GROUP 
-                        WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND CREATOR = @U_ID
-                    ) THEN 1
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND U_ID = @U_ID
-                    ) THEN 1
-                    ELSE 0
-                END AS HasPermission";
-
-        var result = dbManager.QueryBySQL(permissionCheckSql, parameters);
-        
-        return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
-    }
-    catch (Exception ex)
-    {
-        // Log error
-        return false;
-    }
 }
 
 /// <summary>
@@ -270,59 +306,17 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
 }
 ```
 
-## 解決方案 2: 建立 Stored Procedure (最安全)
+## 權限測試案例：
 
-在資料庫中建立 SP,將權限檢查邏輯封裝:
+|使用者群組|目標群組  |結果  |
+|-----|------|----|
+|001  |001   |✅ 允許|
+|001  |002   |✅ 允許|
+|001  |任何群組  |✅ 允許|
+|002  |001   |❌ 拒絕|
+|002  |002   |✅ 允許|
+|002  |003   |✅ 允許|
+|003  |001   |❌ 拒絕|
+|003  |任何非001|✅ 允許|
 
-```sql
-CREATE PROCEDURE [dbo].[USP_CheckGroupPermission]
-    @SYS_ID NVARCHAR(50),
-    @APG_NO NVARCHAR(50),
-    @U_ID NVARCHAR(50)
-AS
-BEGIN
-    SELECT 
-        CASE 
-            WHEN EXISTS (
-                SELECT 1 FROM AP_USER 
-                WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
-            ) THEN 1
-            WHEN EXISTS (
-                SELECT 1 FROM AP_GROUP 
-                WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND CREATOR = @U_ID
-            ) THEN 1
-            WHEN EXISTS (
-                SELECT 1 FROM AP_USER 
-                WHERE SYS_ID = @SYS_ID AND APG_NO = @APG_NO AND U_ID = @U_ID
-            ) THEN 1
-            ELSE 0
-        END AS HasPermission
-END
-```
-
-然後在程式中呼叫:
-
-```csharp
-private bool HasGroupPermissionViaSP(SVS_DBmanager dbManager, string sysId, string targetApgNo, string userId)
-{
-    var parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-        new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = targetApgNo },
-        new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = userId }
-    };
-
-    var result = dbManager.QueryBySQL("EXEC USP_CheckGroupPermission @SYS_ID, @APG_NO, @U_ID", parameters);
-    return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
-}
-```
-
-## 關鍵改善點:
-
-1. ✅ **完全使用參數化查詢** - 所有 SQL 都透過 `SqlParameter` 傳遞
-1. ✅ **使用現有的 Service 層** - 統一透過 `SVS_DBmanager` 操作資料庫
-1. ✅ **定義參數大小** - `SqlDbType.NVarChar, 50` 限制輸入長度
-1. ✅ **權限先行驗證** - 在任何資料庫操作前先檢查權限
-1. ✅ **程式碼模組化** - 將邏輯拆分成小方法,易於維護和測試
-
-這樣修改後,Fortify 應該就不會再報 Access Control 問題了。建議採用**解決方案 1**,因為它充分利用了您現有的 Service 架構。​​​​​​​​​​​​​​​​
+這樣的調整符合您的需求嗎？​​​​​​​​​​​​​​​​
