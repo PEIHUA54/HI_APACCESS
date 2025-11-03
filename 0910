@@ -1,239 +1,72 @@
-看到了幾個「會造成 partial、但畫面沒顯示失敗列」的關鍵問題與修正點。我直接給你可用程式碼（含前端 AJAX、欄位 normalizer、以及後端 Action 端把 ImportResult 轉成前端要的 status/message/errors）：
+   // 批次匯入使用者
+   [HttpPost]
+   public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+   {
+       if (file == null || file.ContentLength == 0)
+           return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
 
-⸻
+       if (string.IsNullOrWhiteSpace(apgNo))
+           return Json(new { success = false, message = "請先選擇群組" });
 
-你現在的問題點（重點兩個）
-	1.	回傳欄位名稱不一致
-你的 service 回傳物件是 ImportResult，失敗清單放在 ErrorMessages，
-但前端 JS 在渲染時讀的是 res.errors → 這樣會抓不到，表格就空白。
-	2.	前端沒有指定 dataType:'json'
-回應若是字串，res.status 會是 undefined，分支不會進入，或顯示不到錯誤明細。
+       // 副檔名限制
+       var ext = Path.GetExtension(file.FileName).ToLower();
+       if (ext != ".xls" && ext != ".xlsx")
+           return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
 
-⸻
+       // 上傳暫存
+       var uploadDir = Server.MapPath("~/Upload");
+       if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
 
-A. 前端：匯入 submit（覆蓋你現有的 submit 區塊）
+       var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+       var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
 
-// 匯入表單送出（覆蓋你現有的）
-$("#importForm").off("submit").on("submit", function (e) {
-    e.preventDefault();
+       try
+       {
+           file.SaveAs(uploadPath);
 
-    var formData = new FormData(this);
+           var service = GetAPService();
+           var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
 
-    // 保險：確保兩個必要參數有被送出（就算 hidden 存在，也補一次無妨）
-    if (!formData.has('sysID'))  formData.append('sysID',  currentSysID);
-    if (!formData.has('apgNo'))  formData.append('apgNo',  $('#groupSelect').val() || currentGroup);
-
-    $("#uploadProgress").removeClass("d-none");
-    $(".progress-bar").css("width", "50%");
-
-    $.ajax({
-        url: '@Url.Action("ImportUsers", "AP")',
-        type: 'POST',
-        data: formData,
-        contentType: false,
-        processData: false,
-        dataType: 'json',   // ★ 一定要加
-        success: function (res) {
-            console.log('[ImportUsers][res]=', res);
-
-            $("#uploadProgress").addClass("d-none");
-            $(".progress-bar").css("width", "0%");
-
-            // 清空舊的訊息區塊
-            $("#successSection, #errorSection, #partialSection").addClass("d-none");
-            $("#errorTable tbody").empty();
-
-            // ★ Normalizer：把後端各種命名對齊成前端可用
-            const status   = (res.status   || res.Status   || '').toString().toLowerCase();
-            const message  =  res.message  || res.Message  || '';
-            const rawErrs  =  res.errors   || res.ErrorMessages || res.errorMessages || [];
-
-            const errors = (Array.isArray(rawErrs) ? rawErrs : []).map((e, i) => ({
-                RowNumber: e.RowNumber ?? e.row ?? e.Row ?? (i + 1),
-                EmpNo:     e.EmpNo     ?? e.empNo ?? e.EMP_NO ?? '',
-                Message:   e.Message   ?? e.message ?? e.Error ?? e.error ?? '未知錯誤'
-            }));
-
-            if (status === 'success') {
-                $("#successMessage").text(message || '已全部成功匯入');
-                $("#successSection").removeClass("d-none");
-                loadUsers();
-                return;
-            }
-
-            if (status === 'fail') {
-                $("#errorMessage").text(message || '全部失敗');
-                if (errors.length === 0) {
-                    $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
-                } else {
-                    errors.forEach(err => {
-                        $("#errorTable tbody").append(
-                            `<tr>
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
-                                <td>${$('<div>').text(err.Message).html()}</td>
-                             </tr>`
-                        );
-                    });
-                }
-                $("#errorSection").removeClass("d-none");
-                return;
-            }
-
-            if (status === 'partial') {
-                $("#partialMessage").text(message || '部分成功、部分失敗');
-                if (errors.length === 0) {
-                    $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
-                } else {
-                    errors.forEach(err => {
-                        $("#errorTable tbody").append(
-                            `<tr>
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
-                                <td>${$('<div>').text(err.Message).html()}</td>
-                             </tr>`
-                        );
-                    });
-                }
-                $("#partialSection").removeClass("d-none");
-                loadUsers();
-                return;
-            }
-
-            // 未知狀態
-            $("#errorMessage").text(message || '未知的回應狀態，請看 console');
-            $("#errorTable tbody").append(`<tr><td colspan="3">請檢查後端回傳格式。</td></tr>`);
-            $("#errorSection").removeClass("d-none");
-        },
-        error: function () {
-            $("#uploadProgress").addClass("d-none");
-            $(".progress-bar").css("width", "0%");
-            alert("伺服器發生錯誤，請稍後再試。");
-        }
-    });
-});
-
-保留你原本的 openImportModal() 也可以再補一行：
-$('#importSysID').val(currentSysID);（你已經有了，OK）
-
-⸻
-
-B. 後端：APController.ImportUsers Action（把 ImportResult 轉成前端要的格式）
-
-請在 Controller Action 做「統一的 JSON 轉換」。假設你的 ImportUsers 是這樣：
-
-[HttpPost]
-public ActionResult ImportUsers(HttpPostedFileBase file, string sysID, string apgNo)
-{
-    try
-    {
-        if (file == null || file.ContentLength == 0)
-            return Json(new { status = "fail", message = "請選擇要上傳的檔案" });
-
-        var sysIdFromSession = Session["CurrentSystemId"] as string;
-        var groupIdFromSession = Session["CurrentGroupId"] as string;
-        var creator = User?.Identity?.Name ?? groupIdFromSession ?? ""; // 視情況
-
-        // 以 Session 優先（避免被亂填），但也容許表單帶進來作為 fallback
-        var sysId = !string.IsNullOrWhiteSpace(sysIdFromSession) ? sysIdFromSession : (sysID ?? "").Trim();
-        var apg = (apgNo ?? "").Trim();
-
-        // 儲存上傳檔案到暫存路徑
-        var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + Path.GetExtension(file.FileName));
-        file.SaveAs(tempPath);
-
-        // 呼叫你的 service
-        var svc = new YourService();
-        var result = svc.ImportUsersFromExcel(tempPath, sysId, apg, creator);
-
-        // 刪暫存
-        System.IO.File.Delete(tempPath);
-
-        // 統一包成前端可理解的格式
-        var failCount = result.ErrorMessages?.Count ?? 0;
-        var okCount = result.SuccessCount;
-
-        if (!result.IsSuccess && failCount > 0 && okCount == 0)
-        {
-            // 全部失敗
-            return Json(new {
-                status = "fail",
-                message = result.ErrorMessage ?? $"全部失敗（失敗 {failCount} 筆）",
-                errors = result.ErrorMessages   // ★ 前端會讀 errors
-            });
-        }
-
-        if (okCount > 0 && failCount > 0)
-        {
-            // 部分成功
-            return Json(new {
-                status = "partial",
-                message = $"成功 {okCount} 筆，失敗 {failCount} 筆。",
-                errors = result.ErrorMessages   // ★ 前端會讀 errors
-            });
-        }
-
-        if (okCount > 0 && failCount == 0)
-        {
-            // 全部成功
-            return Json(new {
-                status = "success",
-                message = result.ErrorMessage ?? $"共 {okCount} 筆，已全部成功匯入。"
-            });
-        }
-
-        // 其他狀況（例如讀檔就失敗）
-        return Json(new {
-            status = "fail",
-            message = result.ErrorMessage ?? "匯入失敗"
-        });
-    }
-    catch (Exception ex)
-    {
-        return Json(new { status = "fail", message = "匯入發生例外：" + ex.Message });
-    }
-}
-
-重點是：一律回傳 status/message/errors，errors 的欄位名就叫 errors，
-這樣前端就不需要猜欄位名字了（但前端我也加了 normalizer，雙保險）。
-
-⸻
-
-C. 服務層 ImportUsersFromExcel 小建議
-
-你現在最後一行會 result.IsSuccess = true;，就算有 ErrorMessages 也會 true。
-建議補一個「有錯誤就不要設 true」的邏輯，或讓 controller 端只看 SuccessCount / ErrorMessages.Count 來決定狀態（我上面採後者，service 不用改太多）。
-
-例如你也可以在 service 結尾補這樣的語句（可選）：
-
-result.IsSuccess = (result.ErrorMessages == null || result.ErrorMessages.Count == 0);
-
-
-⸻
-
-D. 檢查表格/區塊 ID 存在
-
-前端 JS 有用到：
-	•	#successSection / #successMessage
-	•	#partialSection / #partialMessage / #errorTable tbody
-	•	#errorSection / #errorMessage
-
-請確認你的 modal 內真的有這些 ID，否則 append 也看不到。
-
-⸻
-
-E. 參數名稱一致性
-	•	前端：hidden 用 name="sysID"、name="apgNo" ✅
-	•	Controller Action：參數 string sysID, string apgNo ✅（ASP.NET ModelBinder case-insensitive，OK）
-	•	Service：ImportUsersFromExcel(string filePath, string sysId, string apgNo, ...) ✅
-
-你其他地方（像 DeleteUser）曾用 apg_no，那是另一支 API。這支匯入記得用 apgNo 就好，避免對不到。
-
-⸻
-
-一句話總結
-	•	前端加 dataType:'json' + normalizer（把 ErrorMessages 映射到 errors）。
-	•	後端 Action 統一回傳 {status, message, errors}，用 SuccessCount/ErrorMessages.Count 判斷 success/partial/fail。
-	•	確認 modal 中 #errorTable tbody 等元素都存在。
-
-照這樣改，partial 的失敗列就會正常出現在表格，而且 sysID/apgNo 都能確實送到後端。
+           if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+           {
+               // 全部成功
+               return Json(new
+               {
+                   status = "success",
+                   message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+               });
+           }
+           else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+           {
+               // 全部失敗
+               return Json(new
+               {
+                   status = "fail",
+                   message = "匯入失敗：請重新上傳",
+                   errors = importResult.ErrorMessages
+               });
+           }
+           else
+           {
+               // 部分成功
+               return Json(new
+               {
+                   status = "partial",
+                   message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                   errors = importResult.ErrorMessages
+               });
+           }
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+       }
+       finally
+       {
+           if (System.IO.File.Exists(uploadPath))
+           {
+               var fc = new F_Common();
+               fc.SafeDeleteFile(uploadDir, safeName);
+           }
+       }
+   }
