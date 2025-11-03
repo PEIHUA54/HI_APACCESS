@@ -1,142 +1,208 @@
-讚，我直接把你的 ImportUsers 後端 Action「整理成統一回傳 {status,message,errors}」的完整替換版，同時處理幾個地雷：
-	•	sysID 以 Session 優先（避免被竄改），參數僅作 fallback。
-	•	ErrorMessages 可能為 null → 一律安全取用。
-	•	依 SuccessCount / ErrorCount 明確區分 success / partial / fail。
-	•	任何前置驗證失敗也回 {status:"fail"}（而不是 success:false），前端比較好判斷。
-	•	例外也統一回 {status:"fail"}。
+現在問題是無法匯入
+部份成功部分失敗 匯入完 沒有呈現失敗的資料在畫面上
+GROUPMANAGEMENT VIEW:
 
-把下面整段直接取代你現在的 Action 即可：
+<!-- 匯入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次匯入使用者</h5>
+                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
 
-// 批次匯入使用者
-[HttpPost]
-public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
-{
-    // ---- 0) 基本驗證：檔案、群組、附檔名 ----
-    if (file == null || file.ContentLength == 0)
-    {
-        return Json(new { status = "fail", message = "請選擇要匯入的 Excel 檔案" });
-    }
+                <!-- 上傳區 -->
+                <div id="uploadFormSection">
+                    <form id="importForm" enctype="multipart/form-data" method="post">
+                        <input type="hidden" name="apgNo" id="importGroupNo" />
+                        <input type="hidden" name="sysID"  id="importSysID" value="@Session["CurrentSystemId"]" />
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
+                        </div>
+                        <div class="d-flex">
+                            <button type="submit" class="btn btn-primary">匯入</button>
+                            <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                                <i class="fas fa-download"></i> 下載範本
+                            </button>
+                        </div>
+                    </form>
 
-    if (string.IsNullOrWhiteSpace(apgNo))
-    {
-        return Json(new { status = "fail", message = "請先選擇群組" });
-    }
+                    <!-- 匯入進度 -->
+                    <div id="uploadProgress" class="progress mt-3 d-none">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
 
-    var ext = Path.GetExtension(file.FileName)?.ToLower() ?? "";
-    if (ext != ".xls" && ext != ".xlsx")
-    {
-        return Json(new { status = "fail", message = "請上傳 Excel 檔案（.xls 或 .xlsx）" });
-    }
+                <!-- 成功顯示 -->
+                <div id="successSection" class="mt-4 d-none">
+                    <div class="alert alert-success">
+                        <strong id="successMessage"></strong>
+                    </div>
+                </div>
 
-    // ---- 1) 以 Session 為主：sysId 與操作者 ----
-    //     （避免前端隨便塞 sysID，這裡你也可以視需求比對 sysID 與 Session 是否一致）
-    var sysIdFromSession = Session["CurrentSystemId"] as string;
-    var groupIdFromSession = Session["CurrentGroupId"] as string; // 需要的話可用
-    var sysId = !string.IsNullOrWhiteSpace(sysIdFromSession) ? sysIdFromSession : (sysID ?? "").Trim();
+                <!-- 失敗顯示 -->
+                <div id="errorSection" class="mt-4 d-none">
+                    <div class="alert alert-danger">
+                        <strong id="errorMessage"></strong>
+                    </div>
+                    <div class="table-responsive mt-2">
+                        <table class="table table-bordered table-striped" id="errorTable">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>行號</th>
+                                    <th>員編</th>
+                                    <th>錯誤訊息</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                    </div>
+                </div>
 
-    if (string.IsNullOrWhiteSpace(sysId))
-    {
-        return Json(new { status = "fail", message = "系統ID遺失，請重新進入群組管理頁" });
-    }
+                <!-- 部分成功顯示 -->
+                <div id="partialSection" class="mt-4 d-none">
+                    <div class="alert alert-warning">
+                        <strong id="partialMessage"></strong>
+                    </div>
+                    <div class="table-responsive mt-2">
+                        <table class="table table-bordered table-striped" id="errorTable">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>行號</th>
+                                    <th>員編</th>
+                                    <th>錯誤訊息</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="text-center mt-3">
+                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-    // 建議用你現有登入身分；這裡沿用你的 this.Emp_NO
-    var creator = this.Emp_NO; // 或 User?.Identity?.Name
+JS:
+        const currentSysID   = @Html.Raw(Json.Encode(Session["CurrentSystemId"] ?? ""));
+        const currentGroupID = @Html.Raw(Json.Encode(Session["CurrentGroupId"]  ?? ""));
+        const isAdmin = (currentGroupID === '001');
 
-    // ---- 2) 存暫存檔 ----
-    var uploadDir = Server.MapPath("~/Upload");
-    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+  // 批次匯入使用者MODAL
+  function openImportModal() {
+      $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
+      $('#importResult').empty();
+      $("#errorSection").addClass("d-none");
+      $("#successSection").addClass("d-none");
+      $("#uploadProgress").addClass("d-none");
+      $(".progress-bar").css("width", "0%");
+      $('#importModal').modal('show');
+      $('#importSysID').val(currentSysID);
+  }
 
-    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
-    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+        // 匯入表單送出
+        $("#importForm").off("submit").on("submit", function (e) {
+            e.preventDefault();
 
-    try
-    {
-        file.SaveAs(uploadPath);
+            var formData = new FormData(this);
 
-        // ---- 3) 呼叫 Service ----
-        var service = GetAPService();
-        var importResult = service.ImportUsersFromExcel(uploadPath, sysId, apgNo, creator);
+            if (!formData.has('sysID')) formData.append('sysID', currentSysID);
+            if (!formData.has('apgNo')) formData.append('apgNo', $('#groupSelect').val() || currentGroup);
 
-        // 安全取得錯誤清單
-        var errors = importResult?.ErrorMessages ?? new List<ImportError>();
-        var ok = importResult?.SuccessCount ?? 0;
-        var fail = errors.Count;
+            $("#uploadProgress").removeClass("d-none");
+            $(".progress-bar").css("width", "50%");
 
-        // ---- 4) 決定回傳狀態：success / partial / fail ----
-        if (ok > 0 && fail == 0)
-        {
-            // 全部成功
-            return Json(new
-            {
-                status = "success",
-                message = $"匯入成功：共 {ok} 筆"
+            $.ajax({
+                url: '@Url.Action("ImportUsers", "AP")',
+                type: 'POST',
+                data: formData,
+                contentType: false,
+                processData: false,
+                dataType: 'json',   
+                success: function (res) {
+                    console.log('[ImportUsers][res]=', res);
+
+                    $("#uploadProgress").addClass("d-none");
+                    $(".progress-bar").css("width", "0%");
+
+                    // 清空舊的訊息區塊
+                    $("#successSection, #errorSection, #partialSection").addClass("d-none");
+                    $("#errorTable tbody").empty();
+
+                    const status = (res.status || res.Status || '').toString().toLowerCase();
+                    const message = res.message || res.Message || '';
+                    const rawErrs = res.errors || res.ErrorMessages || res.errorMessages || [];
+
+                    const errors = (Array.isArray(rawErrs) ? rawErrs : []).map((e, i) => ({
+                        RowNumber: e.RowNumber ?? e.row ?? e.Row ?? (i + 1),
+                        EmpNo: e.EmpNo ?? e.empNo ?? e.EMP_NO ?? '',
+                        Message: e.Message ?? e.message ?? e.Error ?? e.error ?? '未知錯誤'
+                    }));
+
+                    if (status === 'success') {
+                        $("#successMessage").text(message || '已全部成功匯入');
+                        $("#successSection").removeClass("d-none");
+                        loadUsers();
+                        return;
+                    }
+
+                    if (status === 'fail') {
+                        $("#errorMessage").text(message || '全部失敗');
+                        if (errors.length === 0) {
+                            $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
+                        } else {
+                            errors.forEach(err => {
+                                $("#errorTable tbody").append(
+                                    `<tr>
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${$('<div>').text(err.Message).html()}</td>
+                             </tr>`
+                                );
+                            });
+                        }
+                        $("#errorSection").removeClass("d-none");
+                        return;
+                    }
+
+                    if (status === 'partial') {
+                        $("#partialMessage").text(message || '部分成功、部分失敗');
+                        if (errors.length === 0) {
+                            $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
+                        } else {
+                            errors.forEach(err => {
+                                $("#errorTable tbody").append(
+                                    `<tr>
+                                <td>${err.RowNumber}</td>
+                                <td>${err.EmpNo}</td>
+                                <td>${$('<div>').text(err.Message).html()}</td>
+                             </tr>`
+                                );
+                            });
+                        }
+                        $("#partialSection").removeClass("d-none");
+                        loadUsers();
+                        return;
+                    }
+
+                    // 未知狀態
+                    $("#errorMessage").text(message || '未知的回應狀態，請看 console');
+                    $("#errorTable tbody").append(`<tr><td colspan="3">請檢查後端回傳格式。</td></tr>`);
+                    $("#errorSection").removeClass("d-none");
+                },
+                error: function () {
+                    $("#uploadProgress").addClass("d-none");
+                    $(".progress-bar").css("width", "0%");
+                    alert("伺服器發生錯誤，請稍後再試。");
+                }
             });
-        }
-        else if (ok == 0 && fail > 0)
-        {
-            // 全部失敗
-            return Json(new
-            {
-                status = "fail",
-                message = string.IsNullOrWhiteSpace(importResult?.ErrorMessage) ? "匯入失敗：請檢查失敗清單" : importResult.ErrorMessage,
-                errors = errors
-            });
-        }
-        else if (ok > 0 && fail > 0)
-        {
-            // 部分成功
-            var msg = string.IsNullOrWhiteSpace(importResult?.ErrorMessage)
-                ? $"匯入部分成功：成功 {ok} 筆，失敗 {fail} 筆"
-                : importResult.ErrorMessage;
-
-            return Json(new
-            {
-                status = "partial",
-                message = msg,
-                errors = errors
-            });
-        }
-
-        // 理論上到不了；保底當作失敗
-        return Json(new
-        {
-            status = "fail",
-            message = string.IsNullOrWhiteSpace(importResult?.ErrorMessage) ? "匯入結果未知，請稍後再試" : importResult.ErrorMessage,
-            errors = errors
         });
-    }
-    catch (Exception ex)
-    {
-        // 例外 → 統一走 fail
-        return Json(new { status = "fail", message = "匯入過程發生錯誤：" + ex.Message });
-    }
-    finally
-    {
-        // ---- 5) 刪除暫存 ----
-        try
-        {
-            if (System.IO.File.Exists(uploadPath))
-            {
-                var fc = new F_Common();
-                fc.SafeDeleteFile(uploadDir, safeName);
-            }
-        }
-        catch { /* 刪檔失敗就略過，不影響流程 */ }
-    }
-}
-
-小補充（可選，但建議）
-	•	如果你想「強制比對」前端送來的 sysID 必須等於 Session["CurrentSystemId"]，可以在「1) 以 Session 為主」後面加：
-
-if (!string.IsNullOrWhiteSpace(sysID) && !string.Equals(sysID.Trim(), sysId, StringComparison.OrdinalIgnoreCase))
-{
-    return Json(new { status = "fail", message = "系統ID不一致，請重新整理頁面後再試" });
-}
-
-
-⸻
-
-為什麼這樣改能解你前端問題？
-	•	前端現在只認 {status,message,errors}。這裡統一輸出，就不會出現明明有 ErrorMessages，前端卻抓不到 errors 導致表格空白的狀況。
-	•	任何「前置驗證失敗」與「例外」都走 status:"fail"，前端同一套流程就能吃到錯誤訊息。
-	•	sysID 以 Session 優先，避免 URL/表單被亂填。你前端 hidden 也有帶，但這裡保守一點比較安全。
