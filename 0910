@@ -1,72 +1,142 @@
-   // 批次匯入使用者
-   [HttpPost]
-   public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
-   {
-       if (file == null || file.ContentLength == 0)
-           return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+讚，我直接把你的 ImportUsers 後端 Action「整理成統一回傳 {status,message,errors}」的完整替換版，同時處理幾個地雷：
+	•	sysID 以 Session 優先（避免被竄改），參數僅作 fallback。
+	•	ErrorMessages 可能為 null → 一律安全取用。
+	•	依 SuccessCount / ErrorCount 明確區分 success / partial / fail。
+	•	任何前置驗證失敗也回 {status:"fail"}（而不是 success:false），前端比較好判斷。
+	•	例外也統一回 {status:"fail"}。
 
-       if (string.IsNullOrWhiteSpace(apgNo))
-           return Json(new { success = false, message = "請先選擇群組" });
+把下面整段直接取代你現在的 Action 即可：
 
-       // 副檔名限制
-       var ext = Path.GetExtension(file.FileName).ToLower();
-       if (ext != ".xls" && ext != ".xlsx")
-           return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+// 批次匯入使用者
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+{
+    // ---- 0) 基本驗證：檔案、群組、附檔名 ----
+    if (file == null || file.ContentLength == 0)
+    {
+        return Json(new { status = "fail", message = "請選擇要匯入的 Excel 檔案" });
+    }
 
-       // 上傳暫存
-       var uploadDir = Server.MapPath("~/Upload");
-       if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+    if (string.IsNullOrWhiteSpace(apgNo))
+    {
+        return Json(new { status = "fail", message = "請先選擇群組" });
+    }
 
-       var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
-       var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+    var ext = Path.GetExtension(file.FileName)?.ToLower() ?? "";
+    if (ext != ".xls" && ext != ".xlsx")
+    {
+        return Json(new { status = "fail", message = "請上傳 Excel 檔案（.xls 或 .xlsx）" });
+    }
 
-       try
-       {
-           file.SaveAs(uploadPath);
+    // ---- 1) 以 Session 為主：sysId 與操作者 ----
+    //     （避免前端隨便塞 sysID，這裡你也可以視需求比對 sysID 與 Session 是否一致）
+    var sysIdFromSession = Session["CurrentSystemId"] as string;
+    var groupIdFromSession = Session["CurrentGroupId"] as string; // 需要的話可用
+    var sysId = !string.IsNullOrWhiteSpace(sysIdFromSession) ? sysIdFromSession : (sysID ?? "").Trim();
 
-           var service = GetAPService();
-           var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+    if (string.IsNullOrWhiteSpace(sysId))
+    {
+        return Json(new { status = "fail", message = "系統ID遺失，請重新進入群組管理頁" });
+    }
 
-           if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
-           {
-               // 全部成功
-               return Json(new
-               {
-                   status = "success",
-                   message = $"匯入成功：共 {importResult.SuccessCount} 筆"
-               });
-           }
-           else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
-           {
-               // 全部失敗
-               return Json(new
-               {
-                   status = "fail",
-                   message = "匯入失敗：請重新上傳",
-                   errors = importResult.ErrorMessages
-               });
-           }
-           else
-           {
-               // 部分成功
-               return Json(new
-               {
-                   status = "partial",
-                   message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
-                   errors = importResult.ErrorMessages
-               });
-           }
-       }
-       catch (Exception ex)
-       {
-           return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
-       }
-       finally
-       {
-           if (System.IO.File.Exists(uploadPath))
-           {
-               var fc = new F_Common();
-               fc.SafeDeleteFile(uploadDir, safeName);
-           }
-       }
-   }
+    // 建議用你現有登入身分；這裡沿用你的 this.Emp_NO
+    var creator = this.Emp_NO; // 或 User?.Identity?.Name
+
+    // ---- 2) 存暫存檔 ----
+    var uploadDir = Server.MapPath("~/Upload");
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+    try
+    {
+        file.SaveAs(uploadPath);
+
+        // ---- 3) 呼叫 Service ----
+        var service = GetAPService();
+        var importResult = service.ImportUsersFromExcel(uploadPath, sysId, apgNo, creator);
+
+        // 安全取得錯誤清單
+        var errors = importResult?.ErrorMessages ?? new List<ImportError>();
+        var ok = importResult?.SuccessCount ?? 0;
+        var fail = errors.Count;
+
+        // ---- 4) 決定回傳狀態：success / partial / fail ----
+        if (ok > 0 && fail == 0)
+        {
+            // 全部成功
+            return Json(new
+            {
+                status = "success",
+                message = $"匯入成功：共 {ok} 筆"
+            });
+        }
+        else if (ok == 0 && fail > 0)
+        {
+            // 全部失敗
+            return Json(new
+            {
+                status = "fail",
+                message = string.IsNullOrWhiteSpace(importResult?.ErrorMessage) ? "匯入失敗：請檢查失敗清單" : importResult.ErrorMessage,
+                errors = errors
+            });
+        }
+        else if (ok > 0 && fail > 0)
+        {
+            // 部分成功
+            var msg = string.IsNullOrWhiteSpace(importResult?.ErrorMessage)
+                ? $"匯入部分成功：成功 {ok} 筆，失敗 {fail} 筆"
+                : importResult.ErrorMessage;
+
+            return Json(new
+            {
+                status = "partial",
+                message = msg,
+                errors = errors
+            });
+        }
+
+        // 理論上到不了；保底當作失敗
+        return Json(new
+        {
+            status = "fail",
+            message = string.IsNullOrWhiteSpace(importResult?.ErrorMessage) ? "匯入結果未知，請稍後再試" : importResult.ErrorMessage,
+            errors = errors
+        });
+    }
+    catch (Exception ex)
+    {
+        // 例外 → 統一走 fail
+        return Json(new { status = "fail", message = "匯入過程發生錯誤：" + ex.Message });
+    }
+    finally
+    {
+        // ---- 5) 刪除暫存 ----
+        try
+        {
+            if (System.IO.File.Exists(uploadPath))
+            {
+                var fc = new F_Common();
+                fc.SafeDeleteFile(uploadDir, safeName);
+            }
+        }
+        catch { /* 刪檔失敗就略過，不影響流程 */ }
+    }
+}
+
+小補充（可選，但建議）
+	•	如果你想「強制比對」前端送來的 sysID 必須等於 Session["CurrentSystemId"]，可以在「1) 以 Session 為主」後面加：
+
+if (!string.IsNullOrWhiteSpace(sysID) && !string.Equals(sysID.Trim(), sysId, StringComparison.OrdinalIgnoreCase))
+{
+    return Json(new { status = "fail", message = "系統ID不一致，請重新整理頁面後再試" });
+}
+
+
+⸻
+
+為什麼這樣改能解你前端問題？
+	•	前端現在只認 {status,message,errors}。這裡統一輸出，就不會出現明明有 ErrorMessages，前端卻抓不到 errors 導致表格空白的狀況。
+	•	任何「前置驗證失敗」與「例外」都走 status:"fail"，前端同一套流程就能吃到錯誤訊息。
+	•	sysID 以 Session 優先，避免 URL/表單被亂填。你前端 hidden 也有帶，但這裡保守一點比較安全。
