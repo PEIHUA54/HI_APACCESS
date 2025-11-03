@@ -399,3 +399,47 @@ js:
 
 
         #endregion
+
+這是使用站台進去的syscontroller / action
+ // 導向群組管理
+ [HttpPost]
+ public JsonResult RedirectToGroupManagement(string sysId)
+ {
+     try
+     {
+         if (string.IsNullOrWhiteSpace(sysId))
+             return Json(new { success = false, message = "請選擇系統" });
+
+         if (!IsValidSystemId(sysId))
+             return Json(new { success = false, message = "無效的系統ID格式" });
+
+         // 寫 Session
+         Session["CurrentSystemId"] = sysId;
+         Session["CurrentGroupId"] = "001";     
+         Session["FromInternalSite"] = true;
+
+         return Json(new { success = true });
+     }
+     catch (Exception ex)
+     {
+         return Json(new { success = false, message = "導向失敗：" + ex.Message });
+     }
+
+這是用token進去的apcontroller:
+  public ActionResult GroupManagement()
+  {
+      var systemId = Session["CurrentSystemId"] as string;
+      var groupId = Session["CurrentGroupId"] as string;
+
+      if (string.IsNullOrEmpty(systemId))
+          return Content("<h3>系統ID遺失，請重新透過權限管理連結進入</h3>");
+
+      bool isFromInternalSite = Session["FromInternalSite"] != null && (bool)Session["FromInternalSite"];
+
+      ViewBag.SystemId = systemId;
+      ViewBag.GroupId = groupId;
+      ViewBag.Title = "群組權限管理 - " + systemId;
+      ViewBag.ShowSwitchButton = isFromInternalSite;
+
+      return View();
+  }
