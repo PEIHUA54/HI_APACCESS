@@ -1,73 +1,611 @@
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using System;
-using System.Web.Mvc;
-
-namespace HI_APACCESS.Service.Validation
+FORTIFY => Access Control: Database 掃碼問題
+// 批次匯入使用者
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
 {
-    public class TokenAuthorizeAttribute : ActionFilterAttribute
+    if (file == null || file.ContentLength == 0)
+        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+
+    if (string.IsNullOrWhiteSpace(apgNo))
+        return Json(new { success = false, message = "請先選擇群組" });
+
+    // 副檔名限制
+    var ext = Path.GetExtension(file.FileName).ToLower();
+    if (ext != ".xls" && ext != ".xlsx")
+        return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+    // 上傳暫存
+    var uploadDir = Server.MapPath("~/Upload");
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+    try
     {
-        private static readonly string SecretKey = "NpzedRHDaT8uSc10ntMJ+ohvUJ/VJYdHs1LyK3KP+Q0=";
+        file.SaveAs(uploadPath);
 
-        public override void OnActionExecuting(ActionExecutingContext filterContext)
+        var service = GetAPService();
+        var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+
+        if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
         {
-            var token = filterContext.HttpContext.Request.QueryString["token"];
-            if (string.IsNullOrEmpty(token))
+            // 全部成功
+            return Json(new
             {
-                RedirectWithError(filterContext, "缺少 Token，請重新登入");
-                return;
-            }
-
-            var principal = ValidateToken(token);
-            if (principal == null)
-            {
-                RedirectWithError(filterContext, "TOKEN 已失效，請重新登入");
-                return;
-            }
-
-            filterContext.HttpContext.User = principal;
-            base.OnActionExecuting(filterContext);
+                status = "success",
+                message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+            });
         }
-
-        private void RedirectWithError(ActionExecutingContext filterContext, string message)
+        else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
         {
-            filterContext.Result = new ContentResult
+            // 全部失敗
+            return Json(new
             {
-                Content = $@"<script>
-                                alert('{message}');
-                                window.location.href='/Home/Login';
-                             </script>",
-                ContentType = "text/html"
-            };
+                status = "fail",
+                message = "匯入失敗：請重新上傳",
+                errors = importResult.ErrorMessages
+            });
         }
-
-        public static ClaimsPrincipal ValidateToken(string token)
+        else
         {
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(SecretKey);
-
-            var parameters = new TokenValidationParameters
+            // 部分成功
+            return Json(new
             {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidIssuer = "hi_ap_access_dll",
-                ValidAudience = "hi_ap_access_web",
-                ValidateLifetime = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ClockSkew = TimeSpan.Zero
-            };
-
-            try
-            {
-                var principal = tokenHandler.ValidateToken(token, parameters, out SecurityToken validatedToken);
-                return principal;
-            }
-            catch
-            {
-                return null;
-            }
+                status = "partial",
+                message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                errors = importResult.ErrorMessages
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+    }
+    finally
+    {
+        if (System.IO.File.Exists(uploadPath))
+        {
+            var fc = new F_Common();
+            fc.SafeDeleteFile(uploadDir, safeName);
         }
     }
 }
+
+
+F_AP:
+     // 批次匯入人員
+     public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
+     {
+         ImportResult result = new ImportResult()
+         {
+             ErrorMessages = new List<ImportError>()
+         };
+
+         try
+         {
+             using (SqlConnection con = new SqlConnection(ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString))
+             {
+                 con.Open();
+
+                 // **驗證權限：檢查使用者是否有權限操作目標群組**
+                 if (!HasGroupPermission(con, sysId, apgNo, creator))
+                 {
+                     result.IsSuccess = false;
+                     result.ErrorMessage = "無權限操作此群組";
+                     return result;
+                 }
+
+                 // **再次驗證群組存在**
+                 string validateGroupSql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
+                 using (var cmd = new SqlCommand(validateGroupSql, con))
+                 {
+                     cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                     cmd.Parameters.AddWithValue("@APG_NO", apgNo);   //fortify
+
+                     if ((int)cmd.ExecuteScalar() == 0)
+                     {
+                         result.IsSuccess = false;
+                         result.ErrorMessage = "群組不存在";
+                         return result;
+                     }
+                 }
+
+                 var rows = new List<(int RowNumber, string EmpNo)>();
+
+                 // 讀 Excel
+                 using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                 using (var reader = ExcelReaderFactory.CreateReader(stream)) // 自動支援 .xls / .xlsx
+                 {
+                     int rowIndex = 0;
+                     while (reader.Read())
+                     {
+                         rowIndex++;
+
+                         // 第一列當表頭 → 檢查是否正確
+                         if (rowIndex == 1)
+                         {
+                             string header = reader.GetString(0)?.Trim();
+                             if (string.IsNullOrEmpty(header) || header != "員工編號")
+                             {
+                                 result.IsSuccess = false;
+                                 result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                                 return result;
+                             }
+                             continue;
+                         }
+
+                         // 讀取資料
+                         string empNo = reader.GetValue(0)?.ToString().Trim();
+                         if (!string.IsNullOrEmpty(empNo))
+                         {
+                             rows.Add((rowIndex, empNo));
+                         }
+                     }
+                 }
+
+                 // 沒有資料
+                 if (rows.Count == 0)
+                 {
+                     result.IsSuccess = false;
+                     result.ErrorMessage = "Excel 無任何員工資料";
+                     return result;
+                 }
+
+                 int successCount = 0;
+
+                 foreach (var row in rows)
+                 {
+                     try
+                     {
+                         // 檢查員工是否存在
+                         string checkEmpSql = "SELECT EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
+                         string empName = null;
+                         using (var cmd = new SqlCommand(checkEmpSql, con))
+                         {
+                             cmd.Parameters.AddWithValue("@EMP_NO", row.EmpNo);
+                             empName = cmd.ExecuteScalar() as string;
+                         }
+
+                         if (string.IsNullOrEmpty(empName))
+                         {
+                             result.ErrorMessages.Add(new ImportError
+                             {
+                                 RowNumber = row.RowNumber,
+                                 EmpNo = row.EmpNo,
+                                 Message = "查無此員工"
+                             });
+                             continue;
+                         }
+
+                         // 檢查是否已存在於同一個群組
+                         string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
+                         using (var cmd = new SqlCommand(checkUserSql, con))
+                         {
+                             cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                             cmd.Parameters.AddWithValue("@APG_NO", apgNo);   //fortify
+                             cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+
+                             int exists = (int)cmd.ExecuteScalar();
+                             if (exists > 0)
+                             {
+                                 result.ErrorMessages.Add(new ImportError
+                                 {
+                                     RowNumber = row.RowNumber,
+                                     EmpNo = row.EmpNo,
+                                     Message = "此群組已存在該員工"
+                                 });
+                                 continue;
+                             }
+                         }
+
+                         // 檢查是否已存在於該系統的其他群組
+                         string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
+                         using (var cmd = new SqlCommand(checkSystemSql, con))
+                         {
+                             cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                             cmd.Parameters.AddWithValue("@APG_NO", apgNo);   //fortify
+                             cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                             if ((int)cmd.ExecuteScalar() > 0)
+                             {
+                                 result.ErrorMessages.Add(new ImportError
+                                 {
+                                     RowNumber = row.RowNumber,
+                                     EmpNo = row.EmpNo,
+                                     Message = "此系統其他群組已存在該員工"
+                                 });
+                                 continue;
+                             }
+                         }
+
+                         // 寫入 AP_USER
+                         string insertSql = @"
+                     INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+                     VALUES(@SYS_ID, @APG_NO, @U_ID, @U_NAME, @CREATOR, GETDATE())";
+
+                         using (var cmd = new SqlCommand(insertSql, con))
+                         {
+                             cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                             cmd.Parameters.AddWithValue("@APG_NO", apgNo);  //fortify
+                             cmd.Parameters.AddWithValue("@U_ID", row.EmpNo);
+                             cmd.Parameters.AddWithValue("@U_NAME", empName);
+                             cmd.Parameters.AddWithValue("@CREATOR", creator);
+
+                             cmd.ExecuteNonQuery();
+                             successCount++;
+                         }
+                     }
+                     catch (Exception exRow)
+                     {
+                         result.ErrorMessages.Add(new ImportError
+                         {
+                             RowNumber = row.RowNumber,
+                             EmpNo = row.EmpNo,
+                             Message = "寫入錯誤：" + exRow.Message
+                         });
+                     }
+                 }
+
+                 result.SuccessCount = successCount;
+                 result.IsSuccess = true;
+             }
+         }
+         catch (Exception ex)
+         {
+             result.IsSuccess = false;
+             result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+         }
+
+         return result;
+     }
+
+     /// <summary>
+     /// 檢查使用者是否有權限操作指定群組
+     /// </summary>
+     /// <param name="targetApgNo">目標群組編號</param>
+     /// <param name="userId">使用者ID（員工編號）</param>
+     /// <returns>true=有權限, false=無權限</returns>
+     private bool HasGroupPermission(SqlConnection con, string sysId, string targetApgNo, string userId)
+     {
+         try
+         {
+             // 查詢檢查ApgNo所有權限條件
+             string permissionCheckSql = @"
+         SELECT 
+             CASE 
+                 -- 條件1：使用者在群組 001（最高權限），可以操作所有群組
+                 WHEN EXISTS (
+                     SELECT 1 
+                     FROM AP_USER 
+                     WHERE SYS_ID = @SYS_ID 
+                       AND APG_NO = '001' 
+                       AND U_ID = @U_ID
+                 ) THEN 1
+                 
+                 -- 條件2：使用者是目標群組的建立者
+                 WHEN EXISTS (
+                     SELECT 1 
+                     FROM AP_GROUP 
+                     WHERE SYS_ID = @SYS_ID 
+                       AND APG_NO = @APG_NO 
+                       AND CREATOR = @U_ID
+                 ) THEN 1
+                 
+                 -- 條件3：使用者是目標群組的成員
+                 WHEN EXISTS (
+                     SELECT 1 
+                     FROM AP_USER 
+                     WHERE SYS_ID = @SYS_ID 
+                       AND APG_NO = @APG_NO 
+                       AND U_ID = @U_ID
+                 ) THEN 1
+                 
+                 -- 其他情況：無權限
+                 ELSE 0
+             END AS HasPermission";
+
+             using (var cmd = new SqlCommand(permissionCheckSql, con))
+             {
+                 cmd.Parameters.AddWithValue("@SYS_ID", sysId);
+                 cmd.Parameters.AddWithValue("@APG_NO", targetApgNo);   //fortify
+                 cmd.Parameters.AddWithValue("@U_ID", userId);
+
+                 int hasPermission = (int)cmd.ExecuteScalar();
+                 return hasPermission == 1;
+             }
+         }
+         catch (Exception ex)
+         {
+             return false;
+         }
+     }
+
+SERVICE:
+    public class SVS_DBmanager
+    {
+        private readonly string sqlcon = ConfigurationManager.AppSettings["Environment"] == "HI_APACCESS_TEST" ?
+            ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI-AUTOS"].ConnectionString : ConfigurationManager.ConnectionStrings["ConnDB_DBLS_HI-AUTOS"].ConnectionString;
+        private readonly string _sqlcon;
+        static ILogger log = SVS_Serilog._log;
+
+        /// <summary>
+        /// ado.net連線資料庫
+        /// </summary>
+        /// <param name="conn連線字串">連線字串，null=預設</param>
+        public SVS_DBmanager(string conn連線字串 = null)
+        {
+            _sqlcon = string.IsNullOrEmpty(conn連線字串) ? sqlcon : conn連線字串;
+        }
+
+        #region 共用
+
+        /// <summary>
+        /// 查詢資料庫(無parameter)
+        /// </summary>
+        /// <param name="sql">SQL語法</param>
+        /// <returns>DataTable</returns>
+        public DataTable QueryBySQL(string sql)
+        {
+            try
+            {
+                using (SqlConnection con = new SqlConnection(_sqlcon))
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                using (DataTable dataTable = new DataTable())
+                {
+                    con.Open();
+                    cmd.CommandTimeout = 180; //因轉出資料會逾時，加長至3分鐘
+                    adapter.Fill(dataTable);  
+                    return dataTable;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+
+                log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql}", ex.StackTrace);
+
+                using (DataTable dataTable = new DataTable())
+                {
+                    return dataTable;
+                }
+            }
+            finally
+            {
+                Serilog.Log.CloseAndFlush();
+            }
+        }
+
+        public DataTable QueryBySQL(string sql, List<SqlParameter> paras)
+        {
+            try
+            {
+                using (SqlConnection con = new SqlConnection(_sqlcon))
+                using (SqlCommand cmd = new SqlCommand(sql, con))  
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                using (DataTable dataTable = new DataTable())
+                {
+                    con.Open();
+                    cmd.CommandTimeout = 180; //因轉出資料會逾時，加長至3分鐘
+
+                    // 參數驗證和處理
+                    if (paras != null)
+                    {
+                        foreach (var param in paras)
+                        {
+                            // 處理 null 值
+                            if (param.Value == null)
+                                param.Value = DBNull.Value;
+
+                            // 驗證參數大小（如果是字串類型）
+                            if (param.SqlDbType == SqlDbType.NVarChar ||
+                            param.SqlDbType == SqlDbType.VarChar)
+                            {
+                                if (param.Value != DBNull.Value &&
+                                param.Value.ToString().Length > param.Size)
+                                {
+                                    throw new ArgumentException(
+                                    $"參數 {param.ParameterName} 超出最大長度");
+                                }
+                            }
+                        }
+
+                        cmd.Parameters.AddRange(paras.ToArray());
+                    }
+
+                    try
+                    {
+                        // 使用交易來確保資料一致性
+                        using (SqlTransaction transaction = con.BeginTransaction())
+                        {
+                            try
+                            {
+                                cmd.Transaction = transaction;
+                                adapter.Fill(dataTable); 
+                                transaction.Commit();
+                            }
+                            catch
+                            {
+                                transaction.Rollback();
+                                throw;
+                            }
+                        }
+                    }
+                    catch (SqlException sqlEx)
+                    {
+                        log.Error($"SQL執行錯誤: {sqlEx.Message}");
+                        throw;
+                    }
+
+                    return dataTable;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql}", ex.StackTrace);
+
+                // 返回空的 DataTable
+                return new DataTable();
+            }
+            finally
+            {
+                Serilog.Log.CloseAndFlush();
+            }
+        }
+
+
+        //===============================================//
+
+        /// <summary>
+        /// 新增、修改資料庫(無parameter)
+        /// </summary>
+        /// <param name="sql">SQL語法</param>
+        public string ExecuteSQL(string sql)
+        {
+            string ret = null;
+            try
+            {
+                using (SqlConnection con = new SqlConnection(_sqlcon))
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                {
+                    con.Open();
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        if (reader.HasRows)
+                        {
+                            while (reader.Read())
+                            {
+                                string RET_ID = reader.GetString(0);
+                                string RET_STATE = reader.GetString(1);
+                                ret = RET_STATE.Contains("success") ? "success" : "fail";
+                            }
+                        }
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+
+                log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql}", ex.StackTrace);
+
+                ret = "fail," + ex.Message;
+            }
+            finally
+            {
+                Serilog.Log.CloseAndFlush();
+            }
+            return ret;
+        }
+
+        /// <summary>
+        /// 新增、修改資料庫(有parameter)
+        /// </summary>
+        /// <param name="sql">SQL語法</param>
+        /// <param name="paras">查詢參數(SqlParameter)</param>
+        public string ExecuteSQL(string sql, List<SqlParameter> paras)
+        {
+            string ret = null;
+            try
+            {
+                using (SqlConnection con = new SqlConnection(_sqlcon))
+                using (SqlCommand cmd = new SqlCommand(sql, con))
+                {
+                    con.Open();
+                    if (paras != null)
+                    {
+                        cmd.Parameters.AddRange(paras.ToArray());
+                    }
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+
+                //log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql}", ex.StackTrace);
+
+                if (sql.Contains("USP_促銷商品明細序號更新") && paras.Count >= 2)
+                {
+                    log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql} \r\nPatameters：T_CAS_NO-{paras[0].Value}, P_TYPE-{paras[1].Value}", ex.StackTrace);
+                }
+                else
+                {
+                    log.Error<string>(ex, $"{ex.Message} \r\nSQL：{sql}", ex.StackTrace);
+                }
+
+                ret = "fail," + ex.Message;
+            }
+            finally
+            {
+                Serilog.Log.CloseAndFlush();
+            }
+            return ret;
+        }
+
+        /// <summary>
+        /// 依照欄位名稱，將DataTable轉入List<Model>
+        /// </summary>
+        /// <typeparam name="T">Model型別</typeparam>
+        /// <param name="dt">資料表</param>
+        /// <returns></returns>
+        public static List<T> ConvertToList<T>(DataTable dt)
+        {
+            List<string> list_顯示時間清單 = new List<string>() { "PRLV2_DATE", "BOSS_NOTE", "BUY_NOTE", "VOID_DATE", "CHK_DATE" };
+
+            var columns = dt.Columns.Cast<DataColumn>().Select(c => new { ColumnName = c.ColumnName.ToLower(), ColumnDataType = c.DataType.Name }).ToList();
+
+            System.Reflection.PropertyInfo[] properties = typeof(T).GetProperties();
+
+            List<T> ret = dt.AsEnumerable().Select(row =>
+            {
+                var objT = Activator.CreateInstance<T>();
+                foreach (var pro in properties)
+                {
+                    var column = columns.Where(x => x.ColumnName == pro.Name.ToLower());
+                    if (column != null && column.Select(x => x.ColumnName).Any())
+                    {
+                        try
+                        {
+                            string val = string.Empty;
+                            switch (column.FirstOrDefault().ColumnDataType)
+                            {
+                                case "Date":
+                                case "DateTime":
+                                    if (list_顯示時間清單.Contains(pro.Name))
+                                    {
+                                        val = row[pro.Name] == DBNull.Value ? string.Empty : DateTime.Parse(row[pro.Name].ToString()).ToString("yyyy-MM-dd HH:mm:ss");
+                                    }
+                                    else
+                                    {
+                                        val = row[pro.Name] == DBNull.Value ? string.Empty : DateTime.Parse(row[pro.Name].ToString()).ToString("yyyy-MM-dd");
+                                    }
+                                    break;
+                                default:
+                                    val = row[pro.Name] == DBNull.Value ? string.Empty : row[pro.Name].ToString();
+                                    break;
+                            }
+
+                            pro.SetValue(objT, val);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine(ex);
+
+                            log.Error<string>(ex, ex.Message, ex.StackTrace);
+                        }
+                        finally
+                        {
+                            Log.CloseAndFlush();
+                        }
+                    }
+                }
+                return objT;
+            }).ToList();
+
+            return ret;
+        }
+
+        #endregion 共用
+    }
