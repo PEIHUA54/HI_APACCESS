@@ -1,367 +1,259 @@
-問題找到了！您的 VIEW 中有 **兩個 `id="errorTable"`**，導致 jQuery 無法正確填入失敗資料！
+找到問題了！**`ReadExcelData` 方法沒有設定 `result.IsSuccess = true`**！
 
 ## 🐛 問題分析
 
-```html
-<!-- 失敗顯示 -->
-<div id="errorSection" class="mt-4 d-none">
-    <table class="table table-bordered table-striped" id="errorTable">  <!-- ❌ 第一個 -->
-        ...
-    </table>
-</div>
+當您的 `ReadExcelData` 執行完後：
 
-<!-- 部分成功顯示 -->
-<div id="partialSection" class="mt-4 d-none">
-    <table class="table table-bordered table-striped" id="errorTable">  <!-- ❌ 第二個，重複了！ -->
-        ...
-    </table>
-</div>
-```
+```csharp
+var rows = ReadExcelData(filePath, result);
 
-當 JS 執行 `$("#errorTable tbody")` 時，只會選到**第一個**，導致部分成功時無法顯示錯誤列表。
-
------
-
-## ✅ 解決方案 1：修改 VIEW（推薦）
-
-給兩個表格不同的 ID：
-
-```html
-<!-- 匯入 Modal -->
-<div class="modal fade" id="importModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">批次匯入使用者</h5>
-                <button type="button" class="btn-close" data-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-
-                <!-- 上傳區 -->
-                <div id="uploadFormSection">
-                    <form id="importForm" enctype="multipart/form-data" method="post">
-                        <input type="hidden" name="apgNo" id="importGroupNo" />
-                        <input type="hidden" name="sysID" id="importSysID" value="@Session["CurrentSystemId"]" />
-                        <div class="mb-3">
-                            <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
-                        </div>
-                        <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary">匯入</button>
-                            <button type="button" class="btn btn-success" onclick="downloadTemplate()">
-                                <i class="fas fa-download"></i> 下載範本
-                            </button>
-                        </div>
-                    </form>
-
-                    <!-- 匯入進度 -->
-                    <div id="uploadProgress" class="progress mt-3 d-none">
-                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
-                    </div>
-                </div>
-
-                <!-- 成功顯示 -->
-                <div id="successSection" class="mt-4 d-none">
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle"></i>
-                        <strong id="successMessage"></strong>
-                    </div>
-                </div>
-
-                <!-- 失敗顯示 -->
-                <div id="errorSection" class="mt-4 d-none">
-                    <div class="alert alert-danger">
-                        <i class="fas fa-times-circle"></i>
-                        <strong id="errorMessage"></strong>
-                    </div>
-                    <div class="table-responsive mt-2">
-                        <table class="table table-bordered table-striped table-sm" id="failErrorTable">
-                            <thead class="table-dark">
-                                <tr>
-                                    <th style="width: 80px;">行號</th>
-                                    <th style="width: 120px;">員工編號</th>
-                                    <th>錯誤訊息</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                    <div class="text-center mt-3">
-                        <button type="button" class="btn btn-warning btn-retry-upload">
-                            <i class="fas fa-redo"></i> 重新上傳
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 部分成功顯示 -->
-                <div id="partialSection" class="mt-4 d-none">
-                    <div class="alert alert-warning">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <strong id="partialMessage"></strong>
-                    </div>
-                    <div class="table-responsive mt-2">
-                        <table class="table table-bordered table-striped table-sm" id="partialErrorTable">
-                            <thead class="table-dark">
-                                <tr>
-                                    <th style="width: 80px;">行號</th>
-                                    <th style="width: 120px;">員工編號</th>
-                                    <th>錯誤訊息</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                    <div class="text-center mt-3">
-                        <button type="button" class="btn btn-warning btn-retry-upload">
-                            <i class="fas fa-redo"></i> 重新上傳
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
-            </div>
-        </div>
-    </div>
-</div>
-```
-
------
-
-## ✅ 解決方案 2：修改 JS
-
-```javascript
-// 批次匯入使用者MODAL
-function openImportModal() {
-    $('#importGroupNo').val($('#groupSelect').val());
-    $('#importSysID').val(currentSysID);
-    
-    // 清空所有區塊
-    $("#errorSection, #successSection, #partialSection, #uploadFormSection").addClass("d-none");
-    $("#uploadProgress").addClass("d-none");
-    $(".progress-bar").css("width", "0%");
-    $("#failErrorTable tbody, #partialErrorTable tbody").empty();
-    
-    // 顯示上傳表單
-    $("#uploadFormSection").removeClass("d-none");
-    
-    $('#importModal').modal('show');
+// 此時 result.IsSuccess 還是 false（初始值）
+if (!result.IsSuccess || rows == null)  // ← 因為 IsSuccess = false，所以進入這裡
+{
+    return result;  // ← 直接返回，後面都不執行了！
 }
+```
 
-// 匯入表單送出
-$("#importForm").off("submit").on("submit", function (e) {
-    e.preventDefault();
+-----
 
-    var formData = new FormData(this);
+## ✅ 解決方案：修改 `ReadExcelData` 方法
 
-    if (!formData.has('sysID')) formData.append('sysID', currentSysID);
-    if (!formData.has('apgNo')) formData.append('apgNo', $('#groupSelect').val() || currentGroup);
+在 `ReadExcelData` 成功讀取後，設定 `result.IsSuccess = true`：
 
-    // 顯示進度條
-    $("#uploadProgress").removeClass("d-none");
-    $(".progress-bar").css("width", "50%");
+```csharp
+private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
+{
+    var rows = new List<(int RowNumber, string EmpNo)>();
+    
+    try
+    {
+        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 開始讀取: {filePath}");
+        
+        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var reader = ExcelReaderFactory.CreateReader(stream))
+        {
+            int rowIndex = 0;
+            while (reader.Read())
+            {
+                rowIndex++;
 
-    $.ajax({
-        url: '@Url.Action("ImportUsers", "AP")',
-        type: 'POST',
-        data: formData,
-        contentType: false,
-        processData: false,
-        dataType: 'json',
-        success: function (res) {
-            console.log('[ImportUsers][Response]=', res);
-
-            // 隱藏進度條
-            $("#uploadProgress").addClass("d-none");
-            $(".progress-bar").css("width", "0%");
-
-            // 清空所有舊訊息
-            $("#successSection, #errorSection, #partialSection").addClass("d-none");
-            $("#failErrorTable tbody, #partialErrorTable tbody").empty();
-
-            // 解析回應
-            const status = (res.status || res.Status || '').toString().toLowerCase();
-            const message = res.message || res.Message || '';
-            const rawErrs = res.errors || res.ErrorMessages || res.errorMessages || [];
-
-            const errors = (Array.isArray(rawErrs) ? rawErrs : []).map((e, i) => ({
-                RowNumber: e.RowNumber ?? e.row ?? e.Row ?? (i + 2), // +2 因為第1列是表頭
-                EmpNo: e.EmpNo ?? e.empNo ?? e.EMP_NO ?? '',
-                Message: e.Message ?? e.message ?? e.Error ?? e.error ?? '未知錯誤'
-            }));
-
-            console.log('[Parsed Errors]=', errors);
-
-            // === 全部成功 ===
-            if (status === 'success') {
-                $("#successMessage").text(message || '已全部成功匯入！');
-                $("#successSection").removeClass("d-none");
-                $("#uploadFormSection").addClass("d-none"); // 隱藏上傳表單
-                loadUsers(); // 重新載入使用者列表
-                return;
-            }
-
-            // === 全部失敗 ===
-            if (status === 'fail') {
-                $("#errorMessage").text(message || '匯入失敗');
-                
-                if (errors.length === 0) {
-                    $("#failErrorTable tbody").append(
-                        `<tr><td colspan="3" class="text-center text-muted">無詳細錯誤資訊</td></tr>`
-                    );
-                } else {
-                    errors.forEach(err => {
-                        $("#failErrorTable tbody").append(
-                            `<tr>
-                                <td class="text-center">${err.RowNumber}</td>
-                                <td>${$('<div>').text(err.EmpNo).html()}</td>
-                                <td>${$('<div>').text(err.Message).html()}</td>
-                            </tr>`
-                        );
-                    });
+                // 第一列：檢查表頭
+                if (rowIndex == 1)
+                {
+                    string header = reader.GetString(0)?.Trim();
+                    System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 表頭: {header}");
+                    
+                    if (string.IsNullOrEmpty(header) || header != "員工編號")
+                    {
+                        result.IsSuccess = false;
+                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+                        return null;
+                    }
+                    continue;
                 }
-                
-                $("#errorSection").removeClass("d-none");
-                $("#uploadFormSection").addClass("d-none");
-                return;
-            }
 
-            // === 部分成功 ===
-            if (status === 'partial') {
-                $("#partialMessage").text(message || '部分成功、部分失敗');
-                
-                if (errors.length === 0) {
-                    $("#partialErrorTable tbody").append(
-                        `<tr><td colspan="3" class="text-center text-muted">無詳細錯誤資訊</td></tr>`
-                    );
-                } else {
-                    errors.forEach(err => {
-                        $("#partialErrorTable tbody").append(
-                            `<tr>
-                                <td class="text-center">${err.RowNumber}</td>
-                                <td>${$('<div>').text(err.EmpNo).html()}</td>
-                                <td>${$('<div>').text(err.Message).html()}</td>
-                            </tr>`
-                        );
-                    });
+                // 讀取資料
+                string empNo = reader.GetValue(0)?.ToString().Trim();
+                if (!string.IsNullOrEmpty(empNo))
+                {
+                    // 驗證員工編號長度
+                    if (empNo.Length > 10)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ 行{rowIndex} 員工編號過長: {empNo}");
+                        result.ErrorMessages.Add(new ImportError
+                        {
+                            RowNumber = rowIndex,
+                            EmpNo = empNo,
+                            Message = "員工編號長度超過10個字元"
+                        });
+                        continue;
+                    }
+                    
+                    rows.Add((rowIndex, empNo));
+                    System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 讀取行{rowIndex}: {empNo}");
                 }
-                
-                $("#partialSection").removeClass("d-none");
-                $("#uploadFormSection").addClass("d-none");
-                loadUsers(); // 重新載入使用者列表
-                return;
             }
-
-            // === 未知狀態 ===
-            $("#errorMessage").text(message || '未知的回應狀態，請檢查 Console');
-            $("#failErrorTable tbody").append(
-                `<tr><td colspan="3" class="text-center text-danger">請檢查後端回傳格式</td></tr>`
-            );
-            $("#errorSection").removeClass("d-none");
-            $("#uploadFormSection").addClass("d-none");
-        },
-        error: function (xhr, status, error) {
-            console.error('[ImportUsers][Error]=', xhr, status, error);
-            
-            $("#uploadProgress").addClass("d-none");
-            $(".progress-bar").css("width", "0%");
-            
-            $("#errorMessage").text('伺服器發生錯誤：' + (xhr.responseText || error));
-            $("#failErrorTable tbody").append(
-                `<tr><td colspan="3" class="text-center text-danger">請稍後再試或聯繫系統管理員</td></tr>`
-            );
-            $("#errorSection").removeClass("d-none");
-            $("#uploadFormSection").addClass("d-none");
         }
-    });
-});
 
-// 重新上傳按鈕
-$(document).on('click', '.btn-retry-upload', function() {
-    // 清空所有區塊
-    $("#errorSection, #successSection, #partialSection").addClass("d-none");
-    $("#failErrorTable tbody, #partialErrorTable tbody").empty();
-    
-    // 顯示上傳表單
-    $("#uploadFormSection").removeClass("d-none");
-    
-    // 清空檔案選擇
-    $("#importForm")[0].reset();
-});
-```
+        // ⭐ 檢查是否有資料
+        if (rows.Count == 0)
+        {
+            result.IsSuccess = false;
+            result.ErrorMessage = "Excel 無任何員工資料";
+            System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+            return null;
+        }
 
------
-
-## 🔍 Debug 重點
-
-### 1. 檢查後端回傳格式
-
-在 Controller 的 `ImportUsers` 確保回傳格式正確：
-
-```csharp
-// 全部成功
-return Json(new
-{
-    status = "success",
-    message = $"匯入成功：共 {importResult.SuccessCount} 筆"
-});
-
-// 全部失敗
-return Json(new
-{
-    status = "fail",
-    message = "匯入失敗：請重新上傳",
-    errors = importResult.ErrorMessages  // ⭐ 確保這裡有資料
-});
-
-// 部分成功
-return Json(new
-{
-    status = "partial",
-    message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
-    errors = importResult.ErrorMessages  // ⭐ 確保這裡有資料
-});
-```
-
-### 2. 確認 ImportError 類別定義
-
-```csharp
-public class ImportError
-{
-    public int RowNumber { get; set; }
-    public string EmpNo { get; set; }
-    public string Message { get; set; }
+        // ⭐⭐⭐ 關鍵：設定成功狀態 ⭐⭐⭐
+        result.IsSuccess = true;
+        
+        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✓ 成功讀取 {rows.Count} 筆資料");
+        return rows;
+    }
+    catch (Exception ex)
+    {
+        result.IsSuccess = false;
+        result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
+        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗✗✗ Exception: {ex.Message}");
+        return null;
+    }
 }
 ```
 
-### 3. 在瀏覽器 Console 檢查
+-----
 
-打開瀏覽器 F12，查看：
+## 🔄 或者：修改 `ImportUsersFromExcel` 的判斷邏輯
 
-```javascript
-console.log('[ImportUsers][Response]=', res);
-console.log('[Parsed Errors]=', errors);
+如果不想改 `ReadExcelData`，也可以改 `ImportUsersFromExcel` 的判斷：
+
+```csharp
+public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
+{
+    ImportResult result = new ImportResult()
+    {
+        ErrorMessages = new List<ImportError>(),
+        SuccessCount = 0
+    };
+
+    System.Diagnostics.Debug.WriteLine("========================================");
+    System.Diagnostics.Debug.WriteLine($"[ImportUsers] 開始匯入");
+
+    try
+    {
+        var dbManager = new SVS_DBmanager();
+        apgNo = apgNo?.Trim();
+
+        // 1. 驗證權限
+        if (!HasGroupPermissionViaSP(dbManager, sysId, apgNo, creator))
+        {
+            result.IsSuccess = false;
+            result.ErrorMessage = apgNo == "001" 
+                ? "僅001群組成員可以操作001群組的批次匯入" 
+                : "無權限操作此群組";
+            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 權限失敗");
+            return result;
+        }
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 權限檢查通過");
+
+        // 2. 驗證群組存在
+        var validateParams = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = apgNo }
+        };
+        
+        string validateGroupSql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
+        var validateResult = dbManager.QueryBySQL(validateGroupSql, validateParams);
+        
+        if (validateResult.Rows.Count == 0 || Convert.ToInt32(validateResult.Rows[0][0]) == 0)
+        {
+            result.IsSuccess = false;
+            result.ErrorMessage = "群組不存在";
+            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 群組不存在");
+            return result;
+        }
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 群組存在");
+
+        // 3. 讀取 Excel
+        var rows = ReadExcelData(filePath, result);
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 讀取結果 - rows: {rows?.Count ?? 0}, IsSuccess: {result.IsSuccess}");
+        
+        // ⭐⭐⭐ 修改判斷邏輯：只檢查 rows 是否為 null 或空 ⭐⭐⭐
+        if (rows == null || rows.Count == 0)
+        {
+            // 如果 result.ErrorMessage 是空的，設定預設訊息
+            if (string.IsNullOrEmpty(result.ErrorMessage))
+            {
+                result.ErrorMessage = "Excel 無任何資料";
+            }
+            result.IsSuccess = false;
+            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 讀取失敗: {result.ErrorMessage}");
+            return result;
+        }
+
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 開始處理 {rows.Count} 筆資料");
+
+        // 4. 批次處理
+        int successCount = 0;
+        
+        foreach (var row in rows)
+        {
+            bool isSuccess = ProcessUserRow(dbManager, row, sysId, apgNo, creator, result);
+            
+            if (isSuccess)
+            {
+                successCount++;
+                System.Diagnostics.Debug.WriteLine($"[ImportUsers] 累計成功: {successCount} 筆");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[ImportUsers] 累計失敗: {result.ErrorMessages.Count} 筆");
+            }
+        }
+
+        result.SuccessCount = successCount;
+        result.IsSuccess = true;
+
+        System.Diagnostics.Debug.WriteLine("========================================");
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓✓✓ 匯入完成 ✓✓✓");
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 成功: {result.SuccessCount} 筆");
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 失敗: {result.ErrorMessages.Count} 筆");
+        System.Diagnostics.Debug.WriteLine("========================================");
+    }
+    catch (Exception ex)
+    {
+        result.IsSuccess = false;
+        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗✗✗ Exception: {ex.Message}");
+    }
+
+    return result;
+}
 ```
 
 -----
 
-## 📊 測試步驟
+## 🎯 推薦方案
 
-1. **全部成功**：上傳一個都是正確的 Excel
+**方案 1（推薦）**：修改 `ReadExcelData`，在成功時設定 `result.IsSuccess = true`
 
-- 應該顯示綠色成功訊息
-- 不顯示錯誤表格
-
-1. **全部失敗**：上傳一個都是錯誤的 Excel（例如不存在的員工編號）
-
-- 應該顯示紅色失敗訊息
-- 顯示 `failErrorTable` 錯誤列表
-
-1. **部分成功**：上傳一個有對有錯的 Excel
-
-- 應該顯示黃色警告訊息
-- 顯示 `partialErrorTable` 錯誤列表
-- 成功的資料應該出現在使用者列表中
+**方案 2**：修改 `ImportUsersFromExcel`，改變判斷邏輯為 `if (rows == null || rows.Count == 0)`
 
 -----
 
-這樣修改後應該就可以正常顯示錯誤資料了！如果還有問題，請貼上瀏覽器 Console 的輸出，我再幫您檢查。​​​​​​​​​​​​​​​​
+## 📋 快速修正（最小改動）
+
+在您現有的 `ReadExcelData` 方法最後，加上這一行：
+
+```csharp
+private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
+{
+    var rows = new List<(int RowNumber, string EmpNo)>();
+    
+    try
+    {
+        // ... 您原有的讀取邏輯 ...
+        
+        if (rows.Count == 0)
+        {
+            result.IsSuccess = false;
+            result.ErrorMessage = "Excel 無任何員工資料";
+            return null;
+        }
+
+        // ⭐⭐⭐ 加上這一行 ⭐⭐⭐
+        result.IsSuccess = true;
+        
+        return rows;
+    }
+    catch (Exception ex)
+    {
+        result.IsSuccess = false;
+        result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
+        return null;
+    }
+}
+```
+
+加上這一行後，您的 Output 應該會繼續執行到步驟 4，然後就能看到成功的結果了！🎉​​​​​​​​​​​​​​​​
