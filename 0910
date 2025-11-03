@@ -1,3 +1,119 @@
+    <!-- 上傳區 -->
+    <div id="uploadFormSection">
+        <form id="importForm" enctype="multipart/form-data" method="post">
+            <input type="hidden" name="apgNo" id="importGroupNo" />
+            <input type="hidden" name="sysID"  id="importSysID" value="@Session["CurrentSystemId"]" />
+            <div class="mb-3">
+                <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
+            </div>
+            <div class="d-flex">
+                <button type="submit" class="btn btn-primary">匯入</button>
+                <button type="button" class="btn btn-success" onclick="downloadTemplate()">
+                    <i class="fas fa-download"></i> 下載範本
+                </button>
+            </div>
+        </form>
+
+        <!-- 匯入進度 -->
+        <div id="uploadProgress" class="progress mt-3 d-none">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+        </div>
+    </div>
+js:
+
+        const currentSysID   = @Html.Raw(Json.Encode(Session["CurrentSystemId"] ?? ""));
+        const currentGroupID = @Html.Raw(Json.Encode(Session["CurrentGroupId"]  ?? ""));
+        const isAdmin = (currentGroupID === '001');
+ 
+
+  // 批次匯入使用者MODAL
+   function openImportModal() {
+       $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
+       $('#importResult').empty();
+       $("#errorSection").addClass("d-none");
+       $("#successSection").addClass("d-none");
+       $("#uploadProgress").addClass("d-none");
+       $(".progress-bar").css("width", "0%");
+       $('#importModal').modal('show');
+       $('#importSysID').val(currentSysID);
+   }
+
+  // 匯入表單送出
+  $("#importForm").submit(function (e) {
+      e.preventDefault();
+      var formData = new FormData(this);
+
+
+      $("#uploadProgress").removeClass("d-none");
+      $(".progress-bar").css("width", "50%");
+
+      $.ajax({
+          url: '@Url.Action("ImportUsers", "AP")',
+          type: 'POST',
+          data: formData,
+          contentType: false,
+          processData: false,
+          success: function (res) {
+              $("#uploadProgress").addClass("d-none");
+              $(".progress-bar").css("width", "0%");
+
+              // 清空舊的訊息區塊
+              $("#successSection, #errorSection, #partialSection").addClass("d-none");
+              $("#errorTable tbody").empty();
+
+              if (res.status === "success") {
+                  // 全部成功
+                  $("#successMessage").text(res.message);
+                  $("#successSection").removeClass("d-none");
+                  loadUsers();
+              }
+              else if (res.status === "fail") {
+                  // 全部失敗
+                  $("#errorMessage").text(res.message);
+                  $("#errorSection").removeClass("d-none");
+
+                  if (res.errors && res.errors.length > 0) {
+                      res.errors.forEach(err => {
+                          $("#errorTable tbody").append(
+                              `<tr>
+                                  <td>${err.RowNumber}</td>
+                                  <td>${err.EmpNo}</td>
+                                  <td>${err.Message}</td>
+                              </tr>`
+                          );
+                      });
+                  }
+              }
+              else if (res.status === "partial") {
+                  // 部分成功
+                  $("#partialMessage").text(res.message);
+                  $("#partialSection").removeClass("d-none");
+
+                  if (res.errors && res.errors.length > 0) {
+                      res.errors.forEach(err => {
+                          $("#errorTable tbody").append(
+                              `<tr>
+                          <td>${err.RowNumber}</td>
+                          <td>${err.EmpNo}</td>
+                          <td>${err.Message}</td>
+                      </tr>`
+                          );
+                      });
+                  }
+
+                  loadUsers();
+              }
+          },
+          error: function () {
+              $("#uploadProgress").addClass("d-none");
+              $(".progress-bar").css("width", "0%");
+              alert("伺服器發生錯誤，請稍後再試。");
+          }
+      });
+  });
+
+
+後端:
         #region 批次匯入
         public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
         {
