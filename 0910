@@ -1,88 +1,30 @@
-明白了！調整權限邏輯如下：
+完美！根據您提供的資料庫結構截圖，我看到 `AP_USER` 表的欄位定義：
 
-## 調整後的權限規則：
+## 📋 AP_USER 表結構
 
-1. **001群組使用者** → 可以操作所有群組（包括001）
-1. **非001群組使用者** → 不可以操作001群組，但可以操作其他所有群組
+|Column Name|Data Type       |長度|
+|-----------|----------------|--|
+|SYS_ID     |varchar(30)     |30|
+|APG_NO     |varchar(3)      |3 |
+|U_ID       |varchar(10)     |10|
+|U_NAME     |**nvarchar(20)**|20|
+|CREATOR    |varchar(10)     |10|
+|CREATE_TIME|datetime        |- |
+|EDITOR     |varchar(10)     |10|
+|EDIT_TIME  |datetime        |- |
 
-## 修改後的程式碼：
+## ⚠️ 重要發現
+
+您提到另一個 table (應該是 `AP_GROUP`) 的 `APG_NO` 是 `char(3)`，這會造成**資料類型不一致**的問題！
+
+-----
+
+## 🔧 修正後的完整程式碼
 
 ```csharp
 /// <summary>
-/// 檢查使用者是否有權限操作指定群組（批次匯入專用）
-/// 規則：
-/// 1. 001群組成員可以操作所有群組
-/// 2. 非001群組成員不能操作001群組
-/// 3. 非001群組成員可以操作其他所有群組
+/// 批次匯入使用者（根據實際資料庫結構）
 /// </summary>
-private bool HasGroupPermissionViaSP(SVS_DBmanager dbManager, string sysId, string targetApgNo, string userId)
-{
-    try
-    {
-        var parameters = new List<SqlParameter>
-        {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = targetApgNo },
-            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = userId }
-        };
-
-        string permissionCheckSql = @"
-            SELECT 
-                CASE 
-                    -- 規則1：使用者在001群組，可以操作所有群組（包括001）
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
-                    ) THEN 1
-                    
-                    -- 規則2：目標群組是001，但使用者不在001群組 → 拒絕
-                    WHEN @APG_NO = '001' THEN 0
-                    
-                    -- 規則3：目標群組不是001 → 允許（不限制）
-                    ELSE 1
-                END AS HasPermission";
-
-        var result = dbManager.QueryBySQL(permissionCheckSql, parameters);
-        
-        return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
-    }
-    catch (Exception ex)
-    {
-        // Log error
-        return false;
-    }
-}
-```
-
-## 如果要使用 Stored Procedure 方式：
-
-```sql
-CREATE PROCEDURE [dbo].[USP_CheckGroupPermissionForImport]
-    @SYS_ID NVARCHAR(50),
-    @APG_NO NVARCHAR(50),
-    @U_ID NVARCHAR(50)
-AS
-BEGIN
-    SELECT 
-        CASE 
-            -- 規則1：使用者在001群組，可以操作所有群組
-            WHEN EXISTS (
-                SELECT 1 FROM AP_USER 
-                WHERE SYS_ID = @SYS_ID AND APG_NO = '001' AND U_ID = @U_ID
-            ) THEN 1
-            
-            -- 規則2：目標群組是001，但使用者不在001群組 → 拒絕
-            WHEN @APG_NO = '001' THEN 0
-            
-            -- 規則3：目標群組不是001 → 允許
-            ELSE 1
-        END AS HasPermission
-END
-```
-
-## 完整的 ImportUsersFromExcel 方法：
-
-```csharp
 public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
 {
     ImportResult result = new ImportResult()
@@ -94,7 +36,10 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
     {
         var dbManager = new SVS_DBmanager();
         
-        // **1. 驗證權限（批次匯入專用規則）**
+        // **重要：APG_NO 統一 Trim 處理（因為 char 會補空白）**
+        apgNo = apgNo?.Trim();
+        
+        // **1. 驗證權限**
         if (!HasGroupPermissionViaSP(dbManager, sysId, apgNo, creator))
         {
             result.IsSuccess = false;
@@ -107,8 +52,8 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
         // **2. 驗證群組存在**
         var validateParams = new List<SqlParameter>
         {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = apgNo }
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.Char, 3) { Value = apgNo }  // ⭐ Char(3)
         };
         
         string validateGroupSql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
@@ -148,6 +93,46 @@ public ImportResult ImportUsersFromExcel(string filePath, string sysId, string a
 }
 
 /// <summary>
+/// 檢查使用者是否有權限操作指定群組
+/// </summary>
+private bool HasGroupPermissionViaSP(SVS_DBmanager dbManager, string sysId, string targetApgNo, string userId)
+{
+    try
+    {
+        // ⭐ 注意：APG_NO 在 AP_USER 是 varchar(3)，在 AP_GROUP 可能是 char(3)
+        // 統一使用 varchar 即可，SQL Server 會自動轉換
+        var parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = targetApgNo },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+        };
+
+        string permissionCheckSql = @"
+            SELECT 
+                CASE 
+                    WHEN EXISTS (
+                        SELECT 1 FROM AP_USER 
+                        WHERE SYS_ID = @SYS_ID 
+                          AND RTRIM(APG_NO) = '001'
+                          AND U_ID = @U_ID
+                    ) THEN 1
+                    WHEN RTRIM(@APG_NO) = '001' THEN 0
+                    ELSE 1
+                END AS HasPermission";
+
+        var result = dbManager.QueryBySQL(permissionCheckSql, parameters);
+        
+        return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
+    }
+    catch (Exception ex)
+    {
+        // Log error
+        return false;
+    }
+}
+
+/// <summary>
 /// 讀取 Excel 資料
 /// </summary>
 private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
@@ -164,7 +149,6 @@ private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, Impor
             {
                 rowIndex++;
 
-                // 檢查表頭
                 if (rowIndex == 1)
                 {
                     string header = reader.GetString(0)?.Trim();
@@ -180,6 +164,18 @@ private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, Impor
                 string empNo = reader.GetValue(0)?.ToString().Trim();
                 if (!string.IsNullOrEmpty(empNo))
                 {
+                    // ⭐ 驗證員工編號長度（varchar(10)）
+                    if (empNo.Length > 10)
+                    {
+                        result.ErrorMessages.Add(new ImportError
+                        {
+                            RowNumber = rowIndex,
+                            EmpNo = empNo,
+                            Message = "員工編號長度超過10個字元"
+                        });
+                        continue;
+                    }
+                    
                     rows.Add((rowIndex, empNo));
                 }
             }
@@ -213,7 +209,7 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
         // 1. 檢查員工是否存在
         var empParams = new List<SqlParameter>
         {
-            new SqlParameter("@EMP_NO", SqlDbType.NVarChar, 50) { Value = row.EmpNo }
+            new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
         };
         
         string checkEmpSql = "SELECT EMP_NAME FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
@@ -231,13 +227,25 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
         }
         
         string empName = empResult.Rows[0]["EMP_NAME"].ToString();
+        
+        // ⭐ 驗證姓名長度（nvarchar(20)）
+        if (empName.Length > 20)
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = "員工姓名長度超過20個字元"
+            });
+            return false;
+        }
 
         // 2. 檢查是否已存在於同一個群組
         var checkUserParams = new List<SqlParameter>
         {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = apgNo },
-            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = row.EmpNo }
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = apgNo },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
         };
         
         string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO AND U_ID=@U_ID";
@@ -257,9 +265,9 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
         // 3. 檢查是否已存在於該系統的其他群組
         var checkSystemParams = new List<SqlParameter>
         {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = apgNo },
-            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = row.EmpNo }
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = apgNo },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
         };
         
         string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@APG_NO AND U_ID=@U_ID";
@@ -279,11 +287,11 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
         // 4. 寫入 AP_USER
         var insertParams = new List<SqlParameter>
         {
-            new SqlParameter("@SYS_ID", SqlDbType.NVarChar, 50) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.NVarChar, 50) { Value = apgNo },
-            new SqlParameter("@U_ID", SqlDbType.NVarChar, 50) { Value = row.EmpNo },
-            new SqlParameter("@U_NAME", SqlDbType.NVarChar, 100) { Value = empName },
-            new SqlParameter("@CREATOR", SqlDbType.NVarChar, 50) { Value = creator }
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = apgNo },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+            new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName },  // ⭐ NVarChar(20)
+            new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
         };
 
         string insertSql = @"
@@ -306,17 +314,33 @@ private bool ProcessUserRow(SVS_DBmanager dbManager, (int RowNumber, string EmpN
 }
 ```
 
-## 權限測試案例：
+-----
 
-|使用者群組|目標群組  |結果  |
-|-----|------|----|
-|001  |001   |✅ 允許|
-|001  |002   |✅ 允許|
-|001  |任何群組  |✅ 允許|
-|002  |001   |❌ 拒絕|
-|002  |002   |✅ 允許|
-|002  |003   |✅ 允許|
-|003  |001   |❌ 拒絕|
-|003  |任何非001|✅ 允許|
+## 🔑 關鍵重點整理
 
-這樣的調整符合您的需求嗎？​​​​​​​​​​​​​​​​
+### 1. **APG_NO 的 CHAR vs VARCHAR 問題**
+
+```csharp
+// AP_GROUP: APG_NO char(3)      → "001" 實際存為 "001" (char會補空白但這裡剛好3碼)
+// AP_USER:  APG_NO varchar(3)   → "001" 存為 "001"
+
+// 建議在比對時使用 RTRIM 去除可能的空白
+WHERE RTRIM(APG_NO) = '001'
+```
+
+### 2. **參數設定總表**
+
+|欄位     |AP_USER         |AP_GROUP   |C# 參數設定                 |
+|-------|----------------|-----------|------------------------|
+|SYS_ID |varchar(30)     |?          |`SqlDbType.VarChar, 30` |
+|APG_NO |varchar(3)      |char(3)    |`SqlDbType.VarChar, 3`  |
+|U_ID   |varchar(10)     |-          |`SqlDbType.VarChar, 10` |
+|U_NAME |**nvarchar(20)**|-          |`SqlDbType.NVarChar, 20`|
+|CREATOR|varchar(10)     |varchar(10)|`SqlDbType.VarChar, 10` |
+
+### 3. **唯一的 NVARCHAR 欄位**
+
+- 只有 `U_NAME` 是 `nvarchar(20)` → 用來儲存中文姓名
+- 其他欄位都是 `varchar` → 英數字
+
+這樣的設定是正確的！修改後應該可以通過 Fortify 掃描了。​​​​​​​​​​​​​​​​
