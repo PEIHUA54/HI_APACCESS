@@ -1,7 +1,32 @@
-現在問題是無法匯入
-部份成功部分失敗 匯入完 沒有呈現失敗的資料在畫面上
-GROUPMANAGEMENT VIEW:
+問題找到了！您的 VIEW 中有 **兩個 `id="errorTable"`**，導致 jQuery 無法正確填入失敗資料！
 
+## 🐛 問題分析
+
+```html
+<!-- 失敗顯示 -->
+<div id="errorSection" class="mt-4 d-none">
+    <table class="table table-bordered table-striped" id="errorTable">  <!-- ❌ 第一個 -->
+        ...
+    </table>
+</div>
+
+<!-- 部分成功顯示 -->
+<div id="partialSection" class="mt-4 d-none">
+    <table class="table table-bordered table-striped" id="errorTable">  <!-- ❌ 第二個，重複了！ -->
+        ...
+    </table>
+</div>
+```
+
+當 JS 執行 `$("#errorTable tbody")` 時，只會選到**第一個**，導致部分成功時無法顯示錯誤列表。
+
+-----
+
+## ✅ 解決方案 1：修改 VIEW（推薦）
+
+給兩個表格不同的 ID：
+
+```html
 <!-- 匯入 Modal -->
 <div class="modal fade" id="importModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -16,11 +41,11 @@ GROUPMANAGEMENT VIEW:
                 <div id="uploadFormSection">
                     <form id="importForm" enctype="multipart/form-data" method="post">
                         <input type="hidden" name="apgNo" id="importGroupNo" />
-                        <input type="hidden" name="sysID"  id="importSysID" value="@Session["CurrentSystemId"]" />
+                        <input type="hidden" name="sysID" id="importSysID" value="@Session["CurrentSystemId"]" />
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".xls,.xlsx" required />
                         </div>
-                        <div class="d-flex">
+                        <div class="d-flex gap-2">
                             <button type="submit" class="btn btn-primary">匯入</button>
                             <button type="button" class="btn btn-success" onclick="downloadTemplate()">
                                 <i class="fas fa-download"></i> 下載範本
@@ -37,6 +62,7 @@ GROUPMANAGEMENT VIEW:
                 <!-- 成功顯示 -->
                 <div id="successSection" class="mt-4 d-none">
                     <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i>
                         <strong id="successMessage"></strong>
                     </div>
                 </div>
@@ -44,14 +70,15 @@ GROUPMANAGEMENT VIEW:
                 <!-- 失敗顯示 -->
                 <div id="errorSection" class="mt-4 d-none">
                     <div class="alert alert-danger">
+                        <i class="fas fa-times-circle"></i>
                         <strong id="errorMessage"></strong>
                     </div>
                     <div class="table-responsive mt-2">
-                        <table class="table table-bordered table-striped" id="errorTable">
+                        <table class="table table-bordered table-striped table-sm" id="failErrorTable">
                             <thead class="table-dark">
                                 <tr>
-                                    <th>行號</th>
-                                    <th>員編</th>
+                                    <th style="width: 80px;">行號</th>
+                                    <th style="width: 120px;">員工編號</th>
                                     <th>錯誤訊息</th>
                                 </tr>
                             </thead>
@@ -59,21 +86,24 @@ GROUPMANAGEMENT VIEW:
                         </table>
                     </div>
                     <div class="text-center mt-3">
-                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                        <button type="button" class="btn btn-warning btn-retry-upload">
+                            <i class="fas fa-redo"></i> 重新上傳
+                        </button>
                     </div>
                 </div>
 
                 <!-- 部分成功顯示 -->
                 <div id="partialSection" class="mt-4 d-none">
                     <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
                         <strong id="partialMessage"></strong>
                     </div>
                     <div class="table-responsive mt-2">
-                        <table class="table table-bordered table-striped" id="errorTable">
+                        <table class="table table-bordered table-striped table-sm" id="partialErrorTable">
                             <thead class="table-dark">
                                 <tr>
-                                    <th>行號</th>
-                                    <th>員編</th>
+                                    <th style="width: 80px;">行號</th>
+                                    <th style="width: 120px;">員工編號</th>
                                     <th>錯誤訊息</th>
                                 </tr>
                             </thead>
@@ -81,7 +111,9 @@ GROUPMANAGEMENT VIEW:
                         </table>
                     </div>
                     <div class="text-center mt-3">
-                        <button type="button" class="btn btn-warning btn-retry-upload">重新上傳</button>
+                        <button type="button" class="btn btn-warning btn-retry-upload">
+                            <i class="fas fa-redo"></i> 重新上傳
+                        </button>
                     </div>
                 </div>
             </div>
@@ -91,118 +123,245 @@ GROUPMANAGEMENT VIEW:
         </div>
     </div>
 </div>
+```
 
-JS:
-        const currentSysID   = @Html.Raw(Json.Encode(Session["CurrentSystemId"] ?? ""));
-        const currentGroupID = @Html.Raw(Json.Encode(Session["CurrentGroupId"]  ?? ""));
-        const isAdmin = (currentGroupID === '001');
+-----
 
-  // 批次匯入使用者MODAL
-  function openImportModal() {
-      $('#importGroupNo').val($('#groupSelect').val()); // 帶目前群組
-      $('#importResult').empty();
-      $("#errorSection").addClass("d-none");
-      $("#successSection").addClass("d-none");
-      $("#uploadProgress").addClass("d-none");
-      $(".progress-bar").css("width", "0%");
-      $('#importModal').modal('show');
-      $('#importSysID').val(currentSysID);
-  }
+## ✅ 解決方案 2：修改 JS
 
-        // 匯入表單送出
-        $("#importForm").off("submit").on("submit", function (e) {
-            e.preventDefault();
+```javascript
+// 批次匯入使用者MODAL
+function openImportModal() {
+    $('#importGroupNo').val($('#groupSelect').val());
+    $('#importSysID').val(currentSysID);
+    
+    // 清空所有區塊
+    $("#errorSection, #successSection, #partialSection, #uploadFormSection").addClass("d-none");
+    $("#uploadProgress").addClass("d-none");
+    $(".progress-bar").css("width", "0%");
+    $("#failErrorTable tbody, #partialErrorTable tbody").empty();
+    
+    // 顯示上傳表單
+    $("#uploadFormSection").removeClass("d-none");
+    
+    $('#importModal').modal('show');
+}
 
-            var formData = new FormData(this);
+// 匯入表單送出
+$("#importForm").off("submit").on("submit", function (e) {
+    e.preventDefault();
 
-            if (!formData.has('sysID')) formData.append('sysID', currentSysID);
-            if (!formData.has('apgNo')) formData.append('apgNo', $('#groupSelect').val() || currentGroup);
+    var formData = new FormData(this);
 
-            $("#uploadProgress").removeClass("d-none");
-            $(".progress-bar").css("width", "50%");
+    if (!formData.has('sysID')) formData.append('sysID', currentSysID);
+    if (!formData.has('apgNo')) formData.append('apgNo', $('#groupSelect').val() || currentGroup);
 
-            $.ajax({
-                url: '@Url.Action("ImportUsers", "AP")',
-                type: 'POST',
-                data: formData,
-                contentType: false,
-                processData: false,
-                dataType: 'json',   
-                success: function (res) {
-                    console.log('[ImportUsers][res]=', res);
+    // 顯示進度條
+    $("#uploadProgress").removeClass("d-none");
+    $(".progress-bar").css("width", "50%");
 
-                    $("#uploadProgress").addClass("d-none");
-                    $(".progress-bar").css("width", "0%");
+    $.ajax({
+        url: '@Url.Action("ImportUsers", "AP")',
+        type: 'POST',
+        data: formData,
+        contentType: false,
+        processData: false,
+        dataType: 'json',
+        success: function (res) {
+            console.log('[ImportUsers][Response]=', res);
 
-                    // 清空舊的訊息區塊
-                    $("#successSection, #errorSection, #partialSection").addClass("d-none");
-                    $("#errorTable tbody").empty();
+            // 隱藏進度條
+            $("#uploadProgress").addClass("d-none");
+            $(".progress-bar").css("width", "0%");
 
-                    const status = (res.status || res.Status || '').toString().toLowerCase();
-                    const message = res.message || res.Message || '';
-                    const rawErrs = res.errors || res.ErrorMessages || res.errorMessages || [];
+            // 清空所有舊訊息
+            $("#successSection, #errorSection, #partialSection").addClass("d-none");
+            $("#failErrorTable tbody, #partialErrorTable tbody").empty();
 
-                    const errors = (Array.isArray(rawErrs) ? rawErrs : []).map((e, i) => ({
-                        RowNumber: e.RowNumber ?? e.row ?? e.Row ?? (i + 1),
-                        EmpNo: e.EmpNo ?? e.empNo ?? e.EMP_NO ?? '',
-                        Message: e.Message ?? e.message ?? e.Error ?? e.error ?? '未知錯誤'
-                    }));
+            // 解析回應
+            const status = (res.status || res.Status || '').toString().toLowerCase();
+            const message = res.message || res.Message || '';
+            const rawErrs = res.errors || res.ErrorMessages || res.errorMessages || [];
 
-                    if (status === 'success') {
-                        $("#successMessage").text(message || '已全部成功匯入');
-                        $("#successSection").removeClass("d-none");
-                        loadUsers();
-                        return;
-                    }
+            const errors = (Array.isArray(rawErrs) ? rawErrs : []).map((e, i) => ({
+                RowNumber: e.RowNumber ?? e.row ?? e.Row ?? (i + 2), // +2 因為第1列是表頭
+                EmpNo: e.EmpNo ?? e.empNo ?? e.EMP_NO ?? '',
+                Message: e.Message ?? e.message ?? e.Error ?? e.error ?? '未知錯誤'
+            }));
 
-                    if (status === 'fail') {
-                        $("#errorMessage").text(message || '全部失敗');
-                        if (errors.length === 0) {
-                            $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
-                        } else {
-                            errors.forEach(err => {
-                                $("#errorTable tbody").append(
-                                    `<tr>
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
+            console.log('[Parsed Errors]=', errors);
+
+            // === 全部成功 ===
+            if (status === 'success') {
+                $("#successMessage").text(message || '已全部成功匯入！');
+                $("#successSection").removeClass("d-none");
+                $("#uploadFormSection").addClass("d-none"); // 隱藏上傳表單
+                loadUsers(); // 重新載入使用者列表
+                return;
+            }
+
+            // === 全部失敗 ===
+            if (status === 'fail') {
+                $("#errorMessage").text(message || '匯入失敗');
+                
+                if (errors.length === 0) {
+                    $("#failErrorTable tbody").append(
+                        `<tr><td colspan="3" class="text-center text-muted">無詳細錯誤資訊</td></tr>`
+                    );
+                } else {
+                    errors.forEach(err => {
+                        $("#failErrorTable tbody").append(
+                            `<tr>
+                                <td class="text-center">${err.RowNumber}</td>
+                                <td>${$('<div>').text(err.EmpNo).html()}</td>
                                 <td>${$('<div>').text(err.Message).html()}</td>
-                             </tr>`
-                                );
-                            });
-                        }
-                        $("#errorSection").removeClass("d-none");
-                        return;
-                    }
-
-                    if (status === 'partial') {
-                        $("#partialMessage").text(message || '部分成功、部分失敗');
-                        if (errors.length === 0) {
-                            $("#errorTable tbody").append(`<tr><td colspan="3">（後端未提供逐列錯誤）</td></tr>`);
-                        } else {
-                            errors.forEach(err => {
-                                $("#errorTable tbody").append(
-                                    `<tr>
-                                <td>${err.RowNumber}</td>
-                                <td>${err.EmpNo}</td>
-                                <td>${$('<div>').text(err.Message).html()}</td>
-                             </tr>`
-                                );
-                            });
-                        }
-                        $("#partialSection").removeClass("d-none");
-                        loadUsers();
-                        return;
-                    }
-
-                    // 未知狀態
-                    $("#errorMessage").text(message || '未知的回應狀態，請看 console');
-                    $("#errorTable tbody").append(`<tr><td colspan="3">請檢查後端回傳格式。</td></tr>`);
-                    $("#errorSection").removeClass("d-none");
-                },
-                error: function () {
-                    $("#uploadProgress").addClass("d-none");
-                    $(".progress-bar").css("width", "0%");
-                    alert("伺服器發生錯誤，請稍後再試。");
+                            </tr>`
+                        );
+                    });
                 }
-            });
-        });
+                
+                $("#errorSection").removeClass("d-none");
+                $("#uploadFormSection").addClass("d-none");
+                return;
+            }
+
+            // === 部分成功 ===
+            if (status === 'partial') {
+                $("#partialMessage").text(message || '部分成功、部分失敗');
+                
+                if (errors.length === 0) {
+                    $("#partialErrorTable tbody").append(
+                        `<tr><td colspan="3" class="text-center text-muted">無詳細錯誤資訊</td></tr>`
+                    );
+                } else {
+                    errors.forEach(err => {
+                        $("#partialErrorTable tbody").append(
+                            `<tr>
+                                <td class="text-center">${err.RowNumber}</td>
+                                <td>${$('<div>').text(err.EmpNo).html()}</td>
+                                <td>${$('<div>').text(err.Message).html()}</td>
+                            </tr>`
+                        );
+                    });
+                }
+                
+                $("#partialSection").removeClass("d-none");
+                $("#uploadFormSection").addClass("d-none");
+                loadUsers(); // 重新載入使用者列表
+                return;
+            }
+
+            // === 未知狀態 ===
+            $("#errorMessage").text(message || '未知的回應狀態，請檢查 Console');
+            $("#failErrorTable tbody").append(
+                `<tr><td colspan="3" class="text-center text-danger">請檢查後端回傳格式</td></tr>`
+            );
+            $("#errorSection").removeClass("d-none");
+            $("#uploadFormSection").addClass("d-none");
+        },
+        error: function (xhr, status, error) {
+            console.error('[ImportUsers][Error]=', xhr, status, error);
+            
+            $("#uploadProgress").addClass("d-none");
+            $(".progress-bar").css("width", "0%");
+            
+            $("#errorMessage").text('伺服器發生錯誤：' + (xhr.responseText || error));
+            $("#failErrorTable tbody").append(
+                `<tr><td colspan="3" class="text-center text-danger">請稍後再試或聯繫系統管理員</td></tr>`
+            );
+            $("#errorSection").removeClass("d-none");
+            $("#uploadFormSection").addClass("d-none");
+        }
+    });
+});
+
+// 重新上傳按鈕
+$(document).on('click', '.btn-retry-upload', function() {
+    // 清空所有區塊
+    $("#errorSection, #successSection, #partialSection").addClass("d-none");
+    $("#failErrorTable tbody, #partialErrorTable tbody").empty();
+    
+    // 顯示上傳表單
+    $("#uploadFormSection").removeClass("d-none");
+    
+    // 清空檔案選擇
+    $("#importForm")[0].reset();
+});
+```
+
+-----
+
+## 🔍 Debug 重點
+
+### 1. 檢查後端回傳格式
+
+在 Controller 的 `ImportUsers` 確保回傳格式正確：
+
+```csharp
+// 全部成功
+return Json(new
+{
+    status = "success",
+    message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+});
+
+// 全部失敗
+return Json(new
+{
+    status = "fail",
+    message = "匯入失敗：請重新上傳",
+    errors = importResult.ErrorMessages  // ⭐ 確保這裡有資料
+});
+
+// 部分成功
+return Json(new
+{
+    status = "partial",
+    message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+    errors = importResult.ErrorMessages  // ⭐ 確保這裡有資料
+});
+```
+
+### 2. 確認 ImportError 類別定義
+
+```csharp
+public class ImportError
+{
+    public int RowNumber { get; set; }
+    public string EmpNo { get; set; }
+    public string Message { get; set; }
+}
+```
+
+### 3. 在瀏覽器 Console 檢查
+
+打開瀏覽器 F12，查看：
+
+```javascript
+console.log('[ImportUsers][Response]=', res);
+console.log('[Parsed Errors]=', errors);
+```
+
+-----
+
+## 📊 測試步驟
+
+1. **全部成功**：上傳一個都是正確的 Excel
+
+- 應該顯示綠色成功訊息
+- 不顯示錯誤表格
+
+1. **全部失敗**：上傳一個都是錯誤的 Excel（例如不存在的員工編號）
+
+- 應該顯示紅色失敗訊息
+- 顯示 `failErrorTable` 錯誤列表
+
+1. **部分成功**：上傳一個有對有錯的 Excel
+
+- 應該顯示黃色警告訊息
+- 顯示 `partialErrorTable` 錯誤列表
+- 成功的資料應該出現在使用者列表中
+
+-----
+
+這樣修改後應該就可以正常顯示錯誤資料了！如果還有問題，請貼上瀏覽器 Console 的輸出，我再幫您檢查。​​​​​​​​​​​​​​​​
