@@ -1,24 +1,68 @@
-        private void button8_Click(object sender, EventArgs e)
-        {
-            var req = new Model.GetEmpMastRequest
-            {
-                Environment = GetEnvironment(),
-                Type = GetSearchType(), //123
-                EmpNoList = txtEmpnoList.Text,  // ?
-            };
-            string jsonReq = JsonConvert.SerializeObject(req);
-            string jsonRes = new HI_APACCESS_DLL.APACCESS().GetEmpMast(jsonReq);  
-            var res = JsonConvert.DeserializeObject<Model.GetEmpMastResponse>(jsonRes);
+非常好 👌 這段我看懂了。
+你的 GetEmpMastRequest 要傳進去的參數裡有一個 EmpNoList，
+型別是 List<string>，
+但在測試工具這邊你 txtEmpnoList.Text 是字串。
 
-            ClearInputsAndFocus();
-            ShowResult(jsonReq, jsonRes);
-        }
+👉 所以問題是「要怎麼把 TextBox 裡的輸入轉成 List」。
+
+⸻
+
+✅ 最簡單、最直覺的作法
+
+假設你在 txtEmpnoList 輸入的格式是：
+
+12345,23456,34567
+
+（用逗號分隔）
+
+那你在程式改成這樣就行 👇：
+
+private void button8_Click(object sender, EventArgs e)
+{
+    var empList = txtEmpnoList.Text
+        .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries) // 支援多種分隔符
+        .Select(x => x.Trim())  // 去空白
+        .ToList();
+
+    var req = new Model.GetEmpMastRequest
+    {
+        Environment = GetEnvironment(),
+        Type = GetSearchType(), // 例如 1 / 2 / 3
+        EmpNoList = empList,
+    };
+
+    string jsonReq = JsonConvert.SerializeObject(req, Formatting.Indented);
+    string jsonRes = new HI_APACCESS_DLL.APACCESS().GetEmpMast(jsonReq);
+    var res = JsonConvert.DeserializeObject<Model.GetEmpMastResponse>(jsonRes);
+
+    ClearInputsAndFocus();
+    ShowResult(jsonReq, jsonRes);
+}
 
 
-        // GetEmpMast
-        public class GetEmpMastRequest
-        {
-            public string Type { get; set; }
-            public List<string> EmpNoList { get; set; }
-            public string Environment { get; set; }
-        }
+⸻
+
+💡 支援多種輸入格式
+
+這樣你的 TextBox 可以靈活輸入幾種格式都可以用：
+
+你輸入的內容	實際傳入 List 的結果
+12345,23456,34567	["12345","23456","34567"]
+12345;23456;34567	同上
+換行分隔\n12345\n23456\n34567	同上
+
+
+⸻
+
+✅ 最後建議
+
+如果你是測試工具，可以在 TextBox 旁邊加個小提示 Label：
+
+請輸入員編，使用逗號或換行分隔
+
+就能直接在 txtEmpnoList 輸入多筆員編進行測試，不用改程式。
+
+⸻
+
+要我幫你補上「顯示 JSON 格式的結果在文字框（自動縮排）」版本嗎？
+可以讓你一鍵看到送出與回傳的完整 JSON 結構。
