@@ -1,259 +1,167 @@
-找到問題了！**`ReadExcelData` 方法沒有設定 `result.IsSuccess = true`**！
+取得員工主檔
+需要增加兩個需求參數
+1.Type查詢類型// 1:全部名單(在職EnterDate+離職EndDate)  2:在職名單(沒有EndDate的人)  3:指定名單 (依據EmpNoList取指定的員工)
+2.EmpNoList指定名單 //string[]  (員編 ex: ["3B750","3A717"] ) 只有類型為3才必需要有
 
-## 🐛 問題分析
+ // 取得員工主檔
+ public string GetEmpMast(string requestJson)
+ {
+     var response = new GetEmpMastModel.GetEmpMastResponse();
 
-當您的 `ReadExcelData` 執行完後：
+     try
+     {
+         var request = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastRequest>(requestJson);
+         FGetEmpMast func = new FGetEmpMast();
+         response = func.Execute(request.Environment);
+     }
+     catch (Exception ex)
+     {
+         response = new GetEmpMastModel.GetEmpMastResponse
+         {
+             Result_code = Common.Codes.SYSTEM_ERROR,
+             Msg = "系統錯誤：" + ex.Message
+         };
+     }
 
-```csharp
-var rows = ReadExcelData(filePath, result);
+     return JsonConvert.SerializeObject(response);
+ }
 
-// 此時 result.IsSuccess 還是 false（初始值）
-if (!result.IsSuccess || rows == null)  // ← 因為 IsSuccess = false，所以進入這裡
-{
-    return result;  // ← 直接返回，後面都不執行了！
-}
-```
+  internal class GetEmpMastModel  
+  {
+      // 請求參數 
+      internal class GetEmpMastRequest
+      {
+          [JsonProperty]
+          [DisplayName("查詢類型")] // 1:全部名單(在職+離職)  2:在職名單  3:指定名單
+          internal string Type { get; set; }
 
------
+          [JsonProperty]
+          [DisplayName("指定名單")]  //string[]  (員編 ex: ["3B750","3A717"] )
+          internal string EmpNoList { get; set; }
 
-## ✅ 解決方案：修改 `ReadExcelData` 方法
+          [JsonProperty]
+          [DisplayName("環境")]
+          internal string Environment { get; set; }
+      }
 
-在 `ReadExcelData` 成功讀取後，設定 `result.IsSuccess = true`：
+      // 回應結果
+      internal class GetEmpMastResponse
+      {
+          [JsonProperty]
+          [DisplayName("回覆代碼")]
+          internal string Result_code { get; set; }
 
-```csharp
-private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
-{
-    var rows = new List<(int RowNumber, string EmpNo)>();
-    
-    try
+          [JsonProperty]
+          [DisplayName("訊息")]
+          internal string Msg { get; set; }
+
+          [JsonProperty("Result")]
+          [DisplayName("回覆結果")]
+          public List<ResultData> Result { get; set; }
+      }
+
+      public class ResultData
+      {
+          [JsonProperty]
+          public string EmpNo { get; set; }
+
+          [JsonProperty]
+          public string EmpName { get; set; }
+
+          [JsonProperty]
+          public string OrganNo { get; set; }
+
+          [JsonProperty]
+          public string OrganName { get; set; }
+
+          [JsonProperty]
+          public string PostNo { get; set; }
+
+          [JsonProperty]
+          public string PostName { get; set; }
+
+          [JsonProperty]
+          public string EnterDate { get; set; }
+
+          [JsonProperty]
+          public string EndDate { get; set; }
+      }
+  }
+
+    internal class FGetEmpMast
     {
-        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 開始讀取: {filePath}");
-        
-        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var reader = ExcelReaderFactory.CreateReader(stream))
+        internal GetEmpMastModel.GetEmpMastResponse Execute(string environment)
         {
-            int rowIndex = 0;
-            while (reader.Read())
-            {
-                rowIndex++;
+            var response = new GetEmpMastModel.GetEmpMastResponse();
 
-                // 第一列：檢查表頭
-                if (rowIndex == 1)
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
                 {
-                    string header = reader.GetString(0)?.Trim();
-                    System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 表頭: {header}");
-                    
-                    if (string.IsNullOrEmpty(header) || header != "員工編號")
-                    {
-                        result.IsSuccess = false;
-                        result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
-                        return null;
-                    }
-                    continue;
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST 或 PROD";
+                    return response;
                 }
 
-                // 讀取資料
-                string empNo = reader.GetValue(0)?.ToString().Trim();
-                if (!string.IsNullOrEmpty(empNo))
+                var resultList = new List<GetEmpMastModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
-                    // 驗證員工編號長度
-                    if (empNo.Length > 10)
+                    conn.Open();
+
+                    string sql = @"
+  SELECT [EMP_NO] as EmpNo
+        ,[EMP_NAME] as EmpName
+        ,[ORGAN_NO] as OrganNo
+        ,[ORGAN_CAP] as OrganName
+        ,[POST_NO] as PostNo
+        ,[POST_NAME] as PostName
+        ,[ENTER_DT] as EnterDate
+        ,[END_DT]  as EndDate
+  FROM [HI-AUTOS].[dbo].[M1EMP_MAST]
+";
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
-                        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ 行{rowIndex} 員工編號過長: {empNo}");
-                        result.ErrorMessages.Add(new ImportError
+                        using (var reader = cmd.ExecuteReader())
                         {
-                            RowNumber = rowIndex,
-                            EmpNo = empNo,
-                            Message = "員工編號長度超過10個字元"
-                        });
-                        continue;
+                            while (reader.Read())
+                            {
+                                resultList.Add(new GetEmpMastModel.ResultData
+                                {
+                                    EmpNo = reader["EmpNo"].ToString(),
+                                    EmpName = reader["EmpName"].ToString(),
+                                    OrganNo = reader["OrganNo"].ToString(),
+                                    OrganName = reader["OrganName"].ToString(),
+                                    PostNo = reader["PostNo"].ToString(),
+                                    PostName = reader["PostName"].ToString(),
+                                    EnterDate = reader["EnterDate"].ToString(),
+                                    EndDate = reader["EndDate"].ToString(),
+                                });
+                            }
+                        }
                     }
-                    
-                    rows.Add((rowIndex, empNo));
-                    System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 讀取行{rowIndex}: {empNo}");
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_DATA;
+                    response.Msg = "查無資料";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
                 }
             }
-        }
-
-        // ⭐ 檢查是否有資料
-        if (rows.Count == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "Excel 無任何員工資料";
-            System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
-            return null;
-        }
-
-        // ⭐⭐⭐ 關鍵：設定成功狀態 ⭐⭐⭐
-        result.IsSuccess = true;
-        
-        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✓ 成功讀取 {rows.Count} 筆資料");
-        return rows;
-    }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
-        System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗✗✗ Exception: {ex.Message}");
-        return null;
-    }
-}
-```
-
------
-
-## 🔄 或者：修改 `ImportUsersFromExcel` 的判斷邏輯
-
-如果不想改 `ReadExcelData`，也可以改 `ImportUsersFromExcel` 的判斷：
-
-```csharp
-public ImportResult ImportUsersFromExcel(string filePath, string sysId, string apgNo, string creator)
-{
-    ImportResult result = new ImportResult()
-    {
-        ErrorMessages = new List<ImportError>(),
-        SuccessCount = 0
-    };
-
-    System.Diagnostics.Debug.WriteLine("========================================");
-    System.Diagnostics.Debug.WriteLine($"[ImportUsers] 開始匯入");
-
-    try
-    {
-        var dbManager = new SVS_DBmanager();
-        apgNo = apgNo?.Trim();
-
-        // 1. 驗證權限
-        if (!HasGroupPermissionViaSP(dbManager, sysId, apgNo, creator))
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = apgNo == "001" 
-                ? "僅001群組成員可以操作001群組的批次匯入" 
-                : "無權限操作此群組";
-            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 權限失敗");
-            return result;
-        }
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 權限檢查通過");
-
-        // 2. 驗證群組存在
-        var validateParams = new List<SqlParameter>
-        {
-            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-            new SqlParameter("@APG_NO", SqlDbType.VarChar, 3) { Value = apgNo }
-        };
-        
-        string validateGroupSql = "SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@APG_NO";
-        var validateResult = dbManager.QueryBySQL(validateGroupSql, validateParams);
-        
-        if (validateResult.Rows.Count == 0 || Convert.ToInt32(validateResult.Rows[0][0]) == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "群組不存在";
-            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 群組不存在");
-            return result;
-        }
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 群組存在");
-
-        // 3. 讀取 Excel
-        var rows = ReadExcelData(filePath, result);
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 讀取結果 - rows: {rows?.Count ?? 0}, IsSuccess: {result.IsSuccess}");
-        
-        // ⭐⭐⭐ 修改判斷邏輯：只檢查 rows 是否為 null 或空 ⭐⭐⭐
-        if (rows == null || rows.Count == 0)
-        {
-            // 如果 result.ErrorMessage 是空的，設定預設訊息
-            if (string.IsNullOrEmpty(result.ErrorMessage))
+            catch (Exception ex)
             {
-                result.ErrorMessage = "Excel 無任何資料";
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
             }
-            result.IsSuccess = false;
-            System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗ 讀取失敗: {result.ErrorMessage}");
-            return result;
+
+            return response;
         }
 
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓ 開始處理 {rows.Count} 筆資料");
-
-        // 4. 批次處理
-        int successCount = 0;
-        
-        foreach (var row in rows)
-        {
-            bool isSuccess = ProcessUserRow(dbManager, row, sysId, apgNo, creator, result);
-            
-            if (isSuccess)
-            {
-                successCount++;
-                System.Diagnostics.Debug.WriteLine($"[ImportUsers] 累計成功: {successCount} 筆");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine($"[ImportUsers] 累計失敗: {result.ErrorMessages.Count} 筆");
-            }
-        }
-
-        result.SuccessCount = successCount;
-        result.IsSuccess = true;
-
-        System.Diagnostics.Debug.WriteLine("========================================");
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✓✓✓ 匯入完成 ✓✓✓");
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 成功: {result.SuccessCount} 筆");
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] 失敗: {result.ErrorMessages.Count} 筆");
-        System.Diagnostics.Debug.WriteLine("========================================");
     }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-        System.Diagnostics.Debug.WriteLine($"[ImportUsers] ✗✗✗ Exception: {ex.Message}");
-    }
-
-    return result;
-}
-```
-
------
-
-## 🎯 推薦方案
-
-**方案 1（推薦）**：修改 `ReadExcelData`，在成功時設定 `result.IsSuccess = true`
-
-**方案 2**：修改 `ImportUsersFromExcel`，改變判斷邏輯為 `if (rows == null || rows.Count == 0)`
-
------
-
-## 📋 快速修正（最小改動）
-
-在您現有的 `ReadExcelData` 方法最後，加上這一行：
-
-```csharp
-private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
-{
-    var rows = new List<(int RowNumber, string EmpNo)>();
-    
-    try
-    {
-        // ... 您原有的讀取邏輯 ...
-        
-        if (rows.Count == 0)
-        {
-            result.IsSuccess = false;
-            result.ErrorMessage = "Excel 無任何員工資料";
-            return null;
-        }
-
-        // ⭐⭐⭐ 加上這一行 ⭐⭐⭐
-        result.IsSuccess = true;
-        
-        return rows;
-    }
-    catch (Exception ex)
-    {
-        result.IsSuccess = false;
-        result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
-        return null;
-    }
-}
-```
-
-加上這一行後，您的 Output 應該會繼續執行到步驟 4，然後就能看到成功的結果了！🎉​​​​​​​​​​​​​​​​
