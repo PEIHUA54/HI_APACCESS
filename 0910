@@ -1,141 +1,56 @@
-好的，我幫你把「取得員工主檔 GetEmpMast」一次改好：
-新增參數 Type、EmpNoList，並在 Factory 依 Type 做對應的 SQL 篩選。下面直接給你可用的完整程式碼（主類別、Model、Factory 三份）。
+取得樹狀功能清單 新增Type類型
+1:依群組(預設) 要groupid
+2:全部(取得系統所有樹狀功能清單)不用groupid
+預設為1 這樣不需要2的人 就不用還要增加一個請求參數設為1
 
-⸻
-
-1) APACCESS 主類別 – 方法改版
-
-// APACCESS.cs 內
-public string GetEmpMast(string requestJson)
-{
-    var response = new GetEmpMastModel.GetEmpMastResponse();
-
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastRequest>(requestJson);
-
-        // 參數基本檢核
-        if (request == null)
+// 取得樹狀功能清單
+        public string GetTree(string requestJson)
         {
-            response.Result_code = Common.Codes.PARAM_ERROR;
-            response.Msg = "參數格式錯誤";
-            return JsonConvert.SerializeObject(response);
-        }
-        if (request.Environment != "TEST" && request.Environment != "PROD" && request.Environment != "DEV")
-        {
-            response.Result_code = Common.Codes.ENV_ERROR;
-            response.Msg = "環境錯誤，只接受 TEST、PROD、DEV";
-            return JsonConvert.SerializeObject(response);
-        }
-        if (request.Type != "1" && request.Type != "2" && request.Type != "3")
-        {
-            response.Result_code = Common.Codes.PARAM_ERROR;
-            response.Msg = "Type 只接受 1/2/3";
-            return JsonConvert.SerializeObject(response);
-        }
-        if (request.Type == "3" && (request.EmpNoList == null || request.EmpNoList.Count == 0))
-        {
-            response.Result_code = Common.Codes.PARAM_ERROR;
-            response.Msg = "Type=3 時 EmpNoList 不可為空";
+            var response = new GetTreeModel.GetTreeResponse();
+
+            try
+            {
+                var request = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(requestJson);
+                FGetTree func = new FGetTree();
+                response = func.Execute(request.SysID, request.GroupID, request.Environment);
+            }
+            catch (Exception ex)
+            {
+                response = new GetTreeModel.GetTreeResponse
+                {
+                    Result_code = Common.Codes.SYSTEM_ERROR,
+                    Msg = "系統錯誤：" + ex.Message
+                };
+            }
+
             return JsonConvert.SerializeObject(response);
         }
 
-        var func = new FGetEmpMast();
-        response = func.Execute(request.Type, request.EmpNoList, request.Environment);
-    }
-    catch (Exception ex)
+  // 請求參數
+  internal class GetTreeRequest
+  {
+      [JsonProperty]
+      [DisplayName("系統ID")]
+      internal string SysID { get; set; }
+
+      [JsonProperty]
+      [DisplayName("群組ID")]
+      internal string GroupID { get; set; }
+
+      [JsonProperty]
+      [DisplayName("環境")]
+      internal string Environment { get; set; }
+
+      [JsonProperty]
+      [DisplayName("類型")]
+      internal string Type { get; set; } //1:依群組(預設) 2:全部(取得系統所有樹狀功能清單)
+  }
+
+    internal class FGetTree
     {
-        response = new GetEmpMastModel.GetEmpMastResponse
+        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
         {
-            Result_code = Common.Codes.SYSTEM_ERROR,
-            Msg = "系統錯誤：" + ex.Message
-        };
-    }
-
-    return JsonConvert.SerializeObject(response);
-}
-
-
-⸻
-
-2) Model – 加上 Type、EmpNoList
-
-using Newtonsoft.Json;
-using System.Collections.Generic;
-using System.ComponentModel;
-
-namespace HI_APACCESS_DLL.Models
-{
-    internal class GetEmpMastModel
-    {
-        // 請求參數 
-        internal class GetEmpMastRequest
-        {
-            [JsonProperty]
-            [DisplayName("查詢類型")] // 1:全部(在職+離職)  2:在職  3:指定名單
-            internal string Type { get; set; }
-
-            [JsonProperty]
-            [DisplayName("指定名單")]  // 僅 Type=3 需要
-            internal List<string> EmpNoList { get; set; }
-
-            [JsonProperty]
-            [DisplayName("環境")]
-            internal string Environment { get; set; }
-        }
-
-        // 回應結果
-        internal class GetEmpMastResponse
-        {
-            [JsonProperty]
-            [DisplayName("回覆代碼")]
-            internal string Result_code { get; set; }
-
-            [JsonProperty]
-            [DisplayName("訊息")]
-            internal string Msg { get; set; }
-
-            [JsonProperty("Result")]
-            [DisplayName("回覆結果")]
-            public List<ResultData> Result { get; set; }
-        }
-
-        public class ResultData
-        {
-            [JsonProperty] public string EmpNo { get; set; }
-            [JsonProperty] public string EmpName { get; set; }
-            [JsonProperty] public string OrganNo { get; set; }
-            [JsonProperty] public string OrganName { get; set; }
-            [JsonProperty] public string PostNo { get; set; }
-            [JsonProperty] public string PostName { get; set; }
-            [JsonProperty] public string EnterDate { get; set; }
-            [JsonProperty] public string EndDate { get; set; }
-        }
-    }
-}
-
-
-⸻
-
-3) Factory – 依 Type 組條件、參數化 IN 子句
-
-資料表我以你們一貫使用的人事主檔為準：[HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-如果你確定要用別的 schema，只要改 FROM 那一行即可。
-
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
-namespace HI_APACCESS_DLL.Factory
-{
-    internal class FGetEmpMast
-    {
-        internal GetEmpMastModel.GetEmpMastResponse Execute(
-            string type, List<string> empNoList, string environment)
-        {
-            var response = new GetEmpMastModel.GetEmpMastResponse();
+            var response = new GetTreeModel.GetTreeResponse();
 
             try
             {
@@ -143,113 +58,81 @@ namespace HI_APACCESS_DLL.Factory
                 if (environment != "TEST" && environment != "PROD" && environment != "DEV")
                 {
                     response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD、DEV";
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
                     return response;
                 }
 
-                var resultList = new List<GetEmpMastModel.ResultData>();
+                // 2. 系統授權檢查
+                var authorized = FCommon.GetAuthorizedSystemsList(environment);
+                if (!authorized.Contains(sysId))
+                {
+                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                    response.Msg = "系統未授權";
+                    return response;
+                }
+
+                var resultList = new List<GetTreeModel.ResultData>();
 
                 using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
                 {
                     conn.Open();
 
-                    // 基本 SELECT
-                    var sql = @"
-SELECT 
-    M.[EMP_NO]     AS EmpNo,
-    M.[EMP_NAME]   AS EmpName,
-    M.[ORGAN_NO]   AS OrganNo,
-    M.[ORGAN_CAP]  AS OrganName,
-    M.[POST_NO]    AS PostNo,
-    M.[POST_NAME]  AS PostName,
-    M.[ENTER_DT]   AS EnterDate,
-    M.[END_DT]     AS EndDate
-FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] M
-WHERE 1=1
+                    // 3. 查詢功能清單
+                    string sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H  AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID,
+    a.MEMO,
+	a.IS_SHOW,
+    a.FUNC_TYPE
+FROM [HI-AUTOS].[dbo].[AP_FUNC] a
+LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
+    ON a.FUNC_ID = b.FUNC_ID 
+    AND a.SYS_ID = b.SYS_ID
+WHERE a.SYS_ID = @SysID 
+  AND b.APG_NO = @GroupID
+  AND a.IS_SHOW = 'Y'
+ORDER BY a.SORT_NO;
 ";
 
-                    var cmd = new SqlCommand();
-                    cmd.Connection = conn;
-
-                    // 依 Type 增加條件
-                    switch (type)
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
-                        case "1": // 全部（在職+離職）→ 不加條件
-                            break;
+                        cmd.Parameters.AddWithValue("@SysID", sysId);
+                        cmd.Parameters.AddWithValue("@GroupID", groupId);
 
-                        case "2": // 在職（無 EndDate）
-                            sql += @"
-AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
-";
-                            break;
-
-                        case "3": // 指定名單
-                            if (empNoList == null || empNoList.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.PARAM_ERROR;
-                                response.Msg = "Type=3 時 EmpNoList 不可為空";
-                                return response;
-                            }
-
-                            // 清理名單（去空白、轉大寫、去重複）
-                            var cleaned = empNoList
-                                .Where(s => !string.IsNullOrWhiteSpace(s))
-                                .Select(s => s.Trim().ToUpper())
-                                .Distinct()
-                                .ToList();
-
-                            if (cleaned.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.PARAM_ERROR;
-                                response.Msg = "EmpNoList 內容為空";
-                                return response;
-                            }
-
-                            // 參數化 IN 子句
-                            var inParams = new List<string>();
-                            for (int i = 0; i < cleaned.Count; i++)
-                            {
-                                string p = $"@EMP{i}";
-                                inParams.Add(p);
-                                cmd.Parameters.AddWithValue(p, cleaned[i]);
-                            }
-                            sql += $" AND M.[EMP_NO] IN ({string.Join(",", inParams)})";
-                            break;
-
-                        default:
-                            response.Result_code = Common.Codes.PARAM_ERROR;
-                            response.Msg = "Type 只接受 1/2/3";
-                            return response;
-                    }
-
-                    // 排序（可自行調整）
-                    sql += " ORDER BY M.[EMP_NO]";
-
-                    cmd.CommandText = sql;
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
+                        using (var reader = cmd.ExecuteReader())
                         {
-                            resultList.Add(new GetEmpMastModel.ResultData
+                            while (reader.Read())
                             {
-                                EmpNo     = reader["EmpNo"]?.ToString(),
-                                EmpName   = reader["EmpName"]?.ToString(),
-                                OrganNo   = reader["OrganNo"]?.ToString(),
-                                OrganName = reader["OrganName"]?.ToString(),
-                                PostNo    = reader["PostNo"]?.ToString(),
-                                PostName  = reader["PostName"]?.ToString(),
-                                EnterDate = reader["EnterDate"]?.ToString(),
-                                EndDate   = reader["EndDate"]?.ToString(),
-                            });
+                                resultList.Add(new GetTreeModel.ResultData
+                                {
+                                    FuncID = reader["FUNC_ID"].ToString(),
+                                    FuncName = reader["FUNC_NA"].ToString(),
+                                    Controller = reader["CONTROLLER"].ToString(),
+                                    Action = reader["ACTION"].ToString(),
+                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                    ParentID = reader["PARENT_ID"].ToString(),
+                                    Level = reader["LEVEL"].ToString(),
+                                    Memo = reader["MEMO"]?.ToString(),
+                                    FuncType = reader["FUNC_TYPE"]?.ToString()
+                                });
+                            }
                         }
                     }
                 }
 
+                // 4. 結果判斷
                 if (resultList.Count == 0)
                 {
-                    response.Result_code = Common.Codes.NO_DATA;
-                    response.Msg = "查無資料";
+                    response.Result_code = Common.Codes.NO_PERMISSION;
+                    response.Msg = "查無權限";
                 }
                 else
                 {
@@ -267,37 +150,18 @@ AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
             return response;
         }
     }
-}
 
-
-⸻
-
-使用範例（給 WinForm / 測試工具）
-	•	取全部（在職+離職）
-
-{
-  "Type": "1",
-  "EmpNoList": null,
-  "Environment": "TEST"
-}
-
-	•	取在職
-
-{
-  "Type": "2",
-  "EmpNoList": null,
-  "Environment": "TEST"
-}
-
-	•	取指定人員
-
-{
-  "Type": "3",
-  "EmpNoList": ["3B750","3A717"],
-  "Environment": "TEST"
-}
-
-
-⸻
-
-如果你要把表名改回你們另一個 schema（例如之前某些程式是用 [HI-AUTOS].[dbo].[M1EMP_MAST]），只要在 Factory 把 FROM 那行換掉就好，其他不用動。
+  internal class Common
+  {
+      internal static class Codes
+      {
+          internal const string SUCCESS = "0000";          // 成功
+          internal const string NO_PERMISSION = "0001";    // 查無權限
+          internal const string TYPE_ERROR = "1002";       // 類型錯誤
+          internal const string ENV_ERROR = "1003";        // 環境錯誤
+          internal const string SYS_UNAUTHORIZED = "1004"; // 系統未授權
+          internal const string NO_DATA = "1005";          // 查無資料
+          internal const string NO_EmpNoList = "1006";     // 無指定名單
+          internal const string SYSTEM_ERROR = "9999";     // 系統錯誤  指定名單
+      }
+  }
