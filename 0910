@@ -1,265 +1,577 @@
-取得樹狀功能清單 新增Type類型
-1:依群組(預設) 要groupid
-2:全部(取得系統所有樹狀功能清單)不用groupid
-預設為1 這樣不需要2的人 就不用還要增加一個請求參數設為1
+Fortify掃碼問題
+1. Cross-Site Scripting: DOM 
+     // 階層式更新按鈕列表
+        function updateButtonListHierarchical() {
+            if (allFunctions.length === 0) {
+                $('#buttonList').html('<div class="no-data">無可用頁面</div>');
+                return;
+            }
 
-好的,我幫你加上 Type 類型的功能。讓我修改程式碼:
+            const isAdmin = (currentGroupID === '001');
+            const parentChildMap = {};
+            const parentPages = [];
 
-## 1. 修改 GetTree 方法簽名
+            // 分離父頁面與子頁面
+            allFunctions.forEach(func => {
+                const funcId = getFuncId(func);
+                const parentId = getParentId(func);
 
-```csharp
-// 取得樹狀功能清單
-public string GetTree(string requestJson)
-{
-    var response = new GetTreeModel.GetTreeResponse();
+                if (!parentId || parentId === '' || parentId === 'HOME') {
+                    parentPages.push(func);
+                    parentChildMap[funcId] = parentChildMap[funcId] || [];
+                } else if (func.IS_SHOW === 'Y') {
+                    parentChildMap[parentId] = parentChildMap[parentId] || [];
+                    parentChildMap[parentId].push(func);
+                }
+            });
 
-    try
-    {
-        var request = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(requestJson);
-        
-        // 設定預設值
-        if (string.IsNullOrEmpty(request.Type))
-        {
-            request.Type = "1"; // 預設為依群組
+            // 依排序排序
+            parentPages.sort((a, b) => (parseInt(a.SORT_NO) || 999) - (parseInt(b.SORT_NO) || 999));
+            Object.keys(parentChildMap).forEach(pid => {
+                parentChildMap[pid].sort((a, b) => (parseInt(a.SORT_NO) || 999) - (parseInt(b.SORT_NO) || 999));
+            });
+
+            let html = '';
+
+            parentPages.forEach(parentFunc => {
+                const parentId = getFuncId(parentFunc);
+                const parentName = getFuncName(parentFunc);
+                const children = parentChildMap[parentId] || [];
+
+                // 父頁面 header
+                html += `
+        <div class="parent-page-header" id="parent-header-${parentId}">
+            <i class="fas fa-folder"></i> ${parentName}
+            <small class="text-muted" style="margin-left:10px;">(${parentId})</small>
+        </div>`;
+
+                // 父頁面按鈕區塊
+                const parentHasPagePermission = groupPermissions[parentId] && groupPermissions[parentId].hasPagePermission;
+                const parentSectionStyle = parentHasPagePermission
+                    ? 'margin-bottom:15px;border:1px solid #dee2e6;border-radius:6px;background:#f8f9fa;margin-left:20px;'
+                    : 'margin-bottom:15px;border:1px solid #dee2e6;border-radius:6px;background:#f5f5f5;opacity:0.6;margin-left:20px;';
+
+                html += `
+        <div class="page-section parent-section" id="page-section-${parentId}" style="${parentSectionStyle}">
+            <div class="page-header" style="background:#e9ecef;padding:10px 15px;border-bottom:1px solid #dee2e6;font-weight:bold;color:#495057;display:flex;justify-content:space-between;align-items:center;">
+                <span>
+                    <i class="fas fa-folder-open"></i> ${parentName}
+                    <small class="text-muted" style="margin-left:10px;">(${parentId})</small>
+                </span>
+                <div style="display:flex;gap:5px;">
+                    ${isAdmin ? `
+                    <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${parentId}')" style="font-size:11px;padding:2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-check-square"></i> 全勾選
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${parentId}')" style="font-size:11px;padding:2px 8px;" ${!parentHasPagePermission ? 'disabled' : ''}>
+                        <i class="fas fa-square"></i> 全取消
+                    </button>` : ''}
+                </div>
+            </div>
+            <div class="buttons-container" id="buttons-${parentId}" style="padding:10px;">
+                <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+            </div>`;
+
+                // 子頁面
+                if (children.length > 0) {
+                    html += `<div style="margin:10px 15px;border-top:2px solid #6c757d;"></div>`;
+                    children.forEach(childFunc => {
+                        const funcId = getFuncId(childFunc);
+                        const funcName = getFuncName(childFunc);
+                        const hasPagePermission = groupPermissions[funcId] && groupPermissions[funcId].hasPagePermission;
+
+                        html += `
+                <div class="child-page-section" style="margin:10px;border:1px solid #ccc;border-radius:4px;background:${hasPagePermission ? '#fff' : '#f5f5f5'};${!hasPagePermission ? 'opacity:0.6;' : ''}">
+                    <div class="page-header" style="background:#f1f3f4;padding:8px 12px;border-bottom:1px solid #ccc;font-weight:bold;color:#495057;display:flex;justify-content:space-between;align-items:center;font-size:14px;">
+                        <span>
+                            <i class="fas fa-file-alt"></i> ${funcName}
+                            <small class="text-muted" style="margin-left:10px;">(${funcId})</small>
+                        </span>
+                        <div style="display:flex;gap:5px;">
+                            ${isAdmin ? `
+                            <button type="button" class="btn btn-sm btn-primary" onclick="selectAllButtons('${funcId}')" style="font-size:10px;padding:1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-check-square"></i> 全勾選
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="clearAllButtons('${funcId}')" style="font-size:10px;padding:1px 6px;" ${!hasPagePermission ? 'disabled' : ''}>
+                                <i class="fas fa-square"></i> 全取消
+                            </button>` : ''}
+                        </div>
+                    </div>
+                    <div class="buttons-container" id="buttons-${funcId}" style="padding:8px;">
+                        <div class="no-data"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>
+                    </div>
+                </div>`;
+                    });
+                }
+
+                html += `</div>`;
+            });
+
+            $('#buttonList').html(html);  //fortify
+
+            // 載入每個頁面的按鈕資料
+            parentPages.forEach(parentFunc => {
+                loadButtonsForPage(getFuncId(parentFunc));
+                (parentChildMap[getFuncId(parentFunc)] || []).forEach(childFunc => {
+                    loadButtonsForPage(getFuncId(childFunc));
+                });
+            });
         }
-        
-        FGetTree func = new FGetTree();
-        response = func.Execute(request.SysID, request.GroupID, request.Environment, request.Type);
-    }
-    catch (Exception ex)
-    {
-        response = new GetTreeModel.GetTreeResponse
+
+1.2
+        // 渲染按鈕列表
+        function renderButtonList(buttons, funcName) {
+            let html = '';
+
+            if (buttons.length === 0) {
+                html = `
+            <div class="no-data">
+                頁面 "${funcName}" 尚未定義按鈕
+                <br>
+            </div>`;
+            } else {
+                buttons.forEach(function (btn) {
+                    html += `
+                <div class="button-item">
+                    <div class="item-header">
+                        <div class="item-title">${btn.BTN_NAME}</div>
+                        <div class="item-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary btn-tiny" onclick="editButton('${btn.FUNC_ID}', '${btn.BTNSEQ}')">
+                                <i class="fas fa-edit"></i>修改
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger btn-tiny" onclick="deleteButton('${btn.FUNC_ID}', '${btn.BTNSEQ}', '${btn.BTN_NAME}')">
+                                <i class="fas fa-trash"></i>刪除
+                            </button>
+                        </div>
+                    </div>
+                    <div class="item-info">
+                        <div class="button-details">
+                            <span class="detail-item">按鈕ID: ${btn.BTNID}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">序號: ${btn.BTNSEQ}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Controller: ${btn.CONTROLLER || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">Action: ${btn.ACTION || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">LOC: ${btn.LOC || ' '}</span>
+                            <span class="detail-separator">|</span>
+                            <span class="detail-item">OnClick: ${btn.ONCLICK || ' '}</span>
+                        </div>
+                  </div>
+                </div>`;
+                });
+            }
+
+            $('#buttonList').html(html);
+        }
+
+2.Access Control: Database
+f_ap:
+            #region 批次匯入
+        public ImportResult ImportUsersFromExcel(string filePath, string sysId, string an, string creator)
         {
-            Result_code = Common.Codes.SYSTEM_ERROR,
-            Msg = "系統錯誤：" + ex.Message
-        };
-    }
-
-    return JsonConvert.SerializeObject(response);
-}
-```
-
-## 2. 修改 FGetTree.Execute 方法
-
-```csharp
-internal class FGetTree
-{
-    internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment, string type = "1")
-    {
-        var response = new GetTreeModel.GetTreeResponse();
-
-        try
-        {
-            // 1. 環境檢查
-            if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+            ImportResult result = new ImportResult()
             {
-                response.Result_code = Common.Codes.ENV_ERROR;
-                response.Msg = "環境錯誤，只接受 TEST、PROD、DEV";
-                return response;
-            }
+                ErrorMessages = new List<ImportError>()
+            };
 
-            // 2. 類型檢查
-            if (type != "1" && type != "2")
+            try
             {
-                response.Result_code = Common.Codes.TYPE_ERROR;
-                response.Msg = "類型錯誤，只接受 1(依群組) 或 2(全部)";
-                return response;
-            }
+                an = an?.Trim();
 
-            // 3. Type=1 時必須提供 GroupID
-            if (type == "1" && string.IsNullOrEmpty(groupId))
-            {
-                response.Result_code = Common.Codes.TYPE_ERROR;
-                response.Msg = "類型為 1(依群組) 時必須提供 GroupID";
-                return response;
-            }
-
-            // 4. 系統授權檢查
-            var authorized = FCommon.GetAuthorizedSystemsList(environment);
-            if (!authorized.Contains(sysId))
-            {
-                response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                response.Msg = "系統未授權";
-                return response;
-            }
-
-            var resultList = new List<GetTreeModel.ResultData>();
-
-            using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-            {
-                conn.Open();
-
-                // 5. 根據 Type 決定 SQL
-                string sql;
-                
-                if (type == "1")
+                // **1. 驗證權限**
+                if (!HasGroupPermission(sysId, an, creator))
                 {
-                    // 依群組查詢
-                    sql = @"
-SELECT DISTINCT
-    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
-         WHEN a.PARENT_ID <> 'HOME' THEN '1'
-    END AS LEVEL,
-    a.FUNC_ID,
-    a.FUNC_NA,
-    a.VIEW_H  AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
-    a.SORT_NO,
-    a.PARENT_ID,
-    a.MEMO,
-    a.IS_SHOW,
-    a.FUNC_TYPE
-FROM [HI-AUTOS].[dbo].[AP_FUNC] a
-LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
-    ON a.FUNC_ID = b.FUNC_ID 
-    AND a.SYS_ID = b.SYS_ID
-WHERE a.SYS_ID = @SysID 
-  AND b.APG_NO = @GroupID
-  AND a.IS_SHOW = 'Y'
-ORDER BY a.SORT_NO;";
-                }
-                else // type == "2"
-                {
-                    // 取得全部(不需要 GroupID)
-                    sql = @"
-SELECT DISTINCT
-    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
-         WHEN a.PARENT_ID <> 'HOME' THEN '1'
-    END AS LEVEL,
-    a.FUNC_ID,
-    a.FUNC_NA,
-    a.VIEW_H  AS CONTROLLER,
-    a.VIEW_HB AS ACTION,
-    a.SORT_NO,
-    a.PARENT_ID,
-    a.MEMO,
-    a.IS_SHOW,
-    a.FUNC_TYPE
-FROM [HI-AUTOS].[dbo].[AP_FUNC] a
-WHERE a.SYS_ID = @SysID 
-  AND a.IS_SHOW = 'Y'
-ORDER BY a.SORT_NO;";
+                    result.IsSuccess = false;
+                    result.ErrorMessage = an == "001"
+                        ? "僅001群組成員可以操作001群組的批次匯入"
+                        : "無權限操作此群組";
+                    return result;
                 }
 
-                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                // **2. 驗證群組存在**
+                string validateGroupSql = @"
+SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@AN
+";
+                //string validateGroupSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ImportUsersFromExcel);
+                var validateParams = new List<SqlParameter>
                 {
-                    cmd.Parameters.AddWithValue("@SysID", sysId);
-                    
-                    // Type=1 時才加 GroupID 參數
-                    if (type == "1")
+                    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                    new SqlParameter("@AN", SqlDbType.Char, 3) { Value = an }   //fortify
+                };
+                var validateResult = SVS_DBmanager.QueryBySQL(validateGroupSql, validateParams);
+
+                if (validateResult.Rows.Count == 0 || Convert.ToInt32(validateResult.Rows[0][0]) == 0)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "群組不存在";
+                    return result;
+                }
+
+                // **3. 讀取 Excel**
+                var rows = ReadExcelData(filePath, result);
+                if (!result.IsSuccess || rows == null) return result; 
+
+                // **4. 批次處理每筆資料**
+                int successCount = 0;
+                foreach (var row in rows)
+                {
+                    if (ProcessUserRow(row, sysId, an, creator, result))
                     {
-                        cmd.Parameters.AddWithValue("@GroupID", groupId);
+                        successCount++;
                     }
+                }
 
-                    using (var reader = cmd.ExecuteReader())
+                result.SuccessCount = successCount;
+                result.IsSuccess = true;
+            }
+            catch (Exception ex)
+            {
+                result.IsSuccess = false;
+                result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 檢查使用者是否有權限操作指定群組
+        /// </summary>
+        private bool HasGroupPermission(string sysId, string an, string userId)
+        {
+            try
+            {
+                string permissionCheckSql = @"
+                SELECT 
+                    CASE 
+                        WHEN EXISTS (
+                            SELECT 1 FROM AP_USER 
+                            WHERE SYS_ID = @SYS_ID 
+                              AND RTRIM(APG_NO) = '001'
+                              AND U_ID = @U_ID
+                        ) THEN 1
+                        WHEN RTRIM(@AN) = '001' THEN 0
+                        ELSE 1
+                    END AS HasPermission";
+
+                //string permissionCheckSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.HasGroupPermission);
+
+                var parameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  //fortify
+                    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+                };
+
+                var result = SVS_DBmanager.QueryBySQL(permissionCheckSql, parameters);
+
+                return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
+            }
+            catch (Exception ex)
+            {
+                // Log error
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 讀取 Excel 資料
+        /// </summary>
+        private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
+        {
+            var rows = new List<(int RowNumber, string EmpNo)>();
+
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 開始讀取: {filePath}");
+
+                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var reader = ExcelReaderFactory.CreateReader(stream))
+                {
+                    int rowIndex = 0;
+                    while (reader.Read())
                     {
-                        while (reader.Read())
+                        rowIndex++;
+
+                        // 第一列：檢查表頭
+                        if (rowIndex == 1)
                         {
-                            resultList.Add(new GetTreeModel.ResultData
+                            string header = reader.GetString(0)?.Trim();
+                            System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 表頭: {header}");
+
+                            if (string.IsNullOrEmpty(header) || header != "員工編號")
                             {
-                                FuncID = reader["FUNC_ID"].ToString(),
-                                FuncName = reader["FUNC_NA"].ToString(),
-                                Controller = reader["CONTROLLER"].ToString(),
-                                Action = reader["ACTION"].ToString(),
-                                Sort = Convert.ToInt32(reader["SORT_NO"]),
-                                ParentID = reader["PARENT_ID"].ToString(),
-                                Level = reader["LEVEL"].ToString(),
-                                Memo = reader["MEMO"]?.ToString(),
-                                FuncType = reader["FUNC_TYPE"]?.ToString()
-                            });
+                                result.IsSuccess = false;
+                                result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                                System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+                                return null;
+                            }
+                            continue;
+                        }
+
+                        // 讀取資料
+                        string empNo = reader.GetValue(0)?.ToString().Trim();
+                        if (!string.IsNullOrEmpty(empNo))
+                        {
+                            // 驗證員工編號長度
+                            if (empNo.Length > 10)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ 行{rowIndex} 員工編號過長: {empNo}");
+                                result.ErrorMessages.Add(new ImportError
+                                {
+                                    RowNumber = rowIndex,
+                                    EmpNo = empNo,
+                                    Message = "員工編號長度超過10個字元"
+                                });
+                                continue;
+                            }
+
+                            rows.Add((rowIndex, empNo));
+                            System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 讀取行{rowIndex}: {empNo}");
                         }
                     }
                 }
-            }
 
-            // 6. 結果判斷
-            if (resultList.Count == 0)
-            {
-                response.Result_code = Common.Codes.NO_DATA;
-                response.Msg = type == "1" ? "查無權限" : "查無資料";
+                // ⭐ 檢查是否有資料
+                if (rows.Count == 0)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "Excel 無任何員工資料";
+                    System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+                    return null;
+                }
+
+                // ⭐⭐⭐ 關鍵：設定成功狀態 ⭐⭐⭐
+                result.IsSuccess = true;
+
+                System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✓ 成功讀取 {rows.Count} 筆資料");
+                return rows;
             }
-            else
+            catch (Exception ex)
             {
-                response.Result_code = Common.Codes.SUCCESS;
-                response.Msg = "成功";
-                response.Result = resultList;
+                result.IsSuccess = false;
+                result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
+                System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗✗✗ Exception: {ex.Message}");
+                return null;
             }
         }
-        catch (Exception ex)
+
+        /// <summary>
+        /// 處理單筆員工資料
+        /// </summary>
+        private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
         {
-            response.Result_code = Common.Codes.SYSTEM_ERROR;
-            response.Msg = "系統錯誤：" + ex.Message;
+            try
+            {
+                // 1. 檢查員工是否存在
+                string checkEmpSql = "SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
+                //string checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
+                var empParams = new List<SqlParameter>
+                {
+                    new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+                };
+                var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
+                
+                if (empResult.Rows.Count == 0)
+                {
+                    result.ErrorMessages.Add(new ImportError
+                    {
+                        RowNumber = row.RowNumber,
+                        EmpNo = row.EmpNo,
+                        Message = "查無此員工"
+                    });
+                    return false;
+                }
+
+                string empName = empResult.Rows[0]["EMP_NAME"].ToString();
+
+                // ⭐ 驗證姓名長度（nvarchar(20)）
+                if (empName.Length > 20)
+                {
+                    result.ErrorMessages.Add(new ImportError
+                    {
+                        RowNumber = row.RowNumber,
+                        EmpNo = row.EmpNo,
+                        Message = "員工姓名長度超過20個字元"
+                    });
+                    return false;
+                }
+
+                // 2. 檢查是否已存在於同一個群組
+                string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@AN AND U_ID=@U_ID";
+                //string checkUserSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkuser);
+                var checkUserParams = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  //fortify
+                    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+                };
+                var userResult = SVS_DBmanager.QueryBySQL(checkUserSql, checkUserParams);
+
+                if (Convert.ToInt32(userResult.Rows[0][0]) > 0)
+                {
+                    result.ErrorMessages.Add(new ImportError
+                    {
+                        RowNumber = row.RowNumber,
+                        EmpNo = row.EmpNo,
+                        Message = "此群組已存在該員工"
+                    });
+                    return false;
+                }
+
+                // 3. 檢查是否已存在於該系統的其他群組
+                string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@AN AND U_ID=@U_ID";
+                //string checkSystemSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chksys);
+                var checkSystemParams = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },   //fortify
+                    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+                };
+                var systemResult = SVS_DBmanager.QueryBySQL(checkSystemSql, checkSystemParams);
+
+                if (Convert.ToInt32(systemResult.Rows[0][0]) > 0)
+                {
+                    result.ErrorMessages.Add(new ImportError
+                    {
+                        RowNumber = row.RowNumber,
+                        EmpNo = row.EmpNo,
+                        Message = "此系統其他群組已存在該員工"
+                    });
+                    return false;
+                }
+
+                // 4. 寫入 AP_USER
+                string insertSql = @"
+            INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+            VALUES(@SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE())";
+
+                var insertParams = new List<SqlParameter>
+                {
+                    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  //fortify
+                    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+                    new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName }, 
+                    new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+                };
+
+                SVS_DBmanager.ExecuteSQL(insertSql, insertParams);
+                return true;
+            }
+            catch (Exception exRow)
+            {
+                result.ErrorMessages.Add(new ImportError
+                {
+                    RowNumber = row.RowNumber,
+                    EmpNo = row.EmpNo,
+                    Message = "寫入錯誤：" + exRow.Message
+                });
+                return false;
+            }
         }
 
-        return response;
+
+        #endregion
+controller:
+   // 批次匯入使用者
+   [HttpPost]
+   public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+   {
+       if (file == null || file.ContentLength == 0)
+           return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+
+       if (string.IsNullOrWhiteSpace(apgNo))
+           return Json(new { success = false, message = "請先選擇群組" });
+
+       // 副檔名限制
+       var ext = Path.GetExtension(file.FileName).ToLower();
+       if (ext != ".xls" && ext != ".xlsx")
+           return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+       // 上傳暫存
+       var uploadDir = Server.MapPath("~/Upload");
+       if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+       var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+       var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+       try
+       {
+           file.SaveAs(uploadPath);
+
+           var service = GetAPService();
+           var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+
+           if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+           {
+               // 全部成功
+               return Json(new
+               {
+                   status = "success",
+                   message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+               });
+           }
+           else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+           {
+               // 全部失敗
+               return Json(new
+               {
+                   status = "fail",
+                   message = "匯入失敗：請重新上傳",
+                   errors = importResult.ErrorMessages
+               });
+           }
+           else
+           {
+               // 部分成功
+               return Json(new
+               {
+                   status = "partial",
+                   message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                   errors = importResult.ErrorMessages
+               });
+           }
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+       }
+       finally
+       {
+           if (System.IO.File.Exists(uploadPath))
+           {
+               var fc = new F_Common();
+               fc.SafeDeleteFile(uploadDir, safeName);
+           }
+       }
+   }
+
+請參考這個範例:
+public ActionResult ImportUsers(HttpPostedFileBase file, string group, string sysID)
+{
+    string userId = User.Identity.Name;
+
+    // ✅ Step 1: 從資料庫取得該使用者可存取的群組
+    var allowedGroups = GetAllowedGroupsForUser(userId);
+
+    // ✅ Step 2: 驗證前端傳入的 group 是否在授權清單中
+    if (!allowedGroups.Contains(group))
+    {
+        return new HttpStatusCodeResult(403, "未授權的群組存取");
     }
+
+    // ✅ Step 3: SQL 查詢中加入 userId 條件（Fortify 能辨識）
+    string sql = @"
+        SELECT * FROM Users 
+        WHERE Group = @Group AND UserID = @UserID";
+
+    var parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@Group", SqlDbType.VarChar, 10) { Value = group },
+        new SqlParameter("@UserID", SqlDbType.VarChar, 20) { Value = userId }
+    };
+
+    var result = SVS_DBmanager.ExecuteQuery(sql, parameters);
+    // 處理匯入邏輯
 }
-```
-
-## 3. Request Model 保持不變
-
-```csharp
-// 請求參數
-internal class GetTreeRequest
-{
-    [JsonProperty]
-    [DisplayName("系統ID")]
-    internal string SysID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("群組ID")]
-    internal string GroupID { get; set; }
-
-    [JsonProperty]
-    [DisplayName("環境")]
-    internal string Environment { get; set; }
-
-    [JsonProperty]
-    [DisplayName("類型")]
-    internal string Type { get; set; } = "1"; // 預設值為 "1"
-}
-```
-
-## 使用範例
-
-### 1. Type = 1 (依群組) - 預設行為
-
-```json
-{
-    "SysID": "HI_POSIMG",
-    "GroupID": "001",
-    "Environment": "TEST"
-}
-```
-
-或
-
-```json
-{
-    "SysID": "HI_POSIMG",
-    "GroupID": "001",
-    "Environment": "TEST",
-    "Type": "1"
-}
-```
-
-### 2. Type = 2 (全部)
-
-```json
-{
-    "SysID": "HI_POSIMG",
-    "Environment": "TEST",
-    "Type": "2"
-}
-```
-
-## 主要改動點
-
-1. ✅ **Type 預設值為 “1”** - 在 Request Model 和 GetTree 方法中都有處理
-1. ✅ **Type 驗證** - 只接受 “1” 或 “2”
-1. ✅ **GroupID 檢查** - Type=1 時必須提供 GroupID
-1. ✅ **動態 SQL** - 根據 Type 決定是否加入 GroupID 條件
-1. ✅ **參數處理** - Type=1 時才加 @GroupID 參數
-1. ✅ **錯誤訊息** - 區分查無權限(Type=1)和查無資料(Type=2)
-
-這樣不需要 Type=2 的使用者就不用特別設定,會自動使用預設值 “1” 並要求提供 GroupID!​​​​​​​​​​​​​​​​
