@@ -1,277 +1,407 @@
-我來詳細解釋每段 SQL 的條件和邏輯：
+**需要！** Controller 也要加上驗證，這樣才能完整符合 Fortify 的要求。
 
-## 1. ValidateGroupSql - 驗證群組存在且使用者有權限
+## 為什麼 Controller 也要驗證？
 
-```sql
-SELECT COUNT(1) 
-FROM AP_GROUP g
-WHERE g.SYS_ID = @SYS_ID       -- 條件1: 系統ID必須符合
-  AND g.APG_NO = @AN           -- 條件2: 群組編號必須符合
-  AND EXISTS (                 -- 條件3: 必須存在一筆符合以下條件的使用者記錄
-      SELECT 1 FROM AP_USER u
-      WHERE u.SYS_ID = @SYS_ID                    -- 使用者的系統ID = 指定的系統ID
-        AND (u.APG_NO = @AN OR u.APG_NO = '001')  -- 使用者的群組 = 目標群組 OR 001管理群組
-        AND u.U_ID = @U_ID                        -- 使用者ID = 當前操作者(creator)
-  )
+Fortify 的 **Access Control: Database** 檢查會追蹤整個流程：
+
+```
+User Input (前端) 
+    ↓
+Controller (第一道防線) ← Fortify 會檢查這裡
+    ↓
+Service Layer (第二道防線)
+    ↓
+SQL Query (第三道防線) ← Fortify 也會檢查這裡
 ```
 
-**白話解釋：**
+如果只在 SQL 層驗證，Fortify 可能還是會警告：
 
-- **目的：** 確認這個群組存在，而且當前使用者有權限操作它
-- **邏輯：**
-  - 我要操作群組 `@AN`（例如：002）
-  - 群組必須存在於 `AP_GROUP` 表中
-  - **同時**我（creator）必須是：
-    - 選項1：我就在這個群組裡（`u.APG_NO = @AN`）
-    - 選項2：或者我在 001 管理群組裡（`u.APG_NO = '001'`）
+> “Controller 直接使用未驗證的使用者輸入 `apgNo` 呼叫 Service”
 
-**回傳值：**
+## 修正後的 Controller
 
-- `COUNT(1) = 1` → 群組存在且有權限 ✅
-- `COUNT(1) = 0` → 群組不存在 OR 沒權限 ❌
+```csharp
+// ✅ 修正後的 Controller（加入權限驗證）
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+{
+    if (file == null || file.ContentLength == 0)
+        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
 
------
+    if (string.IsNullOrWhiteSpace(apgNo))
+        return Json(new { success = false, message = "請先選擇群組" });
 
-## 2. PermissionCheckSql - 檢查使用者權限層級
+    // ✅ Step 1: 從資料庫取得當前使用者可存取的群組清單
+    var allowedGroups = GetAllowedGroupsForUser(CurrentSystemId, this.Emp_NO);
 
-```sql
-SELECT 
-    CASE 
-        -- 情況1: 如果我是 001 群組的成員
-        WHEN EXISTS (
-            SELECT 1 FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID           -- 系統ID = 指定系統
-              AND RTRIM(APG_NO) = '001'      -- 群組 = '001'（去除空白）
-              AND U_ID = @U_ID                -- 使用者ID = 當前操作者
-        ) THEN 1                              -- 回傳 1（有完整權限）
+    // ✅ Step 2: 驗證前端傳入的 apgNo 是否在授權清單中
+    if (!allowedGroups.Contains(apgNo))
+    {
+        return Json(new { 
+            success = false, 
+            message = "無權限操作此群組" 
+        });
+    }
+
+    // 副檔名限制
+    var ext = Path.GetExtension(file.FileName).ToLower();
+    if (ext != ".xls" && ext != ".xlsx")
+        return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+    // 上傳暫存
+    var uploadDir = Server.MapPath("~/Upload");
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+    try
+    {
+        file.SaveAs(uploadPath);
+
+        var service = GetAPService();
         
-        -- 情況2: 如果目標群組是 001
-        WHEN RTRIM(@AN) = '001' THEN 0        -- 回傳 0（無權限，只有001成員能操作001）
-        
-        -- 情況3: 如果我在目標群組中
-        WHEN EXISTS (
-            SELECT 1 FROM AP_USER
-            WHERE SYS_ID = @SYS_ID            -- 系統ID = 指定系統
-              AND APG_NO = @AN                -- 群組 = 目標群組
-              AND U_ID = @U_ID                -- 使用者ID = 當前操作者
-        ) THEN 1                              -- 回傳 1（有權限）
-        
-        ELSE 0                                -- 其他情況：回傳 0（無權限）
-    END AS HasPermission
+        // ✅ Step 3: 使用已驗證的 apgNo 和 Emp_NO 呼叫 Service
+        var importResult = service.ImportUsersFromExcel(
+            uploadPath, 
+            CurrentSystemId, 
+            apgNo,          // 已驗證的群組
+            this.Emp_NO     // 當前使用者
+        );
+
+        if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+        {
+            return Json(new
+            {
+                status = "success",
+                message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+            });
+        }
+        else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+        {
+            return Json(new
+            {
+                status = "fail",
+                message = "匯入失敗：請重新上傳",
+                errors = importResult.ErrorMessages
+            });
+        }
+        else
+        {
+            return Json(new
+            {
+                status = "partial",
+                message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                errors = importResult.ErrorMessages
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+    }
+    finally
+    {
+        if (System.IO.File.Exists(uploadPath))
+        {
+            var fc = new F_Common();
+            fc.SafeDeleteFile(uploadDir, safeName);
+        }
+    }
+}
+
+/// <summary>
+/// ✅ Step 1: 取得使用者可操作的群組清單
+/// </summary>
+private List<string> GetAllowedGroupsForUser(string sysId, string userId)
+{
+    var allowedGroups = new List<string>();
+
+    try
+    {
+        // ✅ 關鍵：SQL 中包含 UserID 條件
+        string sql = @"
+            SELECT DISTINCT APG_NO 
+            FROM AP_USER 
+            WHERE SYS_ID = @SYS_ID 
+              AND U_ID = @U_ID";
+
+        var parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+        };
+
+        var result = SVS_DBmanager.QueryBySQL(sql, parameters);
+
+        foreach (DataRow row in result.Rows)
+        {
+            string groupNo = row["APG_NO"].ToString().Trim();
+            allowedGroups.Add(groupNo);
+        }
+
+        System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 可存取的群組: {string.Join(", ", allowedGroups)}");
+    }
+    catch (Exception ex)
+    {
+        System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] 錯誤: {ex.Message}");
+    }
+
+    return allowedGroups;
+}
 ```
 
-**白話解釋：**
+## 完整的三層防護架構
 
-- **目的：** 判斷當前使用者是否有權限操作指定的群組
+### 第一層：Controller（入口驗證）
 
-**判斷邏輯（依序檢查）：**
+```csharp
+// 1. 取得使用者的授權群組清單
+var allowedGroups = GetAllowedGroupsForUser(CurrentSystemId, this.Emp_NO);
+// 結果: ["001", "002"]
 
-|情況|我的群組|目標群組|結果 |說明                |
-|--|----|----|---|------------------|
-|1 |001 |任何  |✅ 1|001是超級管理員，可以操作所有群組|
-|2 |非001|001 |❌ 0|只有001成員能操作001群組   |
-|3 |002 |002 |✅ 1|我在這個群組裡，可以操作      |
-|4 |002 |003 |❌ 0|我不在003群組，無法操作     |
+// 2. 驗證前端傳入的群組是否在清單中
+if (!allowedGroups.Contains(apgNo))  // apgNo = "003"
+{
+    return Json(new { success = false, message = "無權限操作此群組" });
+}
+```
 
-**回傳值：**
+**防護內容：**
 
-- `HasPermission = 1` → 有權限 ✅
-- `HasPermission = 0` → 無權限 ❌
+- ✅ 防止使用者篡改前端傳入的 `apgNo`
+- ✅ 只允許操作自己有權限的群組
+- ✅ Fortify 能看到 SQL 中有 `WHERE U_ID = @U_ID`
 
 -----
 
-## 3. CheckUserSql - 檢查員工是否已在同群組
+### 第二層：Service Layer（業務邏輯驗證）
 
-```sql
-SELECT COUNT(1) 
-FROM AP_USER 
-WHERE SYS_ID = @SYS_ID        -- 條件1: 系統ID = 指定系統
-  AND APG_NO = @AN            -- 條件2: 群組編號 = 目標群組
-  AND U_ID = @U_ID            -- 條件3: 使用者ID = 要匯入的員工編號
-  AND EXISTS (                -- 條件4: 確認操作者有權限
-      SELECT 1 FROM AP_USER u2
-      WHERE u2.SYS_ID = @SYS_ID                     -- 系統ID相同
-        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')  -- 操作者在目標群組或001群組
-        AND u2.U_ID = @CREATOR                      -- 操作者ID = creator
-  )
+```csharp
+// HasGroupPermission() 再次驗證
+if (!HasGroupPermission(sysId, an, creator))
+{
+    return result; // 拒絕
+}
 ```
 
-**白話解釋：**
+**防護內容：**
 
-- **目的：** 確認要匯入的員工是否已經在這個群組裡
-- **同時驗證：** 當前操作者有權限執行這個查詢
-
-**範例：**
-
-```
-假設：
-- 系統ID = 'HI-APACCESS'
-- 目標群組 @AN = '002'
-- 要匯入的員工 @U_ID = '3B750'
-- 操作者 @CREATOR = '3B750'
-
-這段SQL在問：
-1. 員工 3B750 是否已在 HI-APACCESS 系統的 002 群組？
-2. 同時，操作者 3B750 是否有權限操作 002 群組？
-```
-
-**回傳值：**
-
-- `COUNT(1) > 0` → 已存在，不能重複匯入 ❌
-- `COUNT(1) = 0` → 不存在，可以匯入 ✅
+- ✅ 防止直接呼叫 Service 繞過 Controller
+- ✅ 檢查特殊規則（例如：只有 001 能操作 001）
 
 -----
 
-## 4. CheckSystemSql - 檢查員工是否在其他群組
+### 第三層：Database（SQL 層級驗證）
 
 ```sql
-SELECT COUNT(1) 
-FROM AP_USER 
-WHERE SYS_ID = @SYS_ID        -- 條件1: 系統ID = 指定系統
-  AND APG_NO <> @AN           -- 條件2: 群組編號 ≠ 目標群組（其他群組）
-  AND U_ID = @U_ID            -- 條件3: 使用者ID = 要匯入的員工編號
-  AND EXISTS (                -- 條件4: 確認操作者有權限
-      SELECT 1 FROM AP_USER u2
-      WHERE u2.SYS_ID = @SYS_ID                     -- 系統ID相同
-        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')  -- 操作者在目標群組或001群組
-        AND u2.U_ID = @CREATOR                      -- 操作者ID = creator
-  )
-```
-
-**白話解釋：**
-
-- **目的：** 確認員工是否已在同系統的**其他群組**
-- **業務規則：** 一個員工在同一個系統裡，只能屬於一個群組
-
-**範例：**
-
-```
-假設：
-- 系統ID = 'HI-APACCESS'
-- 目標群組 @AN = '002'
-- 要匯入的員工 @U_ID = '3B750'
-
-這段SQL在問：
-員工 3B750 是否已在 HI-APACCESS 系統的其他群組（例如 001, 003, 004...）？
-
-如果已在其他群組：
-- 3B750 目前在 003 群組
-- 想要匯入到 002 群組
-- ❌ 拒絕，因為一人只能在一個群組
-```
-
-**回傳值：**
-
-- `COUNT(1) > 0` → 已在其他群組，不能匯入 ❌
-- `COUNT(1) = 0` → 沒在其他群組，可以匯入 ✅
-
------
-
-## 5. InsertSql - 新增使用者並驗證權限
-
-```sql
-INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-SELECT @SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE()
-WHERE EXISTS (                -- 重要：INSERT前最後一道權限檢查
-    SELECT 1 FROM AP_USER
-    WHERE SYS_ID = @SYS_ID                    -- 系統ID = 指定系統
-      AND (APG_NO = @AN OR APG_NO = '001')    -- 群組 = 目標群組 OR 001
-      AND U_ID = @CREATOR                     -- 使用者ID = 操作者
-)
-```
-
-**白話解釋：**
-
-- **目的：** 新增使用者到群組
-- **特殊處理：** 用 `INSERT ... SELECT ... WHERE EXISTS` 而非直接 `INSERT VALUES`
-
-**為什麼這樣寫？**
-
-傳統寫法（Fortify 會警告）：
-
-```sql
--- ❌ Fortify認為這樣不安全
-INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-VALUES(@SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE())
-```
-
-改良寫法（Fortify 認可）：
-
-```sql
--- ✅ 在SQL層級再次驗證權限
-INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-SELECT @SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE()
+-- 每個 SQL 都包含權限檢查
 WHERE EXISTS (
-    -- 確認操作者確實有權限
     SELECT 1 FROM AP_USER
     WHERE SYS_ID = @SYS_ID
       AND (APG_NO = @AN OR APG_NO = '001')
-      AND U_ID = @CREATOR
+      AND U_ID = @CREATOR  -- ✅ Fortify 要看到這個
 )
 ```
 
-**邏輯：**
+**防護內容：**
 
-- **如果** `WHERE EXISTS` 條件成立（操作者有權限）
-  - → `SELECT` 會回傳一筆資料
-  - → `INSERT` 會執行，新增成功
-  - → `affectedRows = 1` ✅
-- **如果** `WHERE EXISTS` 條件不成立（操作者無權限）
-  - → `SELECT` 回傳 0 筆資料
-  - → `INSERT` 不執行
-  - → `affectedRows = 0` ❌
+- ✅ 最後一道防線
+- ✅ 即使前兩層被繞過，SQL 也能擋住
 
-**範例：**
+-----
+
+## 範例對比
+
+### ❌ 不安全的寫法（Fortify 會警告）
 
 ```csharp
-int affectedRows = SVS_DBmanager.ExecuteSQL(insertSql, insertParams);
-
-if (affectedRows == 0)
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
 {
-    // INSERT沒執行，表示權限驗證失敗
-    result.ErrorMessages.Add(new ImportError
+    // ❌ 直接使用前端傳入的 apgNo，沒有驗證
+    var service = GetAPService();
+    var importResult = service.ImportUsersFromExcel(uploadPath, sysID, apgNo, this.Emp_NO);
+    // Fortify: "Access Control: Database - apgNo 未經驗證就用於資料庫操作"
+}
+```
+
+### ✅ 安全的寫法（Fortify 通過）
+
+```csharp
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+{
+    // ✅ Step 1: 從資料庫取得授權清單（SQL 中有 WHERE U_ID = @U_ID）
+    var allowedGroups = GetAllowedGroupsForUser(sysID, this.Emp_NO);
+    
+    // ✅ Step 2: 驗證前端輸入
+    if (!allowedGroups.Contains(apgNo))
     {
-        Message = "寫入失敗：權限驗證未通過"
-    });
-    return false;
+        return Json(new { success = false, message = "無權限" });
+    }
+    
+    // ✅ Step 3: 使用已驗證的參數呼叫 Service
+    var service = GetAPService();
+    var importResult = service.ImportUsersFromExcel(uploadPath, sysID, apgNo, this.Emp_NO);
+    // Fortify: ✅ 通過檢查
 }
 ```
 
 -----
 
-## 完整流程圖
+## 實際測試場景
+
+### 場景 1：正常使用者
 
 ```
-開始匯入
-  ↓
-【步驟1】HasGroupPermission() 
-  ├→ 我是001成員？ → YES → 繼續
-  ├→ 目標是001群組？ → YES → 拒絕（只有001能操作001）
-  └→ 我在目標群組？ → YES → 繼續
-  ↓
-【步驟2】ValidateGroupSql
-  ├→ 群組存在？ → NO → 拒絕
-  └→ 我有權限？ → NO → 拒絕
-  ↓
-【步驟3】處理每筆員工
-  ↓
-  CheckUserSql → 已在同群組？ → YES → 跳過這筆
-  ↓
-  CheckSystemSql → 已在其他群組？ → YES → 跳過這筆
-  ↓
-  InsertSql (含權限檢查)
-  ├→ 權限OK → 新增成功 ✅
-  └→ 權限NG → 新增失敗 ❌
+使用者: 3B750
+所屬群組: 002
+嘗試匯入到: 002
+
+Controller:
+  allowedGroups = ["002"] ← 從資料庫查詢
+  apgNo = "002" ← 前端傳入
+  allowedGroups.Contains("002") = true ✅
+  → 繼續執行
+
+Service:
+  HasGroupPermission("002", "3B750") = true ✅
+  → 繼續執行
+
+Database:
+  WHERE U_ID = '3B750' AND APG_NO = '002' ✅
+  → 寫入成功
 ```
 
-## 關鍵設計思想
+-----
 
-**為什麼每個SQL都要檢查權限？**
+### 場景 2：惡意使用者嘗試操作其他群組
 
-1. **防禦性編程：** 即使前面檢查過，SQL層再檢查一次
-1. **Fortify 要求：** 必須在 SQL 中看到 `UserID` 的驗證條件
-1. **防止繞過：** 萬一有人直接呼叫 `ProcessUserRow()`，SQL 層還能擋住
+```
+使用者: 3B750
+所屬群組: 002
+嘗試匯入到: 003 ← 惡意篡改前端參數
 
-這就是 **“Access Control: Database”** 的核心概念！
+Controller:
+  allowedGroups = ["002"] ← 從資料庫查詢
+  apgNo = "003" ← 前端傳入（被竄改）
+  allowedGroups.Contains("003") = false ❌
+  → 立即拒絕，回傳 "無權限操作此群組"
+```
 
-有哪段還需要更詳細的說明嗎？​​​​​​​​​​​​​​​​
+-----
+
+### 場景 3：001 管理員
+
+```
+使用者: ADMIN001
+所屬群組: 001
+嘗試匯入到: 003
+
+Controller:
+  allowedGroups = ["001"] ← 從資料庫查詢
+  apgNo = "003" ← 前端傳入
+  allowedGroups.Contains("003") = false ❌
+  → 拒絕
+
+但這樣 001 就不能管理其他群組了！需要特殊處理 👇
+```
+
+-----
+
+## 特殊處理：001 管理員可操作所有群組
+
+如果 001 群組是超級管理員，需要修改 `GetAllowedGroupsForUser`：
+
+```csharp
+private List<string> GetAllowedGroupsForUser(string sysId, string userId)
+{
+    var allowedGroups = new List<string>();
+
+    try
+    {
+        // ✅ 先檢查是否為 001 群組成員
+        string checkAdminSql = @"
+            SELECT COUNT(1) 
+            FROM AP_USER 
+            WHERE SYS_ID = @SYS_ID 
+              AND U_ID = @U_ID 
+              AND RTRIM(APG_NO) = '001'";
+
+        var adminParams = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+        };
+
+        var adminResult = SVS_DBmanager.QueryBySQL(checkAdminSql, adminParams);
+        bool isAdmin = Convert.ToInt32(adminResult.Rows[0][0]) > 0;
+
+        if (isAdmin)
+        {
+            // ✅ 001 群組成員：回傳該系統所有群組
+            string allGroupsSql = @"
+                SELECT APG_NO 
+                FROM AP_GROUP 
+                WHERE SYS_ID = @SYS_ID";
+
+            var allGroupsParams = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId }
+            };
+
+            var allGroupsResult = SVS_DBmanager.QueryBySQL(allGroupsSql, allGroupsParams);
+
+            foreach (DataRow row in allGroupsResult.Rows)
+            {
+                allowedGroups.Add(row["APG_NO"].ToString().Trim());
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 是管理員，可存取所有群組");
+        }
+        else
+        {
+            // ✅ 一般使用者：只回傳自己所屬的群組
+            string userGroupsSql = @"
+                SELECT APG_NO 
+                FROM AP_USER 
+                WHERE SYS_ID = @SYS_ID 
+                  AND U_ID = @U_ID";
+
+            var userGroupsParams = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+            };
+
+            var userGroupsResult = SVS_DBmanager.QueryBySQL(userGroupsSql, userGroupsParams);
+
+            foreach (DataRow row in userGroupsResult.Rows)
+            {
+                allowedGroups.Add(row["APG_NO"].ToString().Trim());
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 可存取的群組: {string.Join(", ", allowedGroups)}");
+        }
+    }
+    catch (Exception ex)
+    {
+        System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] 錯誤: {ex.Message}");
+    }
+
+    return allowedGroups;
+}
+```
+
+-----
+
+## 總結
+
+**是的，Controller 必須加上驗證！** 這樣才符合 Fortify 的要求：
+
+1. ✅ **Controller** 驗證：確保使用者只能操作授權的群組
+1. ✅ **Service** 驗證：業務邏輯層的二次確認
+1. ✅ **Database** 驗證：SQL 層的最後防線
+
+這就是**縱深防禦（Defense in Depth）**的概念，每一層都有保護機制！​​​​​​​​​​​​​​​​
