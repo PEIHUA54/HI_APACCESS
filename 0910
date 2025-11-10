@@ -3,82 +3,99 @@
 2:全部(取得系統所有樹狀功能清單)不用groupid
 預設為1 這樣不需要2的人 就不用還要增加一個請求參數設為1
 
+好的,我幫你加上 Type 類型的功能。讓我修改程式碼:
+
+## 1. 修改 GetTree 方法簽名
+
+```csharp
 // 取得樹狀功能清單
-        public string GetTree(string requestJson)
-        {
-            var response = new GetTreeModel.GetTreeResponse();
+public string GetTree(string requestJson)
+{
+    var response = new GetTreeModel.GetTreeResponse();
 
-            try
-            {
-                var request = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(requestJson);
-                FGetTree func = new FGetTree();
-                response = func.Execute(request.SysID, request.GroupID, request.Environment);
-            }
-            catch (Exception ex)
-            {
-                response = new GetTreeModel.GetTreeResponse
-                {
-                    Result_code = Common.Codes.SYSTEM_ERROR,
-                    Msg = "系統錯誤：" + ex.Message
-                };
-            }
-
-            return JsonConvert.SerializeObject(response);
-        }
-
-  // 請求參數
-  internal class GetTreeRequest
-  {
-      [JsonProperty]
-      [DisplayName("系統ID")]
-      internal string SysID { get; set; }
-
-      [JsonProperty]
-      [DisplayName("群組ID")]
-      internal string GroupID { get; set; }
-
-      [JsonProperty]
-      [DisplayName("環境")]
-      internal string Environment { get; set; }
-
-      [JsonProperty]
-      [DisplayName("類型")]
-      internal string Type { get; set; } //1:依群組(預設) 2:全部(取得系統所有樹狀功能清單)
-  }
-
-    internal class FGetTree
+    try
     {
-        internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment)
+        var request = JsonConvert.DeserializeObject<GetTreeModel.GetTreeRequest>(requestJson);
+        
+        // 設定預設值
+        if (string.IsNullOrEmpty(request.Type))
         {
-            var response = new GetTreeModel.GetTreeResponse();
+            request.Type = "1"; // 預設為依群組
+        }
+        
+        FGetTree func = new FGetTree();
+        response = func.Execute(request.SysID, request.GroupID, request.Environment, request.Type);
+    }
+    catch (Exception ex)
+    {
+        response = new GetTreeModel.GetTreeResponse
+        {
+            Result_code = Common.Codes.SYSTEM_ERROR,
+            Msg = "系統錯誤：" + ex.Message
+        };
+    }
 
-            try
+    return JsonConvert.SerializeObject(response);
+}
+```
+
+## 2. 修改 FGetTree.Execute 方法
+
+```csharp
+internal class FGetTree
+{
+    internal GetTreeModel.GetTreeResponse Execute(string sysId, string groupId, string environment, string type = "1")
+    {
+        var response = new GetTreeModel.GetTreeResponse();
+
+        try
+        {
+            // 1. 環境檢查
+            if (environment != "TEST" && environment != "PROD" && environment != "DEV")
             {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                response.Result_code = Common.Codes.ENV_ERROR;
+                response.Msg = "環境錯誤，只接受 TEST、PROD、DEV";
+                return response;
+            }
+
+            // 2. 類型檢查
+            if (type != "1" && type != "2")
+            {
+                response.Result_code = Common.Codes.TYPE_ERROR;
+                response.Msg = "類型錯誤，只接受 1(依群組) 或 2(全部)";
+                return response;
+            }
+
+            // 3. Type=1 時必須提供 GroupID
+            if (type == "1" && string.IsNullOrEmpty(groupId))
+            {
+                response.Result_code = Common.Codes.TYPE_ERROR;
+                response.Msg = "類型為 1(依群組) 時必須提供 GroupID";
+                return response;
+            }
+
+            // 4. 系統授權檢查
+            var authorized = FCommon.GetAuthorizedSystemsList(environment);
+            if (!authorized.Contains(sysId))
+            {
+                response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
+                response.Msg = "系統未授權";
+                return response;
+            }
+
+            var resultList = new List<GetTreeModel.ResultData>();
+
+            using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+            {
+                conn.Open();
+
+                // 5. 根據 Type 決定 SQL
+                string sql;
+                
+                if (type == "1")
                 {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD";
-                    return response;
-                }
-
-                // 2. 系統授權檢查
-                var authorized = FCommon.GetAuthorizedSystemsList(environment);
-                if (!authorized.Contains(sysId))
-                {
-                    response.Result_code = Common.Codes.SYS_UNAUTHORIZED;
-                    response.Msg = "系統未授權";
-                    return response;
-                }
-
-                var resultList = new List<GetTreeModel.ResultData>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    // 3. 查詢功能清單
-                    string sql = @"
+                    // 依群組查詢
+                    sql = @"
 SELECT DISTINCT
     CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
          WHEN a.PARENT_ID <> 'HOME' THEN '1'
@@ -90,7 +107,7 @@ SELECT DISTINCT
     a.SORT_NO,
     a.PARENT_ID,
     a.MEMO,
-	a.IS_SHOW,
+    a.IS_SHOW,
     a.FUNC_TYPE
 FROM [HI-AUTOS].[dbo].[AP_FUNC] a
 LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b 
@@ -99,69 +116,150 @@ LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] b
 WHERE a.SYS_ID = @SysID 
   AND b.APG_NO = @GroupID
   AND a.IS_SHOW = 'Y'
-ORDER BY a.SORT_NO;
-";
+ORDER BY a.SORT_NO;";
+                }
+                else // type == "2"
+                {
+                    // 取得全部(不需要 GroupID)
+                    sql = @"
+SELECT DISTINCT
+    CASE WHEN a.PARENT_ID = 'HOME' THEN '0'
+         WHEN a.PARENT_ID <> 'HOME' THEN '1'
+    END AS LEVEL,
+    a.FUNC_ID,
+    a.FUNC_NA,
+    a.VIEW_H  AS CONTROLLER,
+    a.VIEW_HB AS ACTION,
+    a.SORT_NO,
+    a.PARENT_ID,
+    a.MEMO,
+    a.IS_SHOW,
+    a.FUNC_TYPE
+FROM [HI-AUTOS].[dbo].[AP_FUNC] a
+WHERE a.SYS_ID = @SysID 
+  AND a.IS_SHOW = 'Y'
+ORDER BY a.SORT_NO;";
+                }
 
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@SysID", sysId);
+                    
+                    // Type=1 時才加 GroupID 參數
+                    if (type == "1")
                     {
-                        cmd.Parameters.AddWithValue("@SysID", sysId);
                         cmd.Parameters.AddWithValue("@GroupID", groupId);
+                    }
 
-                        using (var reader = cmd.ExecuteReader())
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
                         {
-                            while (reader.Read())
+                            resultList.Add(new GetTreeModel.ResultData
                             {
-                                resultList.Add(new GetTreeModel.ResultData
-                                {
-                                    FuncID = reader["FUNC_ID"].ToString(),
-                                    FuncName = reader["FUNC_NA"].ToString(),
-                                    Controller = reader["CONTROLLER"].ToString(),
-                                    Action = reader["ACTION"].ToString(),
-                                    Sort = Convert.ToInt32(reader["SORT_NO"]),
-                                    ParentID = reader["PARENT_ID"].ToString(),
-                                    Level = reader["LEVEL"].ToString(),
-                                    Memo = reader["MEMO"]?.ToString(),
-                                    FuncType = reader["FUNC_TYPE"]?.ToString()
-                                });
-                            }
+                                FuncID = reader["FUNC_ID"].ToString(),
+                                FuncName = reader["FUNC_NA"].ToString(),
+                                Controller = reader["CONTROLLER"].ToString(),
+                                Action = reader["ACTION"].ToString(),
+                                Sort = Convert.ToInt32(reader["SORT_NO"]),
+                                ParentID = reader["PARENT_ID"].ToString(),
+                                Level = reader["LEVEL"].ToString(),
+                                Memo = reader["MEMO"]?.ToString(),
+                                FuncType = reader["FUNC_TYPE"]?.ToString()
+                            });
                         }
                     }
                 }
-
-                // 4. 結果判斷
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_PERMISSION;
-                    response.Msg = "查無權限";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
             }
-            catch (Exception ex)
+
+            // 6. 結果判斷
+            if (resultList.Count == 0)
             {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
+                response.Result_code = Common.Codes.NO_DATA;
+                response.Msg = type == "1" ? "查無權限" : "查無資料";
             }
-
-            return response;
+            else
+            {
+                response.Result_code = Common.Codes.SUCCESS;
+                response.Msg = "成功";
+                response.Result = resultList;
+            }
         }
-    }
+        catch (Exception ex)
+        {
+            response.Result_code = Common.Codes.SYSTEM_ERROR;
+            response.Msg = "系統錯誤：" + ex.Message;
+        }
 
-  internal class Common
-  {
-      internal static class Codes
-      {
-          internal const string SUCCESS = "0000";          // 成功
-          internal const string NO_PERMISSION = "0001";    // 查無權限
-          internal const string TYPE_ERROR = "1002";       // 類型錯誤
-          internal const string ENV_ERROR = "1003";        // 環境錯誤
-          internal const string SYS_UNAUTHORIZED = "1004"; // 系統未授權
-          internal const string NO_DATA = "1005";          // 查無資料
-          internal const string NO_EmpNoList = "1006";     // 無指定名單
-          internal const string SYSTEM_ERROR = "9999";     // 系統錯誤  指定名單
-      }
-  }
+        return response;
+    }
+}
+```
+
+## 3. Request Model 保持不變
+
+```csharp
+// 請求參數
+internal class GetTreeRequest
+{
+    [JsonProperty]
+    [DisplayName("系統ID")]
+    internal string SysID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("群組ID")]
+    internal string GroupID { get; set; }
+
+    [JsonProperty]
+    [DisplayName("環境")]
+    internal string Environment { get; set; }
+
+    [JsonProperty]
+    [DisplayName("類型")]
+    internal string Type { get; set; } = "1"; // 預設值為 "1"
+}
+```
+
+## 使用範例
+
+### 1. Type = 1 (依群組) - 預設行為
+
+```json
+{
+    "SysID": "HI_POSIMG",
+    "GroupID": "001",
+    "Environment": "TEST"
+}
+```
+
+或
+
+```json
+{
+    "SysID": "HI_POSIMG",
+    "GroupID": "001",
+    "Environment": "TEST",
+    "Type": "1"
+}
+```
+
+### 2. Type = 2 (全部)
+
+```json
+{
+    "SysID": "HI_POSIMG",
+    "Environment": "TEST",
+    "Type": "2"
+}
+```
+
+## 主要改動點
+
+1. ✅ **Type 預設值為 “1”** - 在 Request Model 和 GetTree 方法中都有處理
+1. ✅ **Type 驗證** - 只接受 “1” 或 “2”
+1. ✅ **GroupID 檢查** - Type=1 時必須提供 GroupID
+1. ✅ **動態 SQL** - 根據 Type 決定是否加入 GroupID 條件
+1. ✅ **參數處理** - Type=1 時才加 @GroupID 參數
+1. ✅ **錯誤訊息** - 區分查無權限(Type=1)和查無資料(Type=2)
+
+這樣不需要 Type=2 的使用者就不用特別設定,會自動使用預設值 “1” 並要求提供 GroupID!​​​​​​​​​​​​​​​​
