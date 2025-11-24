@@ -1,12 +1,6 @@
-匯出帳號清單需要修改，匯出帳號清單時要加密；
-首先(用授權碼DLL產 剛剛做的GETCODE) 參數1.系統ID 2.DATA:員工編號 3.長度8碼，
-產出授權碼，要存入資料表[HI_TMMAIN].[dbo].[CODEGUARD_RECORD]，
-資料表FILE_NAME欄位=>年月日時分秒+"匯出帳號清單"，
-匯出EXCEL表要加密，密碼為授權碼，
-加一個按鈕(匯出紀錄)只能看到自己匯出的紀錄，SELECT 這表[CODEGUARD_RECORD] 設條件，
-紀錄保留3個月，超過三個月就DELETE刪掉。
+明白了!你需要用授權碼來加密 Excel,讓使用者必須輸入授權碼才能開啟。
 
-當然可以!NPOI 是更輕量且免費的選擇。我來改用 NPOI 實作:
+以下是完整的 NPOI 加密實作:
 
 -----
 
@@ -16,7 +10,7 @@
 Install-Package NPOI -Version 2.7.1
 ```
 
-或在 `packages.config` 加入:
+在 `packages.config` 加入:
 
 ```xml
 <package id="NPOI" version="2.7.1" targetFramework="net48" />
@@ -24,7 +18,7 @@ Install-Package NPOI -Version 2.7.1
 
 -----
 
-## 🎮 2. Controller (APController.cs) - 使用 NPOI
+## 🎮 2. Controller 完整程式碼
 
 ```csharp
 using System;
@@ -35,13 +29,16 @@ using HI_CODEGUARD_DLL;
 using Newtonsoft.Json;
 using NPOI.XSSF.UserModel;
 using NPOI.SS.UserModel;
+using NPOI.POIFS.FileSystem;
 using NPOI.POIFS.Crypt;
 using YourNamespace.Models;
 using YourNamespace.Factory;
 
-#region 匯出帳號清單 (加密版 - 使用 NPOI)
+#region 匯出帳號清單 (加密版)
 
-// 匯出帳號清單 (加密 Excel)
+/// <summary>
+/// 匯出帳號清單 (Excel加密)
+/// </summary>
 [HttpGet]
 public ActionResult ExportUserList()
 {
@@ -55,7 +52,7 @@ public ActionResult ExportUserList()
             return Content("<script>alert('無法取得員工編號'); window.history.back();</script>", "text/html");
         }
 
-        // 1. 產生授權碼
+        // 1. 產生授權碼 (使用 HI_CODEGUARD_DLL)
         CODE_GUARD codeGuard = new CODE_GUARD();
         string getCodeRequest = JsonConvert.SerializeObject(new
         {
@@ -69,7 +66,7 @@ public ActionResult ExportUserList()
 
         if (codeResult.Result_code != "0000")
         {
-            return Content($"<script>alert('產生授權碼失敗:{codeResult.Msg}'); window.history.back();</script>", "text/html");
+            return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
         }
 
         string authCode = codeResult.Code.ToString();
@@ -83,9 +80,9 @@ public ActionResult ExportUserList()
             return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
         }
 
-        // 3. 產生加密 Excel
+        // 3. 產生加密 Excel (密碼 = 授權碼)
         string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-        byte[] excelBytes = CreateEncryptedExcelWithNPOI(userList, systemId, authCode);
+        byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
 
         // 4. 儲存記錄到資料庫
         var recordModel = new CodeGuardRecordModel
@@ -99,202 +96,192 @@ public ActionResult ExportUserList()
         bool saveResult = service.SaveCodeGuardRecord(recordModel);
         if (!saveResult)
         {
-            // 記錄失敗但不影響下載
             System.Diagnostics.Debug.WriteLine("儲存授權碼記錄失敗");
         }
 
         // 5. 刪除超過3個月的舊記錄
         service.DeleteOldRecords();
 
-        // 6. 回傳加密的 Excel 檔案
+        // 6. 顯示授權碼提示並下載
+        TempData["AuthCode"] = authCode;
+        TempData["FileName"] = fileName;
+
+        // 7. 回傳加密的 Excel 檔案
         return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
             $"{fileName}.xlsx");
     }
     catch (Exception ex)
     {
-        return Content($"<script>alert('匯出失敗:{ex.Message}'); window.history.back();</script>", "text/html");
+        return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
     }
 }
 
-// 使用 NPOI 建立加密 Excel
-private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
+/// <summary>
+/// 使用 NPOI 建立加密 Excel
+/// </summary>
+private byte[] CreateEncryptedExcel(List<UserExportModel> userList, string systemId, string password)
 {
-    // 建立新的 Excel 工作簿 (XLSX)
-    IWorkbook workbook = new XSSFWorkbook();
-    ISheet sheet = workbook.CreateSheet("帳號清單");
-
-    // 建立標題列樣式
-    ICellStyle headerStyle = workbook.CreateCellStyle();
-    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
-    headerStyle.FillPattern = FillPattern.SolidForeground;
-    headerStyle.Alignment = HorizontalAlignment.Center;
-    headerStyle.VerticalAlignment = VerticalAlignment.Center;
-    
-    IFont headerFont = workbook.CreateFont();
-    headerFont.IsBold = true;
-    headerFont.FontHeightInPoints = 11;
-    headerStyle.SetFont(headerFont);
-
-    // 建立一般儲存格樣式
-    ICellStyle cellStyle = workbook.CreateCellStyle();
-    cellStyle.Alignment = HorizontalAlignment.Left;
-    cellStyle.VerticalAlignment = VerticalAlignment.Center;
-
-    // 建立標題列
-    IRow headerRow = sheet.CreateRow(0);
-    string[] headers = new string[] 
-    { 
-        "系統", "帳號", "姓名", "群組代號", "群組名稱", 
-        "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
-    };
-
-    for (int i = 0; i < headers.Length; i++)
+    try
     {
-        ICell cell = headerRow.CreateCell(i);
-        cell.SetCellValue(headers[i]);
-        cell.CellStyle = headerStyle;
-    }
+        // 1. 建立工作簿
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        ISheet sheet = workbook.CreateSheet("帳號清單");
 
-    // 填入資料
-    int rowIndex = 1;
-    foreach (var user in userList)
-    {
-        IRow dataRow = sheet.CreateRow(rowIndex);
+        // 2. 建立標題列樣式
+        ICellStyle headerStyle = workbook.CreateCellStyle();
+        headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
+        headerStyle.FillPattern = FillPattern.SolidForeground;
+        headerStyle.Alignment = HorizontalAlignment.Center;
+        headerStyle.VerticalAlignment = VerticalAlignment.Center;
+        
+        // 設定邊框
+        headerStyle.BorderTop = BorderStyle.Thin;
+        headerStyle.BorderBottom = BorderStyle.Thin;
+        headerStyle.BorderLeft = BorderStyle.Thin;
+        headerStyle.BorderRight = BorderStyle.Thin;
+        
+        IFont headerFont = workbook.CreateFont();
+        headerFont.IsBold = true;
+        headerFont.FontHeightInPoints = 11;
+        headerFont.FontName = "微軟正黑體";
+        headerStyle.SetFont(headerFont);
 
-        // 系統
-        ICell cell0 = dataRow.CreateCell(0);
-        cell0.SetCellValue(systemId ?? "");
-        cell0.CellStyle = cellStyle;
+        // 3. 建立資料列樣式
+        ICellStyle cellStyle = workbook.CreateCellStyle();
+        cellStyle.Alignment = HorizontalAlignment.Left;
+        cellStyle.VerticalAlignment = VerticalAlignment.Center;
+        cellStyle.BorderTop = BorderStyle.Thin;
+        cellStyle.BorderBottom = BorderStyle.Thin;
+        cellStyle.BorderLeft = BorderStyle.Thin;
+        cellStyle.BorderRight = BorderStyle.Thin;
+        
+        IFont cellFont = workbook.CreateFont();
+        cellFont.FontName = "微軟正黑體";
+        cellStyle.SetFont(cellFont);
 
-        // 帳號
-        ICell cell1 = dataRow.CreateCell(1);
-        cell1.SetCellValue(user.U_ID ?? "");
-        cell1.CellStyle = cellStyle;
+        // 4. 建立標題列
+        IRow headerRow = sheet.CreateRow(0);
+        string[] headers = new string[] 
+        { 
+            "系統", "帳號", "姓名", "群組代號", "群組名稱", 
+            "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
+        };
 
-        // 姓名
-        ICell cell2 = dataRow.CreateCell(2);
-        cell2.SetCellValue(user.U_NAME ?? "");
-        cell2.CellStyle = cellStyle;
-
-        // 群組代號
-        ICell cell3 = dataRow.CreateCell(3);
-        cell3.SetCellValue(user.APG_NO ?? "");
-        cell3.CellStyle = cellStyle;
-
-        // 群組名稱
-        ICell cell4 = dataRow.CreateCell(4);
-        cell4.SetCellValue(user.APG_NAME ?? "");
-        cell4.CellStyle = cellStyle;
-
-        // 部門代號
-        ICell cell5 = dataRow.CreateCell(5);
-        cell5.SetCellValue(user.ORGAN_NO ?? "");
-        cell5.CellStyle = cellStyle;
-
-        // 部門名稱
-        ICell cell6 = dataRow.CreateCell(6);
-        cell6.SetCellValue(user.ORGAN_CAP ?? "");
-        cell6.CellStyle = cellStyle;
-
-        // 建立人員
-        ICell cell7 = dataRow.CreateCell(7);
-        cell7.SetCellValue(user.CREATOR ?? "");
-        cell7.CellStyle = cellStyle;
-
-        // 建立日期
-        ICell cell8 = dataRow.CreateCell(8);
-        cell8.SetCellValue(user.CREATE_TIME ?? "");
-        cell8.CellStyle = cellStyle;
-
-        // 修改人員
-        ICell cell9 = dataRow.CreateCell(9);
-        cell9.SetCellValue(user.EDITOR ?? "");
-        cell9.CellStyle = cellStyle;
-
-        // 修改日期
-        ICell cell10 = dataRow.CreateCell(10);
-        cell10.SetCellValue(user.EDIT_TIME ?? "");
-        cell10.CellStyle = cellStyle;
-
-        rowIndex++;
-    }
-
-    // 自動調整欄寬
-    for (int i = 0; i < headers.Length; i++)
-    {
-        sheet.AutoSizeColumn(i);
-        // 設定最小和最大寬度
-        int currentWidth = sheet.GetColumnWidth(i);
-        if (currentWidth < 2000) // 最小寬度
+        for (int i = 0; i < headers.Length; i++)
         {
-            sheet.SetColumnWidth(i, 2000);
+            ICell cell = headerRow.CreateCell(i);
+            cell.SetCellValue(headers[i]);
+            cell.CellStyle = headerStyle;
         }
-        else if (currentWidth > 10000) // 最大寬度
+
+        // 5. 填入資料
+        int rowIndex = 1;
+        foreach (var user in userList)
         {
-            sheet.SetColumnWidth(i, 10000);
+            IRow dataRow = sheet.CreateRow(rowIndex);
+
+            CreateStyledCell(dataRow, 0, systemId ?? "", cellStyle);
+            CreateStyledCell(dataRow, 1, user.U_ID ?? "", cellStyle);
+            CreateStyledCell(dataRow, 2, user.U_NAME ?? "", cellStyle);
+            CreateStyledCell(dataRow, 3, user.APG_NO ?? "", cellStyle);
+            CreateStyledCell(dataRow, 4, user.APG_NAME ?? "", cellStyle);
+            CreateStyledCell(dataRow, 5, user.ORGAN_NO ?? "", cellStyle);
+            CreateStyledCell(dataRow, 6, user.ORGAN_CAP ?? "", cellStyle);
+            CreateStyledCell(dataRow, 7, user.CREATOR ?? "", cellStyle);
+            CreateStyledCell(dataRow, 8, user.CREATE_TIME ?? "", cellStyle);
+            CreateStyledCell(dataRow, 9, user.EDITOR ?? "", cellStyle);
+            CreateStyledCell(dataRow, 10, user.EDIT_TIME ?? "", cellStyle);
+
+            rowIndex++;
         }
+
+        // 6. 自動調整欄寬
+        for (int i = 0; i < headers.Length; i++)
+        {
+            sheet.AutoSizeColumn(i);
+            // 加一點額外寬度讓內容更好看
+            int currentWidth = sheet.GetColumnWidth(i);
+            sheet.SetColumnWidth(i, currentWidth + 1000);
+        }
+
+        // 7. 凍結首列
+        sheet.CreateFreezePane(0, 1);
+
+        // 8. 將工作簿寫入未加密的串流
+        byte[] unencryptedBytes;
+        using (MemoryStream ms = new MemoryStream())
+        {
+            workbook.Write(ms, false);
+            unencryptedBytes = ms.ToArray();
+        }
+        workbook.Close();
+
+        // 9. 加密 Excel 檔案
+        byte[] encryptedBytes = EncryptExcelFile(unencryptedBytes, password);
+
+        return encryptedBytes;
     }
-
-    // 寫入記憶體串流 (未加密)
-    MemoryStream stream = new MemoryStream();
-    workbook.Write(stream);
-    stream.Flush();
-
-    // 關閉工作簿
-    workbook.Close();
-
-    // 加密處理
-    byte[] encryptedBytes = EncryptExcelWithPassword(stream.ToArray(), password);
-
-    stream.Close();
-
-    return encryptedBytes;
+    catch (Exception ex)
+    {
+        throw new Exception($"建立 Excel 失敗: {ex.Message}", ex);
+    }
 }
 
-// Excel 加密方法 (使用 NPOI)
-private byte[] EncryptExcelWithPassword(byte[] excelBytes, string password)
+/// <summary>
+/// 建立帶樣式的儲存格
+/// </summary>
+private void CreateStyledCell(IRow row, int columnIndex, string value, ICellStyle style)
+{
+    ICell cell = row.CreateCell(columnIndex);
+    cell.SetCellValue(value);
+    cell.CellStyle = style;
+}
+
+/// <summary>
+/// 加密 Excel 檔案
+/// </summary>
+private byte[] EncryptExcelFile(byte[] excelBytes, string password)
 {
     try
     {
         // 讀取未加密的 Excel
         using (MemoryStream inputStream = new MemoryStream(excelBytes))
         {
-            XSSFWorkbook workbook = new XSSFWorkbook(inputStream);
+            // 建立 POIFSFileSystem
+            POIFSFileSystem fs = new POIFSFileSystem();
+            
+            // 建立加密資訊 (使用 Agile 加密模式)
+            EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
+            Encryptor enc = info.Encryptor;
+            
+            // 設定密碼
+            enc.ConfirmPassword(password);
 
-            // 建立輸出串流
+            // 將 Excel 內容寫入加密串流
+            using (Stream encryptedStream = enc.GetDataStream(fs))
+            {
+                inputStream.Position = 0;
+                inputStream.CopyTo(encryptedStream);
+            }
+
+            // 輸出加密後的檔案
             using (MemoryStream outputStream = new MemoryStream())
             {
-                // NPOI 的加密方式
-                POIFSFileSystem fs = new POIFSFileSystem();
-                EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
-                Encryptor enc = info.Encryptor;
-                enc.ConfirmPassword(password);
-
-                // 將工作簿寫入加密串流
-                using (var encryptedStream = enc.GetDataStream(fs))
-                {
-                    workbook.Write(encryptedStream);
-                }
-
-                // 將加密後的檔案寫入輸出串流
                 fs.WriteFilesystem(outputStream);
-
-                workbook.Close();
                 fs.Close();
-
                 return outputStream.ToArray();
             }
         }
     }
     catch (Exception ex)
     {
-        System.Diagnostics.Debug.WriteLine($"加密失敗: {ex.Message}");
-        // 如果加密失敗,返回未加密的檔案
-        return excelBytes;
+        throw new Exception($"Excel 加密失敗: {ex.Message}", ex);
     }
 }
 
-// 查看匯出記錄
+/// <summary>
+/// 查看匯出記錄
+/// </summary>
 [HttpGet]
 public ActionResult ExportRecords()
 {
@@ -315,7 +302,7 @@ public ActionResult ExportRecords()
     }
     catch (Exception ex)
     {
-        return Content($"<script>alert('查詢失敗:{ex.Message}'); window.history.back();</script>", "text/html");
+        return Content($"<script>alert('查詢失敗: {ex.Message}'); window.history.back();</script>", "text/html");
     }
 }
 
@@ -324,368 +311,13 @@ public ActionResult ExportRecords()
 
 -----
 
-## 📝 3. 簡化版 (如果 NPOI 加密有問題)
+## 🖼️ 3. View - GroupManagement.cshtml (修改)
 
-NPOI 的加密功能比較複雜,如果遇到問題,可以使用這個簡化版本:
-
-```csharp
-// 使用 NPOI 建立 Excel (簡化版 - 先不加密)
-private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
-{
-    // 建立新的 Excel 工作簿 (XLSX)
-    IWorkbook workbook = new XSSFWorkbook();
-    ISheet sheet = workbook.CreateSheet("帳號清單");
-
-    // 建立標題列樣式
-    ICellStyle headerStyle = workbook.CreateCellStyle();
-    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
-    headerStyle.FillPattern = FillPattern.SolidForeground;
-    headerStyle.Alignment = HorizontalAlignment.Center;
-    
-    IFont headerFont = workbook.CreateFont();
-    headerFont.IsBold = true;
-    headerFont.FontHeightInPoints = 11;
-    headerStyle.SetFont(headerFont);
-
-    // 建立標題列
-    IRow headerRow = sheet.CreateRow(0);
-    string[] headers = new string[] 
-    { 
-        "系統", "帳號", "姓名", "群組代號", "群組名稱", 
-        "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
-    };
-
-    for (int i = 0; i < headers.Length; i++)
-    {
-        ICell cell = headerRow.CreateCell(i);
-        cell.SetCellValue(headers[i]);
-        cell.CellStyle = headerStyle;
-    }
-
-    // 填入資料
-    int rowIndex = 1;
-    foreach (var user in userList)
-    {
-        IRow dataRow = sheet.CreateRow(rowIndex);
-        
-        dataRow.CreateCell(0).SetCellValue(systemId ?? "");
-        dataRow.CreateCell(1).SetCellValue(user.U_ID ?? "");
-        dataRow.CreateCell(2).SetCellValue(user.U_NAME ?? "");
-        dataRow.CreateCell(3).SetCellValue(user.APG_NO ?? "");
-        dataRow.CreateCell(4).SetCellValue(user.APG_NAME ?? "");
-        dataRow.CreateCell(5).SetCellValue(user.ORGAN_NO ?? "");
-        dataRow.CreateCell(6).SetCellValue(user.ORGAN_CAP ?? "");
-        dataRow.CreateCell(7).SetCellValue(user.CREATOR ?? "");
-        dataRow.CreateCell(8).SetCellValue(user.CREATE_TIME ?? "");
-        dataRow.CreateCell(9).SetCellValue(user.EDITOR ?? "");
-        dataRow.CreateCell(10).SetCellValue(user.EDIT_TIME ?? "");
-
-        rowIndex++;
-    }
-
-    // 自動調整欄寬
-    for (int i = 0; i < headers.Length; i++)
-    {
-        sheet.AutoSizeColumn(i);
-    }
-
-    // 使用 NPOI 的保護功能 (簡易加密)
-    sheet.ProtectSheet(password);
-    
-    // 寫入記憶體串流
-    using (MemoryStream stream = new MemoryStream())
-    {
-        workbook.Write(stream);
-        workbook.Close();
-        return stream.ToArray();
-    }
-}
-```
-
------
-
-## 🔐 4. 完整加密版本 (需要額外套件)
-
-如果需要真正的 Excel 檔案加密,需要安裝額外套件:
-
-```
-Install-Package NPOI -Version 2.7.1
-Install-Package BouncyCastle.Cryptography -Version 2.2.1
-```
-
-然後使用這個完整版:
-
-```csharp
-using System;
-using System.IO;
-using System.Collections.Generic;
-using NPOI.XSSF.UserModel;
-using NPOI.SS.UserModel;
-using NPOI.POIFS.FileSystem;
-using NPOI.POIFS.Crypt;
-using NPOI.POIFS.Crypt.Agile;
-
-// 完整的加密 Excel 方法
-private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
-{
-    // 建立工作簿
-    XSSFWorkbook workbook = new XSSFWorkbook();
-    ISheet sheet = workbook.CreateSheet("帳號清單");
-
-    // 建立標題列樣式
-    ICellStyle headerStyle = workbook.CreateCellStyle();
-    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
-    headerStyle.FillPattern = FillPattern.SolidForeground;
-    headerStyle.Alignment = HorizontalAlignment.Center;
-    
-    IFont headerFont = workbook.CreateFont();
-    headerFont.IsBold = true;
-    headerStyle.SetFont(headerFont);
-
-    // 建立標題列
-    IRow headerRow = sheet.CreateRow(0);
-    string[] headers = { "系統", "帳號", "姓名", "群組代號", "群組名稱", 
-                         "部門代號", "部門名稱", "建立人員", "建立日期", 
-                         "修改人員", "修改日期" };
-
-    for (int i = 0; i < headers.Length; i++)
-    {
-        ICell cell = headerRow.CreateCell(i);
-        cell.SetCellValue(headers[i]);
-        cell.CellStyle = headerStyle;
-    }
-
-    // 填入資料
-    int rowIndex = 1;
-    foreach (var user in userList)
-    {
-        IRow row = sheet.CreateRow(rowIndex++);
-        row.CreateCell(0).SetCellValue(systemId ?? "");
-        row.CreateCell(1).SetCellValue(user.U_ID ?? "");
-        row.CreateCell(2).SetCellValue(user.U_NAME ?? "");
-        row.CreateCell(3).SetCellValue(user.APG_NO ?? "");
-        row.CreateCell(4).SetCellValue(user.APG_NAME ?? "");
-        row.CreateCell(5).SetCellValue(user.ORGAN_NO ?? "");
-        row.CreateCell(6).SetCellValue(user.ORGAN_CAP ?? "");
-        row.CreateCell(7).SetCellValue(user.CREATOR ?? "");
-        row.CreateCell(8).SetCellValue(user.CREATE_TIME ?? "");
-        row.CreateCell(9).SetCellValue(user.EDITOR ?? "");
-        row.CreateCell(10).SetCellValue(user.EDIT_TIME ?? "");
-    }
-
-    // 自動調整欄寬
-    for (int i = 0; i < headers.Length; i++)
-    {
-        sheet.AutoSizeColumn(i);
-    }
-
-    // 先寫入未加密的串流
-    using (MemoryStream tempStream = new MemoryStream())
-    {
-        workbook.Write(tempStream, false);
-        tempStream.Position = 0;
-
-        // 加密處理
-        POIFSFileSystem fs = new POIFSFileSystem();
-        EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
-        Encryptor enc = info.Encryptor;
-        enc.ConfirmPassword(password);
-
-        using (Stream os = enc.GetDataStream(fs))
-        {
-            tempStream.CopyTo(os);
-        }
-
-        // 輸出加密後的檔案
-        using (MemoryStream outputStream = new MemoryStream())
-        {
-            fs.WriteFilesystem(outputStream);
-            workbook.Close();
-            fs.Close();
-            return outputStream.ToArray();
-        }
-    }
-}
-```
-
------
-
-## ⚠️ 重要提醒
-
-### NPOI 加密的三種方式:
-
-1. **Sheet Protection (工作表保護)** - 最簡單
-   
-   ```csharp
-   sheet.ProtectSheet(password);
-   ```
-
-- 優點: 簡單易用
-- 缺點: 只是保護編輯,不是真正加密
-
-1. **Workbook Protection (工作簿保護)** - 中等
-   
-   ```csharp
-   workbook.LockStructure();
-   ```
-
-- 優點: 保護整個工作簿
-- 缺點: 還是可以打開查看
-
-1. **File Encryption (檔案加密)** - 最安全
-
-- 使用 NPOI.POIFS.Crypt
-- 優點: 真正的檔案加密
-- 缺點: 程式碼複雜,可能需要額外套件
-
------
-
-## 💡 我的建議
-
-**使用簡化版 + Sheet Protection:**
-
-這樣最穩定,而且對大部分使用場景已經足夠:
-
-```csharp
-sheet.ProtectSheet(password);
-```
-
-如果真的需要檔案級加密,建議使用 EPPlus,因為它的加密功能更成熟穩定! 🎯​​​​​​​​​​​​​​​​
-CONTROLLER:
-#region 匯出帳號清單
- // 匯出帳號清單
- [HttpGet]
- public ActionResult ExportUserList()
- {
-     try
-     {
-         string systemId = Session["CurrentSystemId"] as string;
-
-         // 取得帳號清單
-         var service = GetAPService();
-         var userList = service.GetAllUsersForExport(systemId);
-
-         if (userList == null || userList.Count == 0)
-         {
-             return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-         }
-
-         // 建立 CSV 內容
-         var csv = new System.Text.StringBuilder();
-
-         // UTF-8 編碼
-         csv.Append("\uFEFF");
-
-         // 標題列
-         csv.AppendLine("系統,帳號,姓名,群組代號,群組名稱,部門代號,部門名稱,建立人員,建立日期,修改人員,修改日期");
-
-         // 資料列
-         foreach (var user in userList)
-         {
-             csv.AppendLine(string.Format("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10}",
-                 FormatAsText(systemId),
-                 FormatAsText(user.U_ID),        
-                 FormatAsText(user.U_NAME),
-                 FormatAsText(user.APG_NO),         
-                 FormatAsText(user.APG_NAME),
-                 FormatAsText(user.ORGAN_NO),
-                 FormatAsText(user.ORGAN_CAP),
-                 FormatAsText(user.CREATOR),
-                 FormatAsText(user.CREATE_TIME),   
-                 FormatAsText(user.EDITOR),
-                 FormatAsText(user.EDIT_TIME)      
-             ));
-         }
-
-         // 轉換成 byte array
-         byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
-
-         // 產生檔案
-         //string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
-
-         return File(fileBytes, "text/csv", $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
-     }
-     catch (Exception ex)
-     {
-         return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
-     }
- }
-
- // 欄位處理：處理逗號、引號、換行
- private string FormatAsText(string field)
- {
-     if (string.IsNullOrEmpty(field))
-         return "";
-
-     // 使用 ="..." 的方式強制 Excel 當成文字
-     // 如果欄位內含引號，需要跳脫
-     string escaped = field.Replace("\"", "\"\"");
-     return $"=\"{escaped}\"";
- }
-M_AP_SET:MODEL
-
-  // 帳號匯出
-  public class UserExportModel
-  {
-      public string U_ID { get; set; }
-      public string U_NAME { get; set; }
-      public string APG_NO { get; set; }
-      public string APG_NAME { get; set; }
-      public string ORGAN_NO { get; set; }
-      public string ORGAN_CAP { get; set; }
-      public string CREATOR { get; set; }
-      public string CREATE_TIME { get; set; }
-      public string EDITOR { get; set; }
-      public string EDIT_TIME { get; set; }
-  }
- 
- // 需要再有一個帳號匯出紀錄MODEL
-1.FILE_NAME 檔案名稱
-2.CODE_GUARD 授權碼
-3.CREATOR 轉出人員
-4.CREATE_TIME 轉出時間
-
-F_AP:
-    // 取得所有使用者清單(用於匯出)
-    public List<UserExportModel> GetAllUsersForExport(string systemId)
-    {
-        string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllUsersForExport);
-
-        List<SqlParameter> parameters = new List<SqlParameter>
-        {
-            new SqlParameter("@SYS_ID", systemId)
-        };
-
-        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-        return SVS_DBmanager.ConvertToList<UserExportModel>(dt);
-    }
-
-GetAllUsersForExport:SQL
-
-	SELECT 
-            u.[U_ID],
-            u.[U_NAME],
-            u.[APG_NO],
-            g.[APG_NAME],
-			m.[ORGAN_NO],
-			m.[ORGAN_CAP],
-            u.[CREATOR],
-            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME, 
-            u.[EDITOR],
-            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME    
-        FROM [HI-AUTOS].[dbo].[AP_USER] u
-        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
-            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-		LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m 
-            ON u.U_ID = m.EMP_NO
-        WHERE u.[SYS_ID] = @SYS_ID
-        ORDER BY u.[APG_NO], u.[U_ID]
-
-GroupManagement VIEW:
-
+```html
 <section class="page-title">
     <div class="triangle"></div>
     <div class="title-text">系統群組權限管理 : @ViewBag.SystemId</div>
+    
     @if (showSwitchButton)
     {
         <div class="row mb-3">
@@ -696,18 +328,259 @@ GroupManagement VIEW:
             </div>
         </div>
     }
+    
     <div class="row mb-3">
         <div class="col-md-12">
             <button type="button" class="btn btn-outline-info" id="btnExportUsers">
-                <i class="fas fa-file-export"></i>     匯出帳號清單
+                <i class="fas fa-file-export"></i> 匯出帳號清單
+            </button>
+            <button type="button" class="btn btn-outline-success" id="btnExportRecords">
+                <i class="fas fa-history"></i> 匯出記錄
             </button>
         </div>
     </div>
-   // 這邊需增加一個按鈕 (匯出紀錄)
 </section>
 
-JS:
-    // 匯出帳號清單按鈕事件
-    $('#btnExportUsers').click(function () {
-        window.location.href = '@Url.Action("ExportUserList", "AP")';
+<!-- 授權碼顯示 Modal -->
+<div class="modal fade" id="authCodeModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title">
+                    <i class="fas fa-key"></i> Excel 檔案授權碼
+                </h5>
+            </div>
+            <div class="modal-body text-center">
+                <p class="mb-3">檔案已加密,請使用以下授權碼開啟:</p>
+                <div class="alert alert-info" style="font-size: 24px; font-weight: bold; letter-spacing: 3px;">
+                    <span id="displayAuthCode"></span>
+                </div>
+                <p class="text-danger">
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    請妥善保管此授權碼,遺失將無法開啟檔案!
+                </p>
+                <p class="text-muted">
+                    <small>檔案名稱: <span id="displayFileName"></span></small>
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="btnCopyAuthCode">
+                    <i class="fas fa-copy"></i> 複製授權碼
+                </button>
+                <button type="button" class="btn btn-primary" data-dismiss="modal">
+                    <i class="fas fa-check"></i> 我已記下授權碼
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    $(document).ready(function() {
+        // 匯出帳號清單按鈕事件
+        $('#btnExportUsers').click(function () {
+            if (confirm('匯出的 Excel 檔案將會加密保護。\n\n系統會產生一組授權碼,開啟檔案時需要輸入此授權碼。\n\n確定要匯出嗎?')) {
+                // 開始下載
+                window.location.href = '@Url.Action("ExportUserList", "AP")';
+                
+                // 延遲顯示授權碼 (等檔案開始下載)
+                setTimeout(function() {
+                    showAuthCode();
+                }, 500);
+            }
+        });
+
+        // 匯出記錄按鈕事件
+        $('#btnExportRecords').click(function () {
+            window.open('@Url.Action("ExportRecords", "AP")', '_blank');
+        });
+
+        // 複製授權碼
+        $('#btnCopyAuthCode').click(function() {
+            var authCode = $('#displayAuthCode').text();
+            
+            // 建立暫時的 textarea 來複製文字
+            var $temp = $('<textarea>');
+            $('body').append($temp);
+            $temp.val(authCode).select();
+            document.execCommand('copy');
+            $temp.remove();
+            
+            // 顯示提示
+            $(this).html('<i class="fas fa-check"></i> 已複製!');
+            setTimeout(() => {
+                $(this).html('<i class="fas fa-copy"></i> 複製授權碼');
+            }, 2000);
+        });
+
+        // 顯示授權碼
+        function showAuthCode() {
+            @if (TempData["AuthCode"] != null && TempData["FileName"] != null)
+            {
+                <text>
+                var authCode = '@TempData["AuthCode"]';
+                var fileName = '@TempData["FileName"]';
+                
+                $('#displayAuthCode').text(authCode);
+                $('#displayFileName').text(fileName + '.xlsx');
+                $('#authCodeModal').modal('show');
+                </text>
+            }
+        }
     });
+</script>
+}
+
+<style>
+    .modal-body {
+        padding: 30px;
+    }
+    
+    #displayAuthCode {
+        font-family: 'Courier New', monospace;
+        user-select: all;
+    }
+</style>
+```
+
+-----
+
+## 📋 4. View - ExportRecords.cshtml
+
+```html
+@model List<YourNamespace.Models.ExportRecordViewModel>
+
+@{
+    ViewBag.Title = "匯出記錄";
+    Layout = "~/Views/Shared/_Layout.cshtml";
+}
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">
+        <i class="fas fa-history"></i> 帳號清單匯出記錄 (最近3個月)
+    </div>
+</section>
+
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            @if (Model != null && Model.Count > 0)
+            {
+                <div class="alert alert-info" role="alert">
+                    <i class="fas fa-info-circle"></i> 
+                    共有 <strong>@Model.Count</strong> 筆記錄
+                </div>
+                
+                <div class="table-responsive">
+                    <table class="table table-striped table-bordered table-hover">
+                        <thead class="thead-dark">
+                            <tr>
+                                <th style="width: 5%;" class="text-center">序號</th>
+                                <th style="width: 35%;">檔案名稱</th>
+                                <th style="width: 15%;" class="text-center">系統ID</th>
+                                <th style="width: 15%;" class="text-center">匯出人員</th>
+                                <th style="width: 20%;" class="text-center">匯出時間</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = 0; i < Model.Count; i++)
+                            {
+                                <tr>
+                                    <td class="text-center">@(i + 1)</td>
+                                    <td>
+                                        <i class="fas fa-file-excel text-success"></i> 
+                                        @Model[i].FILE_NAME.xlsx
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge badge-primary">@Model[i].SYS_ID</span>
+                                    </td>
+                                    <td class="text-center">@Model[i].CREATOR</td>
+                                    <td class="text-center">@Model[i].CREATE_TIME</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-warning text-center" role="alert" style="padding: 50px;">
+                    <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 20px;"></i>
+                    <h5>目前沒有匯出記錄</h5>
+                    <p class="text-muted">最近 3 個月內沒有匯出帳號清單的記錄</p>
+                </div>
+            }
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <button type="button" class="btn btn-secondary" onclick="window.close();">
+                <i class="fas fa-times"></i> 關閉視窗
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .table {
+        margin-top: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .table thead th {
+        vertical-align: middle;
+    }
+    
+    .table tbody td {
+        vertical-align: middle;
+    }
+    
+    .badge {
+        font-size: 0.9em;
+        padding: 5px 10px;
+    }
+</style>
+```
+
+-----
+
+## ✅ 使用流程
+
+1. **使用者點擊「匯出帳號清單」**
+
+- 系統用 `HI_CODEGUARD_DLL` 產生 8 碼授權碼
+
+1. **產生加密 Excel**
+
+- 使用 NPOI 建立 Excel
+- 使用授權碼加密檔案
+
+1. **儲存記錄**
+
+- 檔案名稱、授權碼、匯出人員、時間存入 `CODEGUARD_RECORD` 表
+
+1. **顯示授權碼**
+
+- 彈出 Modal 顯示授權碼
+- 提供複製功能
+
+1. **下載檔案**
+
+- 使用者下載加密的 Excel
+- 開啟時需要輸入授權碼
+
+-----
+
+## 🔐 測試方式
+
+1. 點擊「匯出帳號清單」
+1. 會出現 Modal 顯示授權碼 (例如: `A1B2C3D4`)
+1. 複製或記下授權碼
+1. 下載 Excel 檔案
+1. 開啟 Excel 時,會要求輸入密碼
+1. 輸入授權碼即可開啟查看內容
+
+完成! 🎉​​​​​​​​​​​​​​​​
