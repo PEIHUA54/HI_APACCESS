@@ -1,0 +1,169 @@
+匯出帳號清單需要修改，匯出帳號清單時要加密；
+首先(用授權碼DLL產 剛剛做的GETCODE) 參數1.系統ID 2.DATA:員工編號 3.長度8碼，
+產出授權碼，要存入資料表[HI_TMMAIN].[dbo].[CODEGUARD_RECORD]，
+資料表FILE_NAME欄位=>年月日時分秒+"匯出帳號清單"，
+匯出EXCEL表要加密，密碼為授權碼，
+加一個按鈕(匯出紀錄)只能看到自己匯出的紀錄，SELECT 這表[CODEGUARD_RECORD] 設條件，
+紀錄保留3個月，超過三個月就DELETE刪掉。
+
+
+CONTROLLER:
+#region 匯出帳號清單
+ // 匯出帳號清單
+ [HttpGet]
+ public ActionResult ExportUserList()
+ {
+     try
+     {
+         string systemId = Session["CurrentSystemId"] as string;
+
+         // 取得帳號清單
+         var service = GetAPService();
+         var userList = service.GetAllUsersForExport(systemId);
+
+         if (userList == null || userList.Count == 0)
+         {
+             return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+         }
+
+         // 建立 CSV 內容
+         var csv = new System.Text.StringBuilder();
+
+         // UTF-8 編碼
+         csv.Append("\uFEFF");
+
+         // 標題列
+         csv.AppendLine("系統,帳號,姓名,群組代號,群組名稱,部門代號,部門名稱,建立人員,建立日期,修改人員,修改日期");
+
+         // 資料列
+         foreach (var user in userList)
+         {
+             csv.AppendLine(string.Format("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10}",
+                 FormatAsText(systemId),
+                 FormatAsText(user.U_ID),        
+                 FormatAsText(user.U_NAME),
+                 FormatAsText(user.APG_NO),         
+                 FormatAsText(user.APG_NAME),
+                 FormatAsText(user.ORGAN_NO),
+                 FormatAsText(user.ORGAN_CAP),
+                 FormatAsText(user.CREATOR),
+                 FormatAsText(user.CREATE_TIME),   
+                 FormatAsText(user.EDITOR),
+                 FormatAsText(user.EDIT_TIME)      
+             ));
+         }
+
+         // 轉換成 byte array
+         byte[] fileBytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
+
+         // 產生檔案
+         //string fileName = $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+
+         return File(fileBytes, "text/csv", $"帳號清單_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+     }
+     catch (Exception ex)
+     {
+         return Content($"<script>alert('匯出失敗：{ex.Message}'); window.history.back();</script>", "text/html");
+     }
+ }
+
+ // 欄位處理：處理逗號、引號、換行
+ private string FormatAsText(string field)
+ {
+     if (string.IsNullOrEmpty(field))
+         return "";
+
+     // 使用 ="..." 的方式強制 Excel 當成文字
+     // 如果欄位內含引號，需要跳脫
+     string escaped = field.Replace("\"", "\"\"");
+     return $"=\"{escaped}\"";
+ }
+M_AP_SET:MODEL
+
+  // 帳號匯出
+  public class UserExportModel
+  {
+      public string U_ID { get; set; }
+      public string U_NAME { get; set; }
+      public string APG_NO { get; set; }
+      public string APG_NAME { get; set; }
+      public string ORGAN_NO { get; set; }
+      public string ORGAN_CAP { get; set; }
+      public string CREATOR { get; set; }
+      public string CREATE_TIME { get; set; }
+      public string EDITOR { get; set; }
+      public string EDIT_TIME { get; set; }
+  }
+ 
+ // 需要再有一個帳號匯出紀錄MODEL
+1.FILE_NAME 檔案名稱
+2.CODE_GUARD 授權碼
+3.CREATOR 轉出人員
+4.CREATE_TIME 轉出時間
+
+F_AP:
+    // 取得所有使用者清單(用於匯出)
+    public List<UserExportModel> GetAllUsersForExport(string systemId)
+    {
+        string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllUsersForExport);
+
+        List<SqlParameter> parameters = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", systemId)
+        };
+
+        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+        return SVS_DBmanager.ConvertToList<UserExportModel>(dt);
+    }
+
+GetAllUsersForExport:SQL
+
+	SELECT 
+            u.[U_ID],
+            u.[U_NAME],
+            u.[APG_NO],
+            g.[APG_NAME],
+			m.[ORGAN_NO],
+			m.[ORGAN_CAP],
+            u.[CREATOR],
+            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME, 
+            u.[EDITOR],
+            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME    
+        FROM [HI-AUTOS].[dbo].[AP_USER] u
+        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
+            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+		LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m 
+            ON u.U_ID = m.EMP_NO
+        WHERE u.[SYS_ID] = @SYS_ID
+        ORDER BY u.[APG_NO], u.[U_ID]
+
+GroupManagement VIEW:
+
+<section class="page-title">
+    <div class="triangle"></div>
+    <div class="title-text">系統群組權限管理 : @ViewBag.SystemId</div>
+    @if (showSwitchButton)
+    {
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <button type="button" class="btn btn-secondary" id="btnSwitchSystem">
+                    <i class="fas fa-exchange-alt"></i> 切換系統
+                </button>
+            </div>
+        </div>
+    }
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <button type="button" class="btn btn-outline-info" id="btnExportUsers">
+                <i class="fas fa-file-export"></i>     匯出帳號清單
+            </button>
+        </div>
+    </div>
+   // 這邊需增加一個按鈕 (匯出紀錄)
+</section>
+
+JS:
+    // 匯出帳號清單按鈕事件
+    $('#btnExportUsers').click(function () {
+        window.location.href = '@Url.Action("ExportUserList", "AP")';
+    });
