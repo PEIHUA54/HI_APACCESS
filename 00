@@ -6,7 +6,551 @@
 加一個按鈕(匯出紀錄)只能看到自己匯出的紀錄，SELECT 這表[CODEGUARD_RECORD] 設條件，
 紀錄保留3個月，超過三個月就DELETE刪掉。
 
+當然可以!NPOI 是更輕量且免費的選擇。我來改用 NPOI 實作:
 
+-----
+
+## 📦 1. NuGet 套件安裝
+
+```
+Install-Package NPOI -Version 2.7.1
+```
+
+或在 `packages.config` 加入:
+
+```xml
+<package id="NPOI" version="2.7.1" targetFramework="net48" />
+```
+
+-----
+
+## 🎮 2. Controller (APController.cs) - 使用 NPOI
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Web.Mvc;
+using HI_CODEGUARD_DLL;
+using Newtonsoft.Json;
+using NPOI.XSSF.UserModel;
+using NPOI.SS.UserModel;
+using NPOI.POIFS.Crypt;
+using YourNamespace.Models;
+using YourNamespace.Factory;
+
+#region 匯出帳號清單 (加密版 - 使用 NPOI)
+
+// 匯出帳號清單 (加密 Excel)
+[HttpGet]
+public ActionResult ExportUserList()
+{
+    try
+    {
+        string systemId = Session["CurrentSystemId"] as string;
+        string employeeNo = Session["UserID"] as string; // 從 Session 取得員工編號
+
+        if (string.IsNullOrEmpty(employeeNo))
+        {
+            return Content("<script>alert('無法取得員工編號'); window.history.back();</script>", "text/html");
+        }
+
+        // 1. 產生授權碼
+        CODE_GUARD codeGuard = new CODE_GUARD();
+        string getCodeRequest = JsonConvert.SerializeObject(new
+        {
+            SysID = systemId,
+            Data = employeeNo,
+            CodeLength = 8
+        });
+
+        string getCodeResponse = codeGuard.GetCode(getCodeRequest);
+        dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
+
+        if (codeResult.Result_code != "0000")
+        {
+            return Content($"<script>alert('產生授權碼失敗:{codeResult.Msg}'); window.history.back();</script>", "text/html");
+        }
+
+        string authCode = codeResult.Code.ToString();
+
+        // 2. 取得帳號清單
+        var service = GetAPService();
+        var userList = service.GetAllUsersForExport(systemId);
+
+        if (userList == null || userList.Count == 0)
+        {
+            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+        }
+
+        // 3. 產生加密 Excel
+        string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
+        byte[] excelBytes = CreateEncryptedExcelWithNPOI(userList, systemId, authCode);
+
+        // 4. 儲存記錄到資料庫
+        var recordModel = new CodeGuardRecordModel
+        {
+            FILE_NAME = fileName,
+            CODE_GUARD = authCode,
+            CREATOR = employeeNo,
+            SYS_ID = systemId
+        };
+
+        bool saveResult = service.SaveCodeGuardRecord(recordModel);
+        if (!saveResult)
+        {
+            // 記錄失敗但不影響下載
+            System.Diagnostics.Debug.WriteLine("儲存授權碼記錄失敗");
+        }
+
+        // 5. 刪除超過3個月的舊記錄
+        service.DeleteOldRecords();
+
+        // 6. 回傳加密的 Excel 檔案
+        return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+            $"{fileName}.xlsx");
+    }
+    catch (Exception ex)
+    {
+        return Content($"<script>alert('匯出失敗:{ex.Message}'); window.history.back();</script>", "text/html");
+    }
+}
+
+// 使用 NPOI 建立加密 Excel
+private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
+{
+    // 建立新的 Excel 工作簿 (XLSX)
+    IWorkbook workbook = new XSSFWorkbook();
+    ISheet sheet = workbook.CreateSheet("帳號清單");
+
+    // 建立標題列樣式
+    ICellStyle headerStyle = workbook.CreateCellStyle();
+    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
+    headerStyle.FillPattern = FillPattern.SolidForeground;
+    headerStyle.Alignment = HorizontalAlignment.Center;
+    headerStyle.VerticalAlignment = VerticalAlignment.Center;
+    
+    IFont headerFont = workbook.CreateFont();
+    headerFont.IsBold = true;
+    headerFont.FontHeightInPoints = 11;
+    headerStyle.SetFont(headerFont);
+
+    // 建立一般儲存格樣式
+    ICellStyle cellStyle = workbook.CreateCellStyle();
+    cellStyle.Alignment = HorizontalAlignment.Left;
+    cellStyle.VerticalAlignment = VerticalAlignment.Center;
+
+    // 建立標題列
+    IRow headerRow = sheet.CreateRow(0);
+    string[] headers = new string[] 
+    { 
+        "系統", "帳號", "姓名", "群組代號", "群組名稱", 
+        "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
+    };
+
+    for (int i = 0; i < headers.Length; i++)
+    {
+        ICell cell = headerRow.CreateCell(i);
+        cell.SetCellValue(headers[i]);
+        cell.CellStyle = headerStyle;
+    }
+
+    // 填入資料
+    int rowIndex = 1;
+    foreach (var user in userList)
+    {
+        IRow dataRow = sheet.CreateRow(rowIndex);
+
+        // 系統
+        ICell cell0 = dataRow.CreateCell(0);
+        cell0.SetCellValue(systemId ?? "");
+        cell0.CellStyle = cellStyle;
+
+        // 帳號
+        ICell cell1 = dataRow.CreateCell(1);
+        cell1.SetCellValue(user.U_ID ?? "");
+        cell1.CellStyle = cellStyle;
+
+        // 姓名
+        ICell cell2 = dataRow.CreateCell(2);
+        cell2.SetCellValue(user.U_NAME ?? "");
+        cell2.CellStyle = cellStyle;
+
+        // 群組代號
+        ICell cell3 = dataRow.CreateCell(3);
+        cell3.SetCellValue(user.APG_NO ?? "");
+        cell3.CellStyle = cellStyle;
+
+        // 群組名稱
+        ICell cell4 = dataRow.CreateCell(4);
+        cell4.SetCellValue(user.APG_NAME ?? "");
+        cell4.CellStyle = cellStyle;
+
+        // 部門代號
+        ICell cell5 = dataRow.CreateCell(5);
+        cell5.SetCellValue(user.ORGAN_NO ?? "");
+        cell5.CellStyle = cellStyle;
+
+        // 部門名稱
+        ICell cell6 = dataRow.CreateCell(6);
+        cell6.SetCellValue(user.ORGAN_CAP ?? "");
+        cell6.CellStyle = cellStyle;
+
+        // 建立人員
+        ICell cell7 = dataRow.CreateCell(7);
+        cell7.SetCellValue(user.CREATOR ?? "");
+        cell7.CellStyle = cellStyle;
+
+        // 建立日期
+        ICell cell8 = dataRow.CreateCell(8);
+        cell8.SetCellValue(user.CREATE_TIME ?? "");
+        cell8.CellStyle = cellStyle;
+
+        // 修改人員
+        ICell cell9 = dataRow.CreateCell(9);
+        cell9.SetCellValue(user.EDITOR ?? "");
+        cell9.CellStyle = cellStyle;
+
+        // 修改日期
+        ICell cell10 = dataRow.CreateCell(10);
+        cell10.SetCellValue(user.EDIT_TIME ?? "");
+        cell10.CellStyle = cellStyle;
+
+        rowIndex++;
+    }
+
+    // 自動調整欄寬
+    for (int i = 0; i < headers.Length; i++)
+    {
+        sheet.AutoSizeColumn(i);
+        // 設定最小和最大寬度
+        int currentWidth = sheet.GetColumnWidth(i);
+        if (currentWidth < 2000) // 最小寬度
+        {
+            sheet.SetColumnWidth(i, 2000);
+        }
+        else if (currentWidth > 10000) // 最大寬度
+        {
+            sheet.SetColumnWidth(i, 10000);
+        }
+    }
+
+    // 寫入記憶體串流 (未加密)
+    MemoryStream stream = new MemoryStream();
+    workbook.Write(stream);
+    stream.Flush();
+
+    // 關閉工作簿
+    workbook.Close();
+
+    // 加密處理
+    byte[] encryptedBytes = EncryptExcelWithPassword(stream.ToArray(), password);
+
+    stream.Close();
+
+    return encryptedBytes;
+}
+
+// Excel 加密方法 (使用 NPOI)
+private byte[] EncryptExcelWithPassword(byte[] excelBytes, string password)
+{
+    try
+    {
+        // 讀取未加密的 Excel
+        using (MemoryStream inputStream = new MemoryStream(excelBytes))
+        {
+            XSSFWorkbook workbook = new XSSFWorkbook(inputStream);
+
+            // 建立輸出串流
+            using (MemoryStream outputStream = new MemoryStream())
+            {
+                // NPOI 的加密方式
+                POIFSFileSystem fs = new POIFSFileSystem();
+                EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
+                Encryptor enc = info.Encryptor;
+                enc.ConfirmPassword(password);
+
+                // 將工作簿寫入加密串流
+                using (var encryptedStream = enc.GetDataStream(fs))
+                {
+                    workbook.Write(encryptedStream);
+                }
+
+                // 將加密後的檔案寫入輸出串流
+                fs.WriteFilesystem(outputStream);
+
+                workbook.Close();
+                fs.Close();
+
+                return outputStream.ToArray();
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        System.Diagnostics.Debug.WriteLine($"加密失敗: {ex.Message}");
+        // 如果加密失敗,返回未加密的檔案
+        return excelBytes;
+    }
+}
+
+// 查看匯出記錄
+[HttpGet]
+public ActionResult ExportRecords()
+{
+    try
+    {
+        string systemId = Session["CurrentSystemId"] as string;
+        string employeeNo = Session["UserID"] as string;
+
+        if (string.IsNullOrEmpty(employeeNo))
+        {
+            return Content("<script>alert('無法取得員工編號'); window.history.back();</script>", "text/html");
+        }
+
+        var service = GetAPService();
+        var records = service.GetMyExportRecords(employeeNo, systemId);
+
+        return View(records);
+    }
+    catch (Exception ex)
+    {
+        return Content($"<script>alert('查詢失敗:{ex.Message}'); window.history.back();</script>", "text/html");
+    }
+}
+
+#endregion
+```
+
+-----
+
+## 📝 3. 簡化版 (如果 NPOI 加密有問題)
+
+NPOI 的加密功能比較複雜,如果遇到問題,可以使用這個簡化版本:
+
+```csharp
+// 使用 NPOI 建立 Excel (簡化版 - 先不加密)
+private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
+{
+    // 建立新的 Excel 工作簿 (XLSX)
+    IWorkbook workbook = new XSSFWorkbook();
+    ISheet sheet = workbook.CreateSheet("帳號清單");
+
+    // 建立標題列樣式
+    ICellStyle headerStyle = workbook.CreateCellStyle();
+    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
+    headerStyle.FillPattern = FillPattern.SolidForeground;
+    headerStyle.Alignment = HorizontalAlignment.Center;
+    
+    IFont headerFont = workbook.CreateFont();
+    headerFont.IsBold = true;
+    headerFont.FontHeightInPoints = 11;
+    headerStyle.SetFont(headerFont);
+
+    // 建立標題列
+    IRow headerRow = sheet.CreateRow(0);
+    string[] headers = new string[] 
+    { 
+        "系統", "帳號", "姓名", "群組代號", "群組名稱", 
+        "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
+    };
+
+    for (int i = 0; i < headers.Length; i++)
+    {
+        ICell cell = headerRow.CreateCell(i);
+        cell.SetCellValue(headers[i]);
+        cell.CellStyle = headerStyle;
+    }
+
+    // 填入資料
+    int rowIndex = 1;
+    foreach (var user in userList)
+    {
+        IRow dataRow = sheet.CreateRow(rowIndex);
+        
+        dataRow.CreateCell(0).SetCellValue(systemId ?? "");
+        dataRow.CreateCell(1).SetCellValue(user.U_ID ?? "");
+        dataRow.CreateCell(2).SetCellValue(user.U_NAME ?? "");
+        dataRow.CreateCell(3).SetCellValue(user.APG_NO ?? "");
+        dataRow.CreateCell(4).SetCellValue(user.APG_NAME ?? "");
+        dataRow.CreateCell(5).SetCellValue(user.ORGAN_NO ?? "");
+        dataRow.CreateCell(6).SetCellValue(user.ORGAN_CAP ?? "");
+        dataRow.CreateCell(7).SetCellValue(user.CREATOR ?? "");
+        dataRow.CreateCell(8).SetCellValue(user.CREATE_TIME ?? "");
+        dataRow.CreateCell(9).SetCellValue(user.EDITOR ?? "");
+        dataRow.CreateCell(10).SetCellValue(user.EDIT_TIME ?? "");
+
+        rowIndex++;
+    }
+
+    // 自動調整欄寬
+    for (int i = 0; i < headers.Length; i++)
+    {
+        sheet.AutoSizeColumn(i);
+    }
+
+    // 使用 NPOI 的保護功能 (簡易加密)
+    sheet.ProtectSheet(password);
+    
+    // 寫入記憶體串流
+    using (MemoryStream stream = new MemoryStream())
+    {
+        workbook.Write(stream);
+        workbook.Close();
+        return stream.ToArray();
+    }
+}
+```
+
+-----
+
+## 🔐 4. 完整加密版本 (需要額外套件)
+
+如果需要真正的 Excel 檔案加密,需要安裝額外套件:
+
+```
+Install-Package NPOI -Version 2.7.1
+Install-Package BouncyCastle.Cryptography -Version 2.2.1
+```
+
+然後使用這個完整版:
+
+```csharp
+using System;
+using System.IO;
+using System.Collections.Generic;
+using NPOI.XSSF.UserModel;
+using NPOI.SS.UserModel;
+using NPOI.POIFS.FileSystem;
+using NPOI.POIFS.Crypt;
+using NPOI.POIFS.Crypt.Agile;
+
+// 完整的加密 Excel 方法
+private byte[] CreateEncryptedExcelWithNPOI(List<UserExportModel> userList, string systemId, string password)
+{
+    // 建立工作簿
+    XSSFWorkbook workbook = new XSSFWorkbook();
+    ISheet sheet = workbook.CreateSheet("帳號清單");
+
+    // 建立標題列樣式
+    ICellStyle headerStyle = workbook.CreateCellStyle();
+    headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
+    headerStyle.FillPattern = FillPattern.SolidForeground;
+    headerStyle.Alignment = HorizontalAlignment.Center;
+    
+    IFont headerFont = workbook.CreateFont();
+    headerFont.IsBold = true;
+    headerStyle.SetFont(headerFont);
+
+    // 建立標題列
+    IRow headerRow = sheet.CreateRow(0);
+    string[] headers = { "系統", "帳號", "姓名", "群組代號", "群組名稱", 
+                         "部門代號", "部門名稱", "建立人員", "建立日期", 
+                         "修改人員", "修改日期" };
+
+    for (int i = 0; i < headers.Length; i++)
+    {
+        ICell cell = headerRow.CreateCell(i);
+        cell.SetCellValue(headers[i]);
+        cell.CellStyle = headerStyle;
+    }
+
+    // 填入資料
+    int rowIndex = 1;
+    foreach (var user in userList)
+    {
+        IRow row = sheet.CreateRow(rowIndex++);
+        row.CreateCell(0).SetCellValue(systemId ?? "");
+        row.CreateCell(1).SetCellValue(user.U_ID ?? "");
+        row.CreateCell(2).SetCellValue(user.U_NAME ?? "");
+        row.CreateCell(3).SetCellValue(user.APG_NO ?? "");
+        row.CreateCell(4).SetCellValue(user.APG_NAME ?? "");
+        row.CreateCell(5).SetCellValue(user.ORGAN_NO ?? "");
+        row.CreateCell(6).SetCellValue(user.ORGAN_CAP ?? "");
+        row.CreateCell(7).SetCellValue(user.CREATOR ?? "");
+        row.CreateCell(8).SetCellValue(user.CREATE_TIME ?? "");
+        row.CreateCell(9).SetCellValue(user.EDITOR ?? "");
+        row.CreateCell(10).SetCellValue(user.EDIT_TIME ?? "");
+    }
+
+    // 自動調整欄寬
+    for (int i = 0; i < headers.Length; i++)
+    {
+        sheet.AutoSizeColumn(i);
+    }
+
+    // 先寫入未加密的串流
+    using (MemoryStream tempStream = new MemoryStream())
+    {
+        workbook.Write(tempStream, false);
+        tempStream.Position = 0;
+
+        // 加密處理
+        POIFSFileSystem fs = new POIFSFileSystem();
+        EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
+        Encryptor enc = info.Encryptor;
+        enc.ConfirmPassword(password);
+
+        using (Stream os = enc.GetDataStream(fs))
+        {
+            tempStream.CopyTo(os);
+        }
+
+        // 輸出加密後的檔案
+        using (MemoryStream outputStream = new MemoryStream())
+        {
+            fs.WriteFilesystem(outputStream);
+            workbook.Close();
+            fs.Close();
+            return outputStream.ToArray();
+        }
+    }
+}
+```
+
+-----
+
+## ⚠️ 重要提醒
+
+### NPOI 加密的三種方式:
+
+1. **Sheet Protection (工作表保護)** - 最簡單
+   
+   ```csharp
+   sheet.ProtectSheet(password);
+   ```
+
+- 優點: 簡單易用
+- 缺點: 只是保護編輯,不是真正加密
+
+1. **Workbook Protection (工作簿保護)** - 中等
+   
+   ```csharp
+   workbook.LockStructure();
+   ```
+
+- 優點: 保護整個工作簿
+- 缺點: 還是可以打開查看
+
+1. **File Encryption (檔案加密)** - 最安全
+
+- 使用 NPOI.POIFS.Crypt
+- 優點: 真正的檔案加密
+- 缺點: 程式碼複雜,可能需要額外套件
+
+-----
+
+## 💡 我的建議
+
+**使用簡化版 + Sheet Protection:**
+
+這樣最穩定,而且對大部分使用場景已經足夠:
+
+```csharp
+sheet.ProtectSheet(password);
+```
+
+如果真的需要檔案級加密,建議使用 EPPlus,因為它的加密功能更成熟穩定! 🎯​​​​​​​​​​​​​​​​
 CONTROLLER:
 #region 匯出帳號清單
  // 匯出帳號清單
