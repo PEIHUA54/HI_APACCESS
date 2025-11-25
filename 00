@@ -1,3 +1,539 @@
+好的!我來改寫 JavaScript,避免使用 `.html()` 和字串拼接 HTML,改用 DOM 操作方式。
+
+-----
+
+## 🔒 安全的 JavaScript 寫法 (符合 Fortify 規範)
+
+### GroupManagement.cshtml - JavaScript 部分
+
+```javascript
+@section Scripts {
+<script>
+    $(document).ready(function() {
+        
+        // ========================================
+        // 匯出帳號清單
+        // ========================================
+        $('#btnExportUsers').click(function () {
+            // 直接開始下載
+            var downloadUrl = '@Url.Action("ExportUserList", "AP")';
+            
+            // 建立隱藏的 iframe 來下載檔案
+            var iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = downloadUrl;
+            document.body.appendChild(iframe);
+            
+            // 延遲顯示授權碼 Modal
+            setTimeout(function() {
+                checkAndShowAuthCode();
+            }, 1000);
+        });
+
+        // ========================================
+        // 檢查並顯示授權碼
+        // ========================================
+        function checkAndShowAuthCode() {
+            $.ajax({
+                url: '@Url.Action("GetAuthCodeInfo", "AP")',
+                type: 'GET',
+                dataType: 'json',
+                success: function(response) {
+                    if (response.success) {
+                        // ✅ 使用 .text() 而不是 .html()
+                        $('#displayAuthCode').text(response.authCode);
+                        $('#displayFileName').text(response.fileName + '.xlsx');
+                        $('#authCodeModal').modal('show');
+                    }
+                },
+                error: function() {
+                    console.log('無法取得授權碼資訊');
+                }
+            });
+        }
+
+        // ========================================
+        // 複製授權碼
+        // ========================================
+        $('#btnCopyAuthCode').click(function() {
+            var authCode = $('#displayAuthCode').text();
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(authCode).then(function() {
+                    showCopySuccess();
+                }).catch(function() {
+                    fallbackCopy(authCode);
+                });
+            } else {
+                fallbackCopy(authCode);
+            }
+        });
+
+        function showCopySuccess() {
+            var btn = $('#btnCopyAuthCode');
+            var icon = btn.find('i');
+            
+            // ✅ 修改屬性和類別,不直接操作 HTML
+            icon.removeClass('fa-copy').addClass('fa-check');
+            btn.contents().filter(function() {
+                return this.nodeType === 3; // 文字節點
+            }).last().replaceWith(' 已複製!');
+            btn.removeClass('btn-outline-primary').addClass('btn-success');
+            
+            setTimeout(function() {
+                icon.removeClass('fa-check').addClass('fa-copy');
+                btn.contents().filter(function() {
+                    return this.nodeType === 3;
+                }).last().replaceWith(' 複製');
+                btn.removeClass('btn-success').addClass('btn-outline-primary');
+            }, 2000);
+        }
+
+        function fallbackCopy(text) {
+            var textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                document.execCommand('copy');
+                showCopySuccess();
+            } catch (err) {
+                alert('複製失敗,請手動複製授權碼');
+            }
+            
+            document.body.removeChild(textarea);
+        }
+
+        // ========================================
+        // 查看匯出記錄
+        // ========================================
+        $('#btnExportRecords').click(function () {
+            $('#exportRecordsModal').modal('show');
+            
+            // ✅ 顯示載入中 (使用 DOM 操作)
+            var content = document.getElementById('exportRecordsContent');
+            content.innerHTML = ''; // 清空
+            
+            var loadingDiv = document.createElement('div');
+            loadingDiv.className = 'text-center';
+            
+            var spinner = document.createElement('i');
+            spinner.className = 'fas fa-spinner fa-spin fa-2x';
+            
+            var loadingText = document.createElement('p');
+            loadingText.textContent = '載入中...';
+            
+            loadingDiv.appendChild(spinner);
+            loadingDiv.appendChild(loadingText);
+            content.appendChild(loadingDiv);
+            
+            loadExportRecords();
+        });
+
+        function loadExportRecords() {
+            $.ajax({
+                url: '@Url.Action("GetExportRecords", "AP")',
+                type: 'GET',
+                dataType: 'json',
+                success: function(response) {
+                    if (response.success) {
+                        displayRecords(response.records);
+                    } else {
+                        displayNoRecordsMessage(response.message);
+                    }
+                },
+                error: function() {
+                    displayErrorMessage();
+                }
+            });
+        }
+
+        // ✅ 使用 DOM 操作建立記錄表格
+        function displayRecords(records) {
+            var content = document.getElementById('exportRecordsContent');
+            content.innerHTML = ''; // 清空
+            
+            if (!records || records.length === 0) {
+                displayNoRecordsMessage('目前沒有匯出記錄');
+                return;
+            }
+            
+            // 建立 table-responsive div
+            var tableResponsive = document.createElement('div');
+            tableResponsive.className = 'table-responsive';
+            
+            // 建立 table
+            var table = document.createElement('table');
+            table.className = 'table table-striped table-hover mb-0';
+            
+            // 建立 thead
+            var thead = document.createElement('thead');
+            thead.className = 'thead-light';
+            var headerRow = document.createElement('tr');
+            
+            var headers = [
+                { text: '序號', width: '6%', align: 'center' },
+                { text: '檔案名稱', width: '30%', align: 'left' },
+                { text: '授權碼', width: '15%', align: 'center' },
+                { text: '系統ID', width: '12%', align: 'center' },
+                { text: '匯出人員', width: '12%', align: 'center' },
+                { text: '匯出時間', width: '18%', align: 'center' },
+                { text: '操作', width: '7%', align: 'center' }
+            ];
+            
+            headers.forEach(function(header) {
+                var th = document.createElement('th');
+                th.textContent = header.text;
+                th.style.width = header.width;
+                if (header.align === 'center') {
+                    th.className = 'text-center';
+                }
+                headerRow.appendChild(th);
+            });
+            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            // 建立 tbody
+            var tbody = document.createElement('tbody');
+            
+            records.forEach(function(record, index) {
+                var row = document.createElement('tr');
+                
+                // 序號
+                var td1 = document.createElement('td');
+                td1.className = 'text-center';
+                td1.textContent = (index + 1).toString();
+                row.appendChild(td1);
+                
+                // 檔案名稱
+                var td2 = document.createElement('td');
+                var icon = document.createElement('i');
+                icon.className = 'fas fa-file-excel text-success';
+                td2.appendChild(icon);
+                td2.appendChild(document.createTextNode(' ' + record.FILE_NAME + '.xlsx'));
+                row.appendChild(td2);
+                
+                // 授權碼
+                var td3 = document.createElement('td');
+                td3.className = 'text-center';
+                var code = document.createElement('code');
+                code.className = 'auth-code-small';
+                code.textContent = record.CODE_GUARD;
+                td3.appendChild(code);
+                row.appendChild(td3);
+                
+                // 系統ID
+                var td4 = document.createElement('td');
+                td4.className = 'text-center';
+                var badge = document.createElement('span');
+                badge.className = 'badge badge-primary';
+                badge.textContent = record.SYS_ID;
+                td4.appendChild(badge);
+                row.appendChild(td4);
+                
+                // 匯出人員
+                var td5 = document.createElement('td');
+                td5.className = 'text-center';
+                td5.textContent = record.CREATOR;
+                row.appendChild(td5);
+                
+                // 匯出時間
+                var td6 = document.createElement('td');
+                td6.className = 'text-center';
+                td6.textContent = record.CREATE_TIME;
+                row.appendChild(td6);
+                
+                // 操作按鈕
+                var td7 = document.createElement('td');
+                td7.className = 'text-center';
+                var btn = document.createElement('button');
+                btn.className = 'btn btn-sm btn-outline-primary';
+                btn.setAttribute('data-code', record.CODE_GUARD);
+                btn.type = 'button';
+                
+                var btnIcon = document.createElement('i');
+                btnIcon.className = 'fas fa-copy';
+                btn.appendChild(btnIcon);
+                btn.appendChild(document.createTextNode(' 複製'));
+                
+                // 綁定點擊事件
+                btn.addEventListener('click', function() {
+                    var code = this.getAttribute('data-code');
+                    copyCodeFromTable(code, this);
+                });
+                
+                td7.appendChild(btn);
+                row.appendChild(td7);
+                
+                tbody.appendChild(row);
+            });
+            
+            table.appendChild(tbody);
+            tableResponsive.appendChild(table);
+            content.appendChild(tableResponsive);
+        }
+
+        // ✅ 顯示無記錄訊息 (DOM 操作)
+        function displayNoRecordsMessage(message) {
+            var content = document.getElementById('exportRecordsContent');
+            content.innerHTML = ''; // 清空
+            
+            var alert = document.createElement('div');
+            alert.className = 'alert alert-info text-center py-5';
+            
+            var icon = document.createElement('i');
+            icon.className = 'fas fa-inbox fa-3x mb-3 d-block';
+            
+            var title = document.createElement('h5');
+            title.textContent = '目前沒有匯出記錄';
+            
+            var text = document.createElement('p');
+            text.className = 'text-muted mb-0';
+            text.textContent = '最近 3 個月內沒有匯出帳號清單的記錄';
+            
+            alert.appendChild(icon);
+            alert.appendChild(title);
+            alert.appendChild(text);
+            content.appendChild(alert);
+        }
+
+        // ✅ 顯示錯誤訊息 (DOM 操作)
+        function displayErrorMessage() {
+            var content = document.getElementById('exportRecordsContent');
+            content.innerHTML = ''; // 清空
+            
+            var alert = document.createElement('div');
+            alert.className = 'alert alert-danger text-center';
+            
+            var icon = document.createElement('i');
+            icon.className = 'fas fa-times-circle';
+            
+            alert.appendChild(icon);
+            alert.appendChild(document.createTextNode(' 載入失敗'));
+            content.appendChild(alert);
+        }
+
+        // ✅ 複製授權碼 (從表格)
+        function copyCodeFromTable(code, btn) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(code).then(function() {
+                    updateCopyButton(btn, true);
+                    setTimeout(function() {
+                        updateCopyButton(btn, false);
+                    }, 1500);
+                });
+            } else {
+                var textarea = document.createElement('textarea');
+                textarea.value = code;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                
+                try {
+                    document.execCommand('copy');
+                    updateCopyButton(btn, true);
+                    setTimeout(function() {
+                        updateCopyButton(btn, false);
+                    }, 1500);
+                } catch (err) {
+                    alert('複製失敗');
+                }
+                
+                document.body.removeChild(textarea);
+            }
+        }
+
+        // ✅ 更新複製按鈕狀態
+        function updateCopyButton(btn, isSuccess) {
+            var icon = btn.querySelector('i');
+            var textNode = btn.childNodes[1]; // 第二個子節點是文字
+            
+            if (isSuccess) {
+                icon.className = 'fas fa-check';
+                textNode.nodeValue = ' 已複製';
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-success');
+            } else {
+                icon.className = 'fas fa-copy';
+                textNode.nodeValue = ' 複製';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-primary');
+            }
+        }
+    });
+</script>
+
+<style>
+    /* 授權碼顯示框 */
+    .auth-code-container {
+        padding: 20px 0;
+    }
+    
+    .auth-code-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 15px 25px;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        display: inline-block;
+    }
+    
+    .auth-code-text {
+        font-family: 'Courier New', monospace;
+        font-size: 28px;
+        font-weight: bold;
+        letter-spacing: 4px;
+        color: #ffffff;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        user-select: all;
+    }
+    
+    .auth-code-small {
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        background-color: #f8f9fa;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #dee2e6;
+        color: #495057;
+    }
+    
+    /* Modal 樣式 */
+    .bg-gradient-primary {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+    }
+    
+    .bg-gradient-info {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
+    }
+    
+    /* 表格樣式 */
+    .table-responsive {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    
+    .table thead th {
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa;
+        z-index: 10;
+        border-bottom: 2px solid #dee2e6;
+    }
+    
+    .table tbody tr:hover {
+        background-color: #f1f3f5;
+    }
+</style>
+}
+```
+
+-----
+
+## 🔒 安全性改進說明
+
+### ❌ **避免使用的寫法 (Fortify 會報錯):**
+
+```javascript
+// ❌ 不要用 .html() 插入字串
+$('#content').html('<div>' + userInput + '</div>');
+
+// ❌ 不要用字串拼接 HTML
+var html = '<td>' + data + '</td>';
+$('#table').append(html);
+
+// ❌ 不要用 innerHTML 插入未經處理的字串
+element.innerHTML = '<div>' + userInput + '</div>';
+```
+
+### ✅ **使用的安全寫法:**
+
+```javascript
+// ✅ 使用 .text() 設定純文字
+$('#displayAuthCode').text(response.authCode);
+
+// ✅ 使用 DOM API 建立元素
+var div = document.createElement('div');
+div.textContent = data; // 純文字,不會被解析為 HTML
+div.className = 'my-class';
+parent.appendChild(div);
+
+// ✅ 使用 jQuery 建立元素
+var $div = $('<div>').text(data).addClass('my-class');
+$('#parent').append($div);
+
+// ✅ 清空內容用 innerHTML = ''
+content.innerHTML = ''; // 這個是安全的
+```
+
+-----
+
+## 📋 主要改進項目
+
+### 1. **授權碼顯示** ✅
+
+```javascript
+// ✅ 使用 .text() 而不是 .html()
+$('#displayAuthCode').text(response.authCode);
+$('#displayFileName').text(response.fileName + '.xlsx');
+```
+
+### 2. **複製按鈕狀態更新** ✅
+
+```javascript
+// ✅ 操作 DOM 元素和類別,不用字串拼接
+var icon = btn.querySelector('i');
+icon.className = 'fas fa-check';
+btn.classList.add('btn-success');
+```
+
+### 3. **建立記錄表格** ✅
+
+```javascript
+// ✅ 使用 createElement 和 appendChild
+var td = document.createElement('td');
+td.textContent = record.FILE_NAME; // 純文字
+row.appendChild(td);
+```
+
+### 4. **載入訊息** ✅
+
+```javascript
+// ✅ 使用 DOM 建立載入訊息
+var loadingText = document.createElement('p');
+loadingText.textContent = '載入中...';
+```
+
+-----
+
+## ✅ Fortify 掃描重點檢查
+
+這個版本應該可以通過以下 Fortify 檢查:
+
+- ✅ **Cross-Site Scripting (XSS)** - 沒有使用 `.html()` 或 `innerHTML` 插入未處理的字串
+- ✅ **DOM-based XSS** - 使用 `.textContent` 和 `.text()` 而不是 `.innerHTML`
+- ✅ **Code Injection** - 沒有動態執行程式碼
+- ✅ **HTML Injection** - 所有用戶輸入都使用純文字方式處理
+
+-----
+
+## 🎯 關鍵安全原則
+
+1. **永遠使用 `.text()` 或 `.textContent`** 來設定純文字
+1. **使用 `createElement` 建立元素**,不要用字串拼接
+1. **使用 `appendChild` 添加元素**,不要用 `.html()` 或 `innerHTML`
+1. **只在清空內容時使用 `innerHTML = ''`**
+
+-----
+
+完成! 這個版本應該可以通過 Fortify 掃描了! 🎉​​​​​​​​​​​​​​​​
+
 好的!你是內部系統可以用 EPPlus 免費版,而且要用**授權碼當作 Excel 的開啟密碼**。
 
 -----
