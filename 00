@@ -1,621 +1,327 @@
-好的!我來幫你調整流程,並且評估 FreeSpire.XLS 套件。
-
------
-
-## 📊 FreeSpire.XLS 評估
-
-### ❌ **不推薦使用 FreeSpire.XLS**
-
-**原因:**
-
-1. **免費版有限制:** 只能處理 200 行、5 個工作表
-1. **商業使用需付費:** 如果超過限制需要買授權
-1. **檔案大小限制:** 產出檔案有浮水印
-1. **效能較差:** 比 NPOI/EPPlus 慢
-
-### ✅ **推薦方案排序:**
-
-1. **NPOI 工作表保護** (最穩定,免費無限制)
-1. **EPPlus 檔案加密** (需要 NonCommercial License,但功能強大)
-1. **ClosedXML** (開源免費)
-
------
-
-## 🎯 調整後的完整流程
-
-### **新流程:**
-
-1. 使用者點擊「匯出帳號清單」
-1. 直接開始匯出 (不要 confirm)
-1. 下載 Excel 檔案
-1. **同時彈出 Modal 顯示授權碼**
-1. 使用者複製授權碼後關閉 Modal
-1. 點擊「匯出記錄」按鈕 → 彈出 Modal 顯示記錄
-
------
-
-## 📝 完整修改程式碼
-
-### 1. GroupManagement.cshtml (完整版)
-
-```html
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">系統群組權限管理 : @ViewBag.SystemId</div>
+跳授權碼modal:
+檔案名稱: 20251125110035_匯出帳號清單.xlsx
+檔案已加密,請使用以下授權碼開啟:A99F24F2(複製放授權碼旁邊)
+關閉
+匯出紀錄modal:
+少了授權碼欄位
+目前成功匯出excel，但沒有加密，沒有輸入授權碼就可以打開看到資料。
+controller:
+        #region 匯出帳號清單
     
-    @if (showSwitchButton)
-    {
-        <div class="row mb-3">
-            <div class="col-md-12">
-                <button type="button" class="btn btn-secondary" id="btnSwitchSystem">
-                    <i class="fas fa-exchange-alt"></i> 切換系統
-                </button>
-            </div>
-        </div>
-    }
-    
-    <div class="row mb-3">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-outline-info" id="btnExportUsers">
-                <i class="fas fa-file-export"></i> 匯出帳號清單
-            </button>
-            <button type="button" class="btn btn-outline-success" id="btnExportRecords">
-                <i class="fas fa-history"></i> 匯出記錄
-            </button>
-        </div>
-    </div>
-</section>
 
-<!-- 授權碼顯示 Modal -->
-<div class="modal fade" id="authCodeModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
-    <div class="modal-dialog modal-dialog-centered" role="document">
-        <div class="modal-content">
-            <div class="modal-header bg-warning text-white">
-                <h5 class="modal-title">
-                    <i class="fas fa-key"></i> Excel 檔案授權碼
-                </h5>
-            </div>
-            <div class="modal-body text-center">
-                <div class="alert alert-info mb-3">
-                    <i class="fas fa-info-circle"></i> 檔案已下載完成!
-                </div>
-                <p class="mb-3">請使用以下授權碼編輯 Excel:</p>
-                <div class="auth-code-box mb-3">
-                    <span id="displayAuthCode" class="auth-code-text"></span>
-                </div>
-                <p class="text-danger mb-2">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    請立即複製並保管此授權碼
-                </p>
-                <p class="text-muted small mb-0">
-                    檔案名稱: <span id="displayFileName"></span>
-                </p>
-            </div>
-            <div class="modal-footer justify-content-center">
-                <button type="button" class="btn btn-primary" id="btnCopyAuthCode">
-                    <i class="fas fa-copy"></i> 複製授權碼
-                </button>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">
-                    <i class="fas fa-check"></i> 關閉
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
+        /// <summary>
+        /// 匯出帳號清單 (Excel加密)
+        /// </summary>
+        [HttpGet]
+        public ActionResult ExportUserList()
+        {
+            try
+            {
+                string systemId = Session["CurrentSystemId"] as string;
 
-<!-- 匯出記錄 Modal -->
-<div class="modal fade" id="exportRecordsModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
-        <div class="modal-content">
-            <div class="modal-header bg-info text-white">
-                <h5 class="modal-title">
-                    <i class="fas fa-history"></i> 匯出記錄 (最近3個月)
-                </h5>
-                <button type="button" class="close text-white" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" id="exportRecordsContent">
-                <div class="text-center">
-                    <i class="fas fa-spinner fa-spin fa-2x"></i>
-                    <p>載入中...</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">
-                    <i class="fas fa-times"></i> 關閉
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-@section Scripts {
-<script>
-    $(document).ready(function() {
-        
-        // ========================================
-        // 匯出帳號清單
-        // ========================================
-        $('#btnExportUsers').click(function () {
-            // 直接開始下載,不要 confirm
-            var downloadUrl = '@Url.Action("ExportUserList", "AP")';
-            
-            // 建立隱藏的 iframe 來下載檔案
-            var iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = downloadUrl;
-            document.body.appendChild(iframe);
-            
-            // 延遲顯示授權碼 Modal (等下載開始)
-            setTimeout(function() {
-                checkAndShowAuthCode();
-            }, 1000);
-        });
-
-        // ========================================
-        // 檢查並顯示授權碼
-        // ========================================
-        function checkAndShowAuthCode() {
-            $.ajax({
-                url: '@Url.Action("GetAuthCodeInfo", "AP")',
-                type: 'GET',
-                success: function(response) {
-                    if (response.success) {
-                        $('#displayAuthCode').text(response.authCode);
-                        $('#displayFileName').text(response.fileName + '.xlsx');
-                        $('#authCodeModal').modal('show');
-                    }
-                },
-                error: function() {
-                    console.log('無法取得授權碼資訊');
-                }
-            });
-        }
-
-        // ========================================
-        // 複製授權碼
-        // ========================================
-        $('#btnCopyAuthCode').click(function() {
-            var authCode = $('#displayAuthCode').text();
-            
-            // 使用 Clipboard API 複製
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(authCode).then(function() {
-                    showCopySuccess();
-                }).catch(function() {
-                    fallbackCopy(authCode);
+                // 1. 產生授權碼
+                CODE_GUARD codeGuard = new CODE_GUARD();
+                string getCodeRequest = JsonConvert.SerializeObject(new
+                {
+                    SysID = systemId,
+                    Data = this.Emp_NO,
+                    CodeLength = 8
                 });
-            } else {
-                fallbackCopy(authCode);
-            }
-        });
 
-        // 複製成功提示
-        function showCopySuccess() {
-            var btn = $('#btnCopyAuthCode');
-            var originalHtml = btn.html();
-            btn.html('<i class="fas fa-check"></i> 已複製!');
-            btn.addClass('btn-success').removeClass('btn-primary');
-            
-            setTimeout(function() {
-                btn.html(originalHtml);
-                btn.removeClass('btn-success').addClass('btn-primary');
-            }, 2000);
-        }
+                string getCodeResponse = codeGuard.GetCode(getCodeRequest);
+                dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
 
-        // 備用複製方法
-        function fallbackCopy(text) {
-            var $temp = $('<textarea>');
-            $('body').append($temp);
-            $temp.val(text).select();
-            try {
-                document.execCommand('copy');
-                showCopySuccess();
-            } catch (err) {
-                alert('複製失敗,請手動複製授權碼');
-            }
-            $temp.remove();
-        }
-
-        // ========================================
-        // 查看匯出記錄
-        // ========================================
-        $('#btnExportRecords').click(function () {
-            // 顯示 Modal
-            $('#exportRecordsModal').modal('show');
-            
-            // 載入記錄
-            loadExportRecords();
-        });
-
-        // 載入匯出記錄
-        function loadExportRecords() {
-            $.ajax({
-                url: '@Url.Action("GetExportRecords", "AP")',
-                type: 'GET',
-                success: function(response) {
-                    if (response.success) {
-                        displayRecords(response.records);
-                    } else {
-                        $('#exportRecordsContent').html(
-                            '<div class="alert alert-warning text-center">' +
-                            '<i class="fas fa-exclamation-triangle"></i> ' +
-                            response.message +
-                            '</div>'
-                        );
-                    }
-                },
-                error: function() {
-                    $('#exportRecordsContent').html(
-                        '<div class="alert alert-danger text-center">' +
-                        '<i class="fas fa-times-circle"></i> 載入失敗' +
-                        '</div>'
-                    );
+                if (codeResult.Result_code != "0000")
+                {
+                    return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
                 }
-            });
-        }
 
-        // 顯示記錄
-        function displayRecords(records) {
-            if (records && records.length > 0) {
-                var html = '<div class="table-responsive">' +
-                           '<table class="table table-striped table-hover mb-0">' +
-                           '<thead class="thead-light">' +
-                           '<tr>' +
-                           '<th class="text-center" style="width: 8%;">序號</th>' +
-                           '<th style="width: 40%;">檔案名稱</th>' +
-                           '<th class="text-center" style="width: 15%;">系統ID</th>' +
-                           '<th class="text-center" style="width: 15%;">匯出人員</th>' +
-                           '<th class="text-center" style="width: 22%;">匯出時間</th>' +
-                           '</tr>' +
-                           '</thead>' +
-                           '<tbody>';
-                
-                for (var i = 0; i < records.length; i++) {
-                    html += '<tr>' +
-                            '<td class="text-center">' + (i + 1) + '</td>' +
-                            '<td><i class="fas fa-file-excel text-success"></i> ' + records[i].FILE_NAME + '.xlsx</td>' +
-                            '<td class="text-center"><span class="badge badge-primary">' + records[i].SYS_ID + '</span></td>' +
-                            '<td class="text-center">' + records[i].CREATOR + '</td>' +
-                            '<td class="text-center">' + records[i].CREATE_TIME + '</td>' +
-                            '</tr>';
+                string authCode = codeResult.Code.ToString();
+
+                // 2. 取得帳號清單
+                var service = GetAPService();
+                var userList = service.GetAllUsersForExport(systemId);
+
+                if (userList == null || userList.Count == 0)
+                {
+                    return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
                 }
-                
-                html += '</tbody></table></div>';
-                $('#exportRecordsContent').html(html);
-            } else {
-                $('#exportRecordsContent').html(
-                    '<div class="alert alert-info text-center">' +
-                    '<i class="fas fa-inbox fa-3x mb-3"></i>' +
-                    '<h5>目前沒有匯出記錄</h5>' +
-                    '<p class="text-muted mb-0">最近 3 個月內沒有匯出帳號清單的記錄</p>' +
-                    '</div>'
-                );
+
+                // 3. 產生加密 Excel
+                string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
+                byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
+
+                // 4. 儲存記錄到資料庫
+                var recordModel = new CodeGuardRecordModel
+                {
+                    FILE_NAME = fileName,
+                    CODE_GUARD = authCode,
+                    CREATOR = this.Emp_NO,
+                    SYS_ID = systemId
+                };
+
+                service.SaveCodeGuardRecord(recordModel);
+
+                // 5. 刪除超過3個月的舊記錄
+                service.DeleteOldRecords();
+
+                // 6. 儲存授權碼到 TempData (供 Ajax 取得)
+                TempData["AuthCode"] = authCode;
+                TempData["FileName"] = fileName;
+
+                // 7. 回傳 Excel 檔案
+                return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    $"{fileName}.xlsx");
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
             }
         }
-    });
-</script>
 
-<style>
-    /* 授權碼顯示框 */
-    .auth-code-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }
-    
-    .auth-code-text {
-        font-family: 'Courier New', monospace;
-        font-size: 32px;
-        font-weight: bold;
-        letter-spacing: 5px;
-        color: #ffffff;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        user-select: all;
-        display: block;
-    }
-    
-    /* Modal 樣式調整 */
-    .modal-header.bg-warning {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
-    }
-    
-    .modal-header.bg-info {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
-    }
-    
-    /* 表格樣式 */
-    .table-responsive {
-        max-height: 400px;
-        overflow-y: auto;
-    }
-    
-    .table thead th {
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        z-index: 10;
-    }
-</style>
-}
-```
-
------
-
-### 2. Controller - 新增 API 方法
-
-```csharp
-/// <summary>
-/// 取得授權碼資訊 (Ajax)
-/// </summary>
-[HttpGet]
-public JsonResult GetAuthCodeInfo()
-{
-    try
-    {
-        if (TempData["AuthCode"] != null && TempData["FileName"] != null)
+        /// <summary>
+        /// 使用 NPOI 建立加密 Excel
+        /// </summary>
+        private byte[] CreateEncryptedExcel(List<UserExportModel> userList, string systemId, string password)
         {
-            var authCode = TempData["AuthCode"].ToString();
-            var fileName = TempData["FileName"].ToString();
-            
-            // 保留 TempData 供下次使用
-            TempData.Keep("AuthCode");
-            TempData.Keep("FileName");
-            
-            return Json(new
+            try
             {
-                success = true,
-                authCode = authCode,
-                fileName = fileName
-            }, JsonRequestBehavior.AllowGet);
-        }
-        
-        return Json(new { success = false }, JsonRequestBehavior.AllowGet);
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = ex.Message }, JsonRequestBehavior.AllowGet);
-    }
-}
+                XSSFWorkbook workbook = new XSSFWorkbook();
+                ISheet sheet = workbook.CreateSheet("帳號清單");
 
-/// <summary>
-/// 取得匯出記錄 (Ajax)
-/// </summary>
-[HttpGet]
-public JsonResult GetExportRecords()
-{
-    try
-    {
-        string systemId = Session["CurrentSystemId"] as string;
-        
-        var service = GetAPService();
-        var records = service.GetMyExportRecords(this.Emp_NO, systemId);
-        
-        if (records != null && records.Count > 0)
-        {
-            return Json(new
-            {
-                success = true,
-                records = records
-            }, JsonRequestBehavior.AllowGet);
-        }
-        else
-        {
-            return Json(new
-            {
-                success = false,
-                message = "目前沒有匯出記錄"
-            }, JsonRequestBehavior.AllowGet);
-        }
-    }
-    catch (Exception ex)
-    {
-        return Json(new
-        {
-            success = false,
-            message = $"查詢失敗: {ex.Message}"
-        }, JsonRequestBehavior.AllowGet);
-    }
-}
+                // 建立樣式
+                ICellStyle headerStyle = workbook.CreateCellStyle();
+                headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
+                headerStyle.FillPattern = FillPattern.SolidForeground;
+                headerStyle.Alignment = HorizontalAlignment.Center;
+                headerStyle.VerticalAlignment = VerticalAlignment.Center;
+                headerStyle.BorderTop = BorderStyle.Thin;
+                headerStyle.BorderBottom = BorderStyle.Thin;
+                headerStyle.BorderLeft = BorderStyle.Thin;
+                headerStyle.BorderRight = BorderStyle.Thin;
 
-/// <summary>
-/// 匯出帳號清單 (Excel加密)
-/// </summary>
-[HttpGet]
-public ActionResult ExportUserList()
-{
-    try
-    {
-        string systemId = Session["CurrentSystemId"] as string;
+                IFont headerFont = workbook.CreateFont();
+                headerFont.IsBold = true;
+                headerFont.FontHeightInPoints = 11;
+                headerFont.FontName = "微軟正黑體";
+                headerStyle.SetFont(headerFont);
 
-        // 1. 產生授權碼
-        CODE_GUARD codeGuard = new CODE_GUARD();
-        string getCodeRequest = JsonConvert.SerializeObject(new
-        {
-            SysID = systemId,
-            Data = this.Emp_NO,
-            CodeLength = 8
-        });
+                ICellStyle cellStyle = workbook.CreateCellStyle();
+                cellStyle.Alignment = HorizontalAlignment.Left;
+                cellStyle.VerticalAlignment = VerticalAlignment.Center;
+                cellStyle.BorderTop = BorderStyle.Thin;
+                cellStyle.BorderBottom = BorderStyle.Thin;
+                cellStyle.BorderLeft = BorderStyle.Thin;
+                cellStyle.BorderRight = BorderStyle.Thin;
 
-        string getCodeResponse = codeGuard.GetCode(getCodeRequest);
-        dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
+                IFont cellFont = workbook.CreateFont();
+                cellFont.FontName = "微軟正黑體";
+                cellStyle.SetFont(cellFont);
 
-        if (codeResult.Result_code != "0000")
-        {
-            return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
-        }
-
-        string authCode = codeResult.Code.ToString();
-
-        // 2. 取得帳號清單
-        var service = GetAPService();
-        var userList = service.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
-        {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-        }
-
-        // 3. 產生加密 Excel
-        string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-        byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
-
-        // 4. 儲存記錄到資料庫
-        var recordModel = new CodeGuardRecordModel
-        {
-            FILE_NAME = fileName,
-            CODE_GUARD = authCode,
-            CREATOR = this.Emp_NO,
-            SYS_ID = systemId
-        };
-
-        service.SaveCodeGuardRecord(recordModel);
-
-        // 5. 刪除超過3個月的舊記錄
-        service.DeleteOldRecords();
-
-        // 6. 儲存授權碼到 TempData (供 Ajax 取得)
-        TempData["AuthCode"] = authCode;
-        TempData["FileName"] = fileName;
-
-        // 7. 回傳 Excel 檔案
-        return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            $"{fileName}.xlsx");
-    }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
-    }
-}
-
-/// <summary>
-/// 使用 NPOI 建立受保護的 Excel (工作表保護)
-/// </summary>
-private byte[] CreateEncryptedExcel(List<UserExportModel> userList, string systemId, string password)
-{
-    try
-    {
-        XSSFWorkbook workbook = new XSSFWorkbook();
-        ISheet sheet = workbook.CreateSheet("帳號清單");
-
-        // 建立樣式
-        ICellStyle headerStyle = workbook.CreateCellStyle();
-        headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
-        headerStyle.FillPattern = FillPattern.SolidForeground;
-        headerStyle.Alignment = HorizontalAlignment.Center;
-        headerStyle.VerticalAlignment = VerticalAlignment.Center;
-        headerStyle.BorderTop = BorderStyle.Thin;
-        headerStyle.BorderBottom = BorderStyle.Thin;
-        headerStyle.BorderLeft = BorderStyle.Thin;
-        headerStyle.BorderRight = BorderStyle.Thin;
-
-        IFont headerFont = workbook.CreateFont();
-        headerFont.IsBold = true;
-        headerFont.FontHeightInPoints = 11;
-        headerFont.FontName = "微軟正黑體";
-        headerStyle.SetFont(headerFont);
-
-        ICellStyle cellStyle = workbook.CreateCellStyle();
-        cellStyle.Alignment = HorizontalAlignment.Left;
-        cellStyle.VerticalAlignment = VerticalAlignment.Center;
-        cellStyle.BorderTop = BorderStyle.Thin;
-        cellStyle.BorderBottom = BorderStyle.Thin;
-        cellStyle.BorderLeft = BorderStyle.Thin;
-        cellStyle.BorderRight = BorderStyle.Thin;
-
-        IFont cellFont = workbook.CreateFont();
-        cellFont.FontName = "微軟正黑體";
-        cellStyle.SetFont(cellFont);
-
-        // 建立標題列
-        IRow headerRow = sheet.CreateRow(0);
-        string[] headers = { "系統", "帳號", "姓名", "群組代號", "群組名稱",
+                // 建立標題列
+                IRow headerRow = sheet.CreateRow(0);
+                string[] headers = { "系統", "帳號", "姓名", "群組代號", "群組名稱",
                             "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" };
 
-        for (int i = 0; i < headers.Length; i++)
-        {
-            ICell cell = headerRow.CreateCell(i);
-            cell.SetCellValue(headers[i]);
-            cell.CellStyle = headerStyle;
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    ICell cell = headerRow.CreateCell(i);
+                    cell.SetCellValue(headers[i]);
+                    cell.CellStyle = headerStyle;
+                }
+
+                // 填入資料
+                int rowIndex = 1;
+                foreach (var user in userList)
+                {
+                    IRow dataRow = sheet.CreateRow(rowIndex);
+                    CreateStyledCell(dataRow, 0, systemId ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 1, user.U_ID ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 2, user.U_NAME ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 3, user.APG_NO ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 4, user.APG_NAME ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 5, user.ORGAN_NO ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 6, user.ORGAN_CAP ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 7, user.CREATOR ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 8, user.CREATE_TIME ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 9, user.EDITOR ?? "", cellStyle);
+                    CreateStyledCell(dataRow, 10, user.EDIT_TIME ?? "", cellStyle);
+                    rowIndex++;
+                }
+
+                // 自動調整欄寬
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    sheet.AutoSizeColumn(i);
+                    int currentWidth = (int)sheet.GetColumnWidth(i);
+                    sheet.SetColumnWidth(i, currentWidth + 1000);
+                }
+
+                // 凍結首列
+                sheet.CreateFreezePane(0, 1);
+
+                // 工作表保護
+                sheet.ProtectSheet(password);
+                workbook.LockStructure();
+
+                // 寫入串流
+                using (MemoryStream stream = new MemoryStream())
+                {
+                    workbook.Write(stream, false);
+                    workbook.Close();
+                    return stream.ToArray();
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"建立 Excel 失敗: {ex.Message}", ex);
+            }
         }
 
-        // 填入資料
-        int rowIndex = 1;
-        foreach (var user in userList)
+        /// <summary>
+        /// 建立帶樣式的儲存格
+        /// </summary>
+        private void CreateStyledCell(IRow row, int columnIndex, string value, ICellStyle style)
         {
-            IRow dataRow = sheet.CreateRow(rowIndex);
-            CreateStyledCell(dataRow, 0, systemId ?? "", cellStyle);
-            CreateStyledCell(dataRow, 1, user.U_ID ?? "", cellStyle);
-            CreateStyledCell(dataRow, 2, user.U_NAME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 3, user.APG_NO ?? "", cellStyle);
-            CreateStyledCell(dataRow, 4, user.APG_NAME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 5, user.ORGAN_NO ?? "", cellStyle);
-            CreateStyledCell(dataRow, 6, user.ORGAN_CAP ?? "", cellStyle);
-            CreateStyledCell(dataRow, 7, user.CREATOR ?? "", cellStyle);
-            CreateStyledCell(dataRow, 8, user.CREATE_TIME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 9, user.EDITOR ?? "", cellStyle);
-            CreateStyledCell(dataRow, 10, user.EDIT_TIME ?? "", cellStyle);
-            rowIndex++;
+            ICell cell = row.CreateCell(columnIndex);
+            cell.SetCellValue(value);
+            cell.CellStyle = style;
         }
 
-        // 自動調整欄寬
-        for (int i = 0; i < headers.Length; i++)
+        /// <summary>
+        /// 加密 Excel 檔案
+        /// </summary>
+        private byte[] EncryptExcelFile(byte[] excelBytes, string password)
         {
-            sheet.AutoSizeColumn(i);
-            int currentWidth = sheet.GetColumnWidth(i);
-            sheet.SetColumnWidth(i, currentWidth + 1000);
+            try
+            {
+                // 讀取未加密的 Excel
+                using (MemoryStream inputStream = new MemoryStream(excelBytes))
+                {
+                    // 建立 POIFSFileSystem
+                    POIFSFileSystem fs = new POIFSFileSystem();
+
+                    // 建立加密資訊 (使用 Agile 加密模式)
+                    EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
+                    Encryptor enc = info.Encryptor;
+
+                    // 設定密碼
+                    enc.ConfirmPassword(password);
+
+                    // 將 Excel 內容寫入加密串流
+                    using (Stream encryptedStream = enc.GetDataStream(fs))
+                    {
+                        inputStream.Position = 0;
+                        inputStream.CopyTo(encryptedStream);
+                    }
+
+                    // 輸出加密後的檔案
+                    using (MemoryStream outputStream = new MemoryStream())
+                    {
+                        fs.WriteFileSystem(outputStream);
+                        fs.Close();
+                        return outputStream.ToArray();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Excel 加密失敗: {ex.Message}", ex);
+            }
         }
 
-        // 凍結首列
-        sheet.CreateFreezePane(0, 1);
-
-        // 工作表保護
-        sheet.ProtectSheet(password);
-        workbook.LockStructure();
-
-        // 寫入串流
-        using (MemoryStream stream = new MemoryStream())
+        /// <summary>
+        /// 查看匯出記錄
+        /// </summary>
+        [HttpGet]
+        public ActionResult ExportRecords()
         {
-            workbook.Write(stream, false);
-            workbook.Close();
-            return stream.ToArray();
+            try
+            {
+                string systemId = Session["CurrentSystemId"] as string;
+
+                var service = GetAPService();
+                var records = service.GetMyExportRecords(this.Emp_NO, systemId);
+
+                return View(records);
+            }
+            catch (Exception ex)
+            {
+                return Content($"<script>alert('查詢失敗: {ex.Message}'); window.history.back();</script>", "text/html");
+            }
         }
-    }
-    catch (Exception ex)
-    {
-        throw new Exception($"建立 Excel 失敗: {ex.Message}", ex);
-    }
-}
 
-private void CreateStyledCell(IRow row, int columnIndex, string value, ICellStyle style)
-{
-    ICell cell = row.CreateCell(columnIndex);
-    cell.SetCellValue(value);
-    cell.CellStyle = style;
-}
-```
+        /// <summary>
+        /// 取得授權碼資訊 (Ajax)
+        /// </summary>
+        [HttpGet]
+        public JsonResult GetAuthCodeInfo()
+        {
+            try
+            {
+                if (TempData["AuthCode"] != null && TempData["FileName"] != null)
+                {
+                    var authCode = TempData["AuthCode"].ToString();
+                    var fileName = TempData["FileName"].ToString();
 
------
+                    // 保留 TempData 供下次使用
+                    TempData.Keep("AuthCode");
+                    TempData.Keep("FileName");
 
-## ✅ 完成後的流程
+                    return Json(new
+                    {
+                        success = true,
+                        authCode = authCode,
+                        fileName = fileName
+                    }, JsonRequestBehavior.AllowGet);
+                }
 
-1. **點擊「匯出帳號清單」**
+                return Json(new { success = false }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
 
-- 直接開始下載 Excel
-- 1秒後彈出 Modal 顯示授權碼
+        /// <summary>
+        /// 取得匯出記錄 (Ajax)
+        /// </summary>
+        [HttpGet]
+        public JsonResult GetExportRecords()
+        {
+            try
+            {
+                string systemId = Session["CurrentSystemId"] as string;
 
-1. **授權碼 Modal**
+                var service = GetAPService();
+                var records = service.GetMyExportRecords(this.Emp_NO, systemId);
 
-- 顯示大大的授權碼
-- 點擊「複製授權碼」複製
-- 點擊「關閉」關閉 Modal
+                if (records != null && records.Count > 0)
+                {
+                    return Json(new
+                    {
+                        success = true,
+                        records = records
+                    }, JsonRequestBehavior.AllowGet);
+                }
+                else
+                {
+                    return Json(new
+                    {
+                        success = false,
+                        message = "目前沒有匯出記錄"
+                    }, JsonRequestBehavior.AllowGet);
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = $"查詢失敗: {ex.Message}"
+                }, JsonRequestBehavior.AllowGet);
+            }
+        }
 
-1. **點擊「匯出記錄」**
-
-- 彈出 Modal
-- Ajax 載入記錄清單
-- 顯示在 Modal 中
-
-完成! 🎉​​​​​​​​​​​​​​​​
+        #endregion
