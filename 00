@@ -1,586 +1,504 @@
-明白了!你需要用授權碼來加密 Excel,讓使用者必須輸入授權碼才能開啟。
-
-以下是完整的 NPOI 加密實作:
+抱歉!我來補上 Factory 和 Model 的完整程式碼:
 
 -----
 
-## 📦 1. NuGet 套件安裝
+## 📝 1. Model (M_AP_SET.cs)
 
-```
-Install-Package NPOI -Version 2.7.1
-```
+```csharp
+using System;
+using System.ComponentModel;
+using Newtonsoft.Json;
 
-在 `packages.config` 加入:
+namespace YourNamespace.Models
+{
+    /// <summary>
+    /// 帳號匯出 Model
+    /// </summary>
+    public class UserExportModel
+    {
+        public string U_ID { get; set; }
+        public string U_NAME { get; set; }
+        public string APG_NO { get; set; }
+        public string APG_NAME { get; set; }
+        public string ORGAN_NO { get; set; }
+        public string ORGAN_CAP { get; set; }
+        public string CREATOR { get; set; }
+        public string CREATE_TIME { get; set; }
+        public string EDITOR { get; set; }
+        public string EDIT_TIME { get; set; }
+    }
 
-```xml
-<package id="NPOI" version="2.7.1" targetFramework="net48" />
+    /// <summary>
+    /// 授權碼記錄 Model (資料庫用)
+    /// </summary>
+    public class CodeGuardRecordModel
+    {
+        public int ID { get; set; }
+        public string FILE_NAME { get; set; }
+        public string CODE_GUARD { get; set; }
+        public string CREATOR { get; set; }
+        public DateTime CREATE_TIME { get; set; }
+        public string SYS_ID { get; set; }
+    }
+
+    /// <summary>
+    /// 匯出記錄顯示用 Model (View 用)
+    /// </summary>
+    public class ExportRecordViewModel
+    {
+        public int ID { get; set; }
+        public string FILE_NAME { get; set; }
+        public string CREATOR { get; set; }
+        public string CREATE_TIME { get; set; }
+        public string SYS_ID { get; set; }
+    }
+}
 ```
 
 -----
 
-## 🎮 2. Controller 完整程式碼
+## 🔧 2. Factory (F_AP.cs)
 
 ```csharp
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Web.Mvc;
-using HI_CODEGUARD_DLL;
-using Newtonsoft.Json;
-using NPOI.XSSF.UserModel;
-using NPOI.SS.UserModel;
-using NPOI.POIFS.FileSystem;
-using NPOI.POIFS.Crypt;
+using System.Data;
+using System.Data.SqlClient;
 using YourNamespace.Models;
-using YourNamespace.Factory;
 
-#region 匯出帳號清單 (加密版)
-
-/// <summary>
-/// 匯出帳號清單 (Excel加密)
-/// </summary>
-[HttpGet]
-public ActionResult ExportUserList()
+namespace YourNamespace.Factory
 {
-    try
+    public class F_AP
     {
-        string systemId = Session["CurrentSystemId"] as string;
-        string employeeNo = Session["UserID"] as string; // 從 Session 取得員工編號
-
-        if (string.IsNullOrEmpty(employeeNo))
-        {
-            return Content("<script>alert('無法取得員工編號'); window.history.back();</script>", "text/html");
-        }
-
-        // 1. 產生授權碼 (使用 HI_CODEGUARD_DLL)
-        CODE_GUARD codeGuard = new CODE_GUARD();
-        string getCodeRequest = JsonConvert.SerializeObject(new
-        {
-            SysID = systemId,
-            Data = employeeNo,
-            CodeLength = 8
-        });
-
-        string getCodeResponse = codeGuard.GetCode(getCodeRequest);
-        dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
-
-        if (codeResult.Result_code != "0000")
-        {
-            return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
-        }
-
-        string authCode = codeResult.Code.ToString();
-
-        // 2. 取得帳號清單
-        var service = GetAPService();
-        var userList = service.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
-        {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-        }
-
-        // 3. 產生加密 Excel (密碼 = 授權碼)
-        string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-        byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
-
-        // 4. 儲存記錄到資料庫
-        var recordModel = new CodeGuardRecordModel
-        {
-            FILE_NAME = fileName,
-            CODE_GUARD = authCode,
-            CREATOR = employeeNo,
-            SYS_ID = systemId
-        };
-
-        bool saveResult = service.SaveCodeGuardRecord(recordModel);
-        if (!saveResult)
-        {
-            System.Diagnostics.Debug.WriteLine("儲存授權碼記錄失敗");
-        }
-
-        // 5. 刪除超過3個月的舊記錄
-        service.DeleteOldRecords();
-
-        // 6. 顯示授權碼提示並下載
-        TempData["AuthCode"] = authCode;
-        TempData["FileName"] = fileName;
-
-        // 7. 回傳加密的 Excel 檔案
-        return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-            $"{fileName}.xlsx");
-    }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
-    }
-}
-
-/// <summary>
-/// 使用 NPOI 建立加密 Excel
-/// </summary>
-private byte[] CreateEncryptedExcel(List<UserExportModel> userList, string systemId, string password)
-{
-    try
-    {
-        // 1. 建立工作簿
-        XSSFWorkbook workbook = new XSSFWorkbook();
-        ISheet sheet = workbook.CreateSheet("帳號清單");
-
-        // 2. 建立標題列樣式
-        ICellStyle headerStyle = workbook.CreateCellStyle();
-        headerStyle.FillForegroundColor = NPOI.HSSF.Util.HSSFColor.Grey25Percent.Index;
-        headerStyle.FillPattern = FillPattern.SolidForeground;
-        headerStyle.Alignment = HorizontalAlignment.Center;
-        headerStyle.VerticalAlignment = VerticalAlignment.Center;
+        #region 基本的取得 Service 方法 (如果你原本沒有的話)
         
-        // 設定邊框
-        headerStyle.BorderTop = BorderStyle.Thin;
-        headerStyle.BorderBottom = BorderStyle.Thin;
-        headerStyle.BorderLeft = BorderStyle.Thin;
-        headerStyle.BorderRight = BorderStyle.Thin;
+        // 如果你的專案已經有 DBHelper 或類似的類別,請調整成你的寫法
         
-        IFont headerFont = workbook.CreateFont();
-        headerFont.IsBold = true;
-        headerFont.FontHeightInPoints = 11;
-        headerFont.FontName = "微軟正黑體";
-        headerStyle.SetFont(headerFont);
+        #endregion
 
-        // 3. 建立資料列樣式
-        ICellStyle cellStyle = workbook.CreateCellStyle();
-        cellStyle.Alignment = HorizontalAlignment.Left;
-        cellStyle.VerticalAlignment = VerticalAlignment.Center;
-        cellStyle.BorderTop = BorderStyle.Thin;
-        cellStyle.BorderBottom = BorderStyle.Thin;
-        cellStyle.BorderLeft = BorderStyle.Thin;
-        cellStyle.BorderRight = BorderStyle.Thin;
-        
-        IFont cellFont = workbook.CreateFont();
-        cellFont.FontName = "微軟正黑體";
-        cellStyle.SetFont(cellFont);
+        #region 帳號匯出相關
 
-        // 4. 建立標題列
-        IRow headerRow = sheet.CreateRow(0);
-        string[] headers = new string[] 
-        { 
-            "系統", "帳號", "姓名", "群組代號", "群組名稱", 
-            "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
-        };
-
-        for (int i = 0; i < headers.Length; i++)
+        /// <summary>
+        /// 取得所有使用者清單(用於匯出)
+        /// </summary>
+        public List<UserExportModel> GetAllUsersForExport(string systemId)
         {
-            ICell cell = headerRow.CreateCell(i);
-            cell.SetCellValue(headers[i]);
-            cell.CellStyle = headerStyle;
-        }
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllUsersForExport);
 
-        // 5. 填入資料
-        int rowIndex = 1;
-        foreach (var user in userList)
-        {
-            IRow dataRow = sheet.CreateRow(rowIndex);
-
-            CreateStyledCell(dataRow, 0, systemId ?? "", cellStyle);
-            CreateStyledCell(dataRow, 1, user.U_ID ?? "", cellStyle);
-            CreateStyledCell(dataRow, 2, user.U_NAME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 3, user.APG_NO ?? "", cellStyle);
-            CreateStyledCell(dataRow, 4, user.APG_NAME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 5, user.ORGAN_NO ?? "", cellStyle);
-            CreateStyledCell(dataRow, 6, user.ORGAN_CAP ?? "", cellStyle);
-            CreateStyledCell(dataRow, 7, user.CREATOR ?? "", cellStyle);
-            CreateStyledCell(dataRow, 8, user.CREATE_TIME ?? "", cellStyle);
-            CreateStyledCell(dataRow, 9, user.EDITOR ?? "", cellStyle);
-            CreateStyledCell(dataRow, 10, user.EDIT_TIME ?? "", cellStyle);
-
-            rowIndex++;
-        }
-
-        // 6. 自動調整欄寬
-        for (int i = 0; i < headers.Length; i++)
-        {
-            sheet.AutoSizeColumn(i);
-            // 加一點額外寬度讓內容更好看
-            int currentWidth = sheet.GetColumnWidth(i);
-            sheet.SetColumnWidth(i, currentWidth + 1000);
-        }
-
-        // 7. 凍結首列
-        sheet.CreateFreezePane(0, 1);
-
-        // 8. 將工作簿寫入未加密的串流
-        byte[] unencryptedBytes;
-        using (MemoryStream ms = new MemoryStream())
-        {
-            workbook.Write(ms, false);
-            unencryptedBytes = ms.ToArray();
-        }
-        workbook.Close();
-
-        // 9. 加密 Excel 檔案
-        byte[] encryptedBytes = EncryptExcelFile(unencryptedBytes, password);
-
-        return encryptedBytes;
-    }
-    catch (Exception ex)
-    {
-        throw new Exception($"建立 Excel 失敗: {ex.Message}", ex);
-    }
-}
-
-/// <summary>
-/// 建立帶樣式的儲存格
-/// </summary>
-private void CreateStyledCell(IRow row, int columnIndex, string value, ICellStyle style)
-{
-    ICell cell = row.CreateCell(columnIndex);
-    cell.SetCellValue(value);
-    cell.CellStyle = style;
-}
-
-/// <summary>
-/// 加密 Excel 檔案
-/// </summary>
-private byte[] EncryptExcelFile(byte[] excelBytes, string password)
-{
-    try
-    {
-        // 讀取未加密的 Excel
-        using (MemoryStream inputStream = new MemoryStream(excelBytes))
-        {
-            // 建立 POIFSFileSystem
-            POIFSFileSystem fs = new POIFSFileSystem();
-            
-            // 建立加密資訊 (使用 Agile 加密模式)
-            EncryptionInfo info = new EncryptionInfo(EncryptionMode.Agile);
-            Encryptor enc = info.Encryptor;
-            
-            // 設定密碼
-            enc.ConfirmPassword(password);
-
-            // 將 Excel 內容寫入加密串流
-            using (Stream encryptedStream = enc.GetDataStream(fs))
+            List<SqlParameter> parameters = new List<SqlParameter>
             {
-                inputStream.Position = 0;
-                inputStream.CopyTo(encryptedStream);
+                new SqlParameter("@SYS_ID", systemId)
+            };
+
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            return SVS_DBmanager.ConvertToList<UserExportModel>(dt);
+        }
+
+        #endregion
+
+        #region 授權碼記錄相關
+
+        /// <summary>
+        /// 儲存授權碼記錄
+        /// </summary>
+        public bool SaveCodeGuardRecord(CodeGuardRecordModel model)
+        {
+            try
+            {
+                string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.InsertCodeGuardRecord);
+
+                List<SqlParameter> parameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@FILE_NAME", model.FILE_NAME ?? (object)DBNull.Value),
+                    new SqlParameter("@CODE_GUARD", model.CODE_GUARD ?? (object)DBNull.Value),
+                    new SqlParameter("@CREATOR", model.CREATOR ?? (object)DBNull.Value),
+                    new SqlParameter("@SYS_ID", string.IsNullOrEmpty(model.SYS_ID) ? (object)DBNull.Value : model.SYS_ID)
+                };
+
+                int result = SVS_DBmanager.ExecuteNonQuery(sql, parameters);
+                return result > 0;
             }
-
-            // 輸出加密後的檔案
-            using (MemoryStream outputStream = new MemoryStream())
+            catch (Exception ex)
             {
-                fs.WriteFilesystem(outputStream);
-                fs.Close();
-                return outputStream.ToArray();
+                System.Diagnostics.Debug.WriteLine($"儲存授權碼記錄失敗: {ex.Message}");
+                return false;
             }
         }
-    }
-    catch (Exception ex)
-    {
-        throw new Exception($"Excel 加密失敗: {ex.Message}", ex);
-    }
-}
 
-/// <summary>
-/// 查看匯出記錄
-/// </summary>
-[HttpGet]
-public ActionResult ExportRecords()
-{
-    try
-    {
-        string systemId = Session["CurrentSystemId"] as string;
-        string employeeNo = Session["UserID"] as string;
-
-        if (string.IsNullOrEmpty(employeeNo))
+        /// <summary>
+        /// 取得個人匯出記錄(最近3個月)
+        /// </summary>
+        public List<ExportRecordViewModel> GetMyExportRecords(string creator, string systemId)
         {
-            return Content("<script>alert('無法取得員工編號'); window.history.back();</script>", "text/html");
+            try
+            {
+                string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetMyExportRecords);
+
+                List<SqlParameter> parameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@CREATOR", creator ?? (object)DBNull.Value),
+                    new SqlParameter("@SYS_ID", systemId ?? (object)DBNull.Value)
+                };
+
+                DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+                return SVS_DBmanager.ConvertToList<ExportRecordViewModel>(dt);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"查詢匯出記錄失敗: {ex.Message}");
+                return new List<ExportRecordViewModel>();
+            }
         }
 
-        var service = GetAPService();
-        var records = service.GetMyExportRecords(employeeNo, systemId);
+        /// <summary>
+        /// 刪除超過3個月的記錄
+        /// </summary>
+        public bool DeleteOldRecords()
+        {
+            try
+            {
+                string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.DeleteOldCodeGuardRecords);
+                int result = SVS_DBmanager.ExecuteNonQuery(sql, null);
+                return result >= 0;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"刪除舊記錄失敗: {ex.Message}");
+                return false;
+            }
+        }
 
-        return View(records);
-    }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('查詢失敗: {ex.Message}'); window.history.back();</script>", "text/html");
+        #endregion
     }
 }
-
-#endregion
 ```
 
 -----
 
-## 🖼️ 3. View - GroupManagement.cshtml (修改)
+## 🗄️ 3. SVS_DBmanager.cs (SQL 查詢管理)
 
-```html
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">系統群組權限管理 : @ViewBag.SystemId</div>
+### 3.1 在 QueryKey enum 中加入:
+
+```csharp
+public enum QueryKey
+{
+    // ... 其他的 QueryKey
     
-    @if (showSwitchButton)
+    // 帳號匯出相關
+    GetAllUsersForExport,
+    
+    // 授權碼記錄相關
+    InsertCodeGuardRecord,
+    GetMyExportRecords,
+    DeleteOldCodeGuardRecords
+}
+```
+
+### 3.2 在 GetQuery 方法中加入:
+
+```csharp
+public static string GetQuery(QueryKey key)
+{
+    switch (key)
     {
-        <div class="row mb-3">
-            <div class="col-md-12">
-                <button type="button" class="btn btn-secondary" id="btnSwitchSystem">
-                    <i class="fas fa-exchange-alt"></i> 切換系統
-                </button>
-            </div>
-        </div>
+        // ... 其他的 case
+
+        #region 帳號匯出相關
+
+        case QueryKey.GetAllUsersForExport:
+            return @"
+                SELECT 
+                    u.[U_ID],
+                    u.[U_NAME],
+                    u.[APG_NO],
+                    g.[APG_NAME],
+                    m.[ORGAN_NO],
+                    m.[ORGAN_CAP],
+                    u.[CREATOR],
+                    CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME, 
+                    u.[EDITOR],
+                    CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME    
+                FROM [HI-AUTOS].[dbo].[AP_USER] u
+                LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
+                    ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+                LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m 
+                    ON u.U_ID = m.EMP_NO
+                WHERE u.[SYS_ID] = @SYS_ID
+                ORDER BY u.[APG_NO], u.[U_ID]";
+
+        #endregion
+
+        #region 授權碼記錄相關
+
+        case QueryKey.InsertCodeGuardRecord:
+            return @"
+                INSERT INTO [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+                    ([FILE_NAME], [CODE_GUARD], [CREATOR], [CREATE_TIME], [SYS_ID])
+                VALUES
+                    (@FILE_NAME, @CODE_GUARD, @CREATOR, GETDATE(), @SYS_ID)";
+
+        case QueryKey.GetMyExportRecords:
+            return @"
+                SELECT 
+                    [ID],
+                    [FILE_NAME],
+                    [CREATOR],
+                    CONVERT(varchar, [CREATE_TIME], 120) as CREATE_TIME,
+                    [SYS_ID]
+                FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+                WHERE [CREATOR] = @CREATOR
+                  AND [SYS_ID] = @SYS_ID
+                  AND [CREATE_TIME] >= DATEADD(MONTH, -3, GETDATE())
+                ORDER BY [CREATE_TIME] DESC";
+
+        case QueryKey.DeleteOldCodeGuardRecords:
+            return @"
+                DELETE FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+                WHERE [CREATE_TIME] < DATEADD(MONTH, -3, GETDATE())";
+
+        #endregion
+
+        default:
+            throw new ArgumentException($"Invalid QueryKey: {key}");
     }
-    
-    <div class="row mb-3">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-outline-info" id="btnExportUsers">
-                <i class="fas fa-file-export"></i> 匯出帳號清單
-            </button>
-            <button type="button" class="btn btn-outline-success" id="btnExportRecords">
-                <i class="fas fa-history"></i> 匯出記錄
-            </button>
-        </div>
-    </div>
-</section>
-
-<!-- 授權碼顯示 Modal -->
-<div class="modal fade" id="authCodeModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
-    <div class="modal-dialog modal-dialog-centered" role="document">
-        <div class="modal-content">
-            <div class="modal-header bg-warning">
-                <h5 class="modal-title">
-                    <i class="fas fa-key"></i> Excel 檔案授權碼
-                </h5>
-            </div>
-            <div class="modal-body text-center">
-                <p class="mb-3">檔案已加密,請使用以下授權碼開啟:</p>
-                <div class="alert alert-info" style="font-size: 24px; font-weight: bold; letter-spacing: 3px;">
-                    <span id="displayAuthCode"></span>
-                </div>
-                <p class="text-danger">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    請妥善保管此授權碼,遺失將無法開啟檔案!
-                </p>
-                <p class="text-muted">
-                    <small>檔案名稱: <span id="displayFileName"></span></small>
-                </p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" id="btnCopyAuthCode">
-                    <i class="fas fa-copy"></i> 複製授權碼
-                </button>
-                <button type="button" class="btn btn-primary" data-dismiss="modal">
-                    <i class="fas fa-check"></i> 我已記下授權碼
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-@section Scripts {
-<script>
-    $(document).ready(function() {
-        // 匯出帳號清單按鈕事件
-        $('#btnExportUsers').click(function () {
-            if (confirm('匯出的 Excel 檔案將會加密保護。\n\n系統會產生一組授權碼,開啟檔案時需要輸入此授權碼。\n\n確定要匯出嗎?')) {
-                // 開始下載
-                window.location.href = '@Url.Action("ExportUserList", "AP")';
-                
-                // 延遲顯示授權碼 (等檔案開始下載)
-                setTimeout(function() {
-                    showAuthCode();
-                }, 500);
-            }
-        });
-
-        // 匯出記錄按鈕事件
-        $('#btnExportRecords').click(function () {
-            window.open('@Url.Action("ExportRecords", "AP")', '_blank');
-        });
-
-        // 複製授權碼
-        $('#btnCopyAuthCode').click(function() {
-            var authCode = $('#displayAuthCode').text();
-            
-            // 建立暫時的 textarea 來複製文字
-            var $temp = $('<textarea>');
-            $('body').append($temp);
-            $temp.val(authCode).select();
-            document.execCommand('copy');
-            $temp.remove();
-            
-            // 顯示提示
-            $(this).html('<i class="fas fa-check"></i> 已複製!');
-            setTimeout(() => {
-                $(this).html('<i class="fas fa-copy"></i> 複製授權碼');
-            }, 2000);
-        });
-
-        // 顯示授權碼
-        function showAuthCode() {
-            @if (TempData["AuthCode"] != null && TempData["FileName"] != null)
-            {
-                <text>
-                var authCode = '@TempData["AuthCode"]';
-                var fileName = '@TempData["FileName"]';
-                
-                $('#displayAuthCode').text(authCode);
-                $('#displayFileName').text(fileName + '.xlsx');
-                $('#authCodeModal').modal('show');
-                </text>
-            }
-        }
-    });
-</script>
 }
-
-<style>
-    .modal-body {
-        padding: 30px;
-    }
-    
-    #displayAuthCode {
-        font-family: 'Courier New', monospace;
-        user-select: all;
-    }
-</style>
 ```
 
 -----
 
-## 📋 4. View - ExportRecords.cshtml
+## 📊 4. 資料表建立 SQL
 
-```html
-@model List<YourNamespace.Models.ExportRecordViewModel>
+```sql
+-- 建立授權碼記錄表
+USE [HI_TMMAIN]
+GO
 
-@{
-    ViewBag.Title = "匯出記錄";
-    Layout = "~/Views/Shared/_Layout.cshtml";
-}
+-- 如果表已存在則刪除
+IF EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[CODEGUARD_RECORD]') AND type in (N'U'))
+DROP TABLE [dbo].[CODEGUARD_RECORD]
+GO
 
-<section class="page-title">
-    <div class="triangle"></div>
-    <div class="title-text">
-        <i class="fas fa-history"></i> 帳號清單匯出記錄 (最近3個月)
-    </div>
-</section>
+-- 建立新表
+CREATE TABLE [dbo].[CODEGUARD_RECORD]
+(
+    [ID] INT IDENTITY(1,1) PRIMARY KEY,
+    [FILE_NAME] NVARCHAR(200) NOT NULL,
+    [CODE_GUARD] NVARCHAR(50) NOT NULL,
+    [CREATOR] NVARCHAR(50) NOT NULL,
+    [CREATE_TIME] DATETIME NOT NULL DEFAULT GETDATE(),
+    [SYS_ID] NVARCHAR(50) NULL
+)
+GO
 
-<div class="container-fluid mt-4">
-    <div class="row">
-        <div class="col-md-12">
-            @if (Model != null && Model.Count > 0)
-            {
-                <div class="alert alert-info" role="alert">
-                    <i class="fas fa-info-circle"></i> 
-                    共有 <strong>@Model.Count</strong> 筆記錄
-                </div>
-                
-                <div class="table-responsive">
-                    <table class="table table-striped table-bordered table-hover">
-                        <thead class="thead-dark">
-                            <tr>
-                                <th style="width: 5%;" class="text-center">序號</th>
-                                <th style="width: 35%;">檔案名稱</th>
-                                <th style="width: 15%;" class="text-center">系統ID</th>
-                                <th style="width: 15%;" class="text-center">匯出人員</th>
-                                <th style="width: 20%;" class="text-center">匯出時間</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @for (int i = 0; i < Model.Count; i++)
-                            {
-                                <tr>
-                                    <td class="text-center">@(i + 1)</td>
-                                    <td>
-                                        <i class="fas fa-file-excel text-success"></i> 
-                                        @Model[i].FILE_NAME.xlsx
-                                    </td>
-                                    <td class="text-center">
-                                        <span class="badge badge-primary">@Model[i].SYS_ID</span>
-                                    </td>
-                                    <td class="text-center">@Model[i].CREATOR</td>
-                                    <td class="text-center">@Model[i].CREATE_TIME</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-            else
-            {
-                <div class="alert alert-warning text-center" role="alert" style="padding: 50px;">
-                    <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 20px;"></i>
-                    <h5>目前沒有匯出記錄</h5>
-                    <p class="text-muted">最近 3 個月內沒有匯出帳號清單的記錄</p>
-                </div>
-            }
-        </div>
-    </div>
-    
-    <div class="row mt-4">
-        <div class="col-md-12">
-            <button type="button" class="btn btn-secondary" onclick="window.close();">
-                <i class="fas fa-times"></i> 關閉視窗
-            </button>
-        </div>
-    </div>
-</div>
+-- 建立索引提升查詢效能
+CREATE INDEX IX_CODEGUARD_RECORD_CREATOR 
+    ON [dbo].[CODEGUARD_RECORD]([CREATOR])
+GO
 
-<style>
-    .table {
-        margin-top: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .table thead th {
-        vertical-align: middle;
-    }
-    
-    .table tbody td {
-        vertical-align: middle;
-    }
-    
-    .badge {
-        font-size: 0.9em;
-        padding: 5px 10px;
-    }
-</style>
+CREATE INDEX IX_CODEGUARD_RECORD_CREATE_TIME 
+    ON [dbo].[CODEGUARD_RECORD]([CREATE_TIME])
+GO
+
+CREATE INDEX IX_CODEGUARD_RECORD_SYS_ID 
+    ON [dbo].[CODEGUARD_RECORD]([SYS_ID])
+GO
+
+-- 加入說明
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'授權碼記錄主鍵', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'ID'
+GO
+
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'檔案名稱', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'FILE_NAME'
+GO
+
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'授權碼', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'CODE_GUARD'
+GO
+
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'匯出人員', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'CREATOR'
+GO
+
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'匯出時間', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'CREATE_TIME'
+GO
+
+EXEC sys.sp_addextendedproperty 
+    @name=N'MS_Description', 
+    @value=N'系統ID', 
+    @level0type=N'SCHEMA', @level0name=N'dbo', 
+    @level1type=N'TABLE', @level1name=N'CODEGUARD_RECORD', 
+    @level2type=N'COLUMN', @level2name=N'SYS_ID'
+GO
+
+PRINT '資料表 CODEGUARD_RECORD 建立成功!'
+GO
 ```
 
 -----
 
-## ✅ 使用流程
+## 🧪 5. 測試用 SQL (插入測試資料)
 
-1. **使用者點擊「匯出帳號清單」**
+```sql
+-- 插入測試資料
+INSERT INTO [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+    ([FILE_NAME], [CODE_GUARD], [CREATOR], [CREATE_TIME], [SYS_ID])
+VALUES
+    ('20241125120000_匯出帳號清單', 'A1B2C3D4', 'E001', GETDATE(), 'HI_POS'),
+    ('20241124150000_匯出帳號清單', 'X9Y8Z7W6', 'E001', DATEADD(DAY, -1, GETDATE()), 'HI_POS'),
+    ('20241120100000_匯出帳號清單', 'M5N4O3P2', 'E001', DATEADD(DAY, -5, GETDATE()), 'HI_WMS')
+GO
 
-- 系統用 `HI_CODEGUARD_DLL` 產生 8 碼授權碼
+-- 查詢測試
+SELECT * FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+ORDER BY [CREATE_TIME] DESC
+GO
 
-1. **產生加密 Excel**
+-- 查詢特定使用者的記錄
+SELECT 
+    [ID],
+    [FILE_NAME],
+    [CREATOR],
+    CONVERT(varchar, [CREATE_TIME], 120) as CREATE_TIME,
+    [SYS_ID]
+FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+WHERE [CREATOR] = 'E001'
+  AND [SYS_ID] = 'HI_POS'
+  AND [CREATE_TIME] >= DATEADD(MONTH, -3, GETDATE())
+ORDER BY [CREATE_TIME] DESC
+GO
 
-- 使用 NPOI 建立 Excel
-- 使用授權碼加密檔案
-
-1. **儲存記錄**
-
-- 檔案名稱、授權碼、匯出人員、時間存入 `CODEGUARD_RECORD` 表
-
-1. **顯示授權碼**
-
-- 彈出 Modal 顯示授權碼
-- 提供複製功能
-
-1. **下載檔案**
-
-- 使用者下載加密的 Excel
-- 開啟時需要輸入授權碼
+-- 刪除超過3個月的記錄 (測試用)
+DELETE FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
+WHERE [CREATE_TIME] < DATEADD(MONTH, -3, GETDATE())
+GO
+```
 
 -----
 
-## 🔐 測試方式
+## 🔧 6. Controller 中如何取得 Service
 
-1. 點擊「匯出帳號清單」
-1. 會出現 Modal 顯示授權碼 (例如: `A1B2C3D4`)
-1. 複製或記下授權碼
-1. 下載 Excel 檔案
-1. 開啟 Excel 時,會要求輸入密碼
-1. 輸入授權碼即可開啟查看內容
+在你的 Controller 中加入:
 
-完成! 🎉​​​​​​​​​​​​​​​​
+```csharp
+/// <summary>
+/// 取得 AP Service
+/// </summary>
+private F_AP GetAPService()
+{
+    return new F_AP();
+}
+```
+
+或如果你的專案有使用 DI (Dependency Injection):
+
+```csharp
+private readonly F_AP _apService;
+
+public APController()
+{
+    _apService = new F_AP();
+}
+
+private F_AP GetAPService()
+{
+    return _apService;
+}
+```
+
+-----
+
+## 📋 7. 完整的檔案結構
+
+```
+你的專案/
+├── Models/
+│   └── M_AP_SET.cs                    (包含 3 個 Model)
+│       ├── UserExportModel
+│       ├── CodeGuardRecordModel
+│       └── ExportRecordViewModel
+│
+├── Factory/
+│   └── F_AP.cs                        (包含所有方法)
+│       ├── GetAllUsersForExport()
+│       ├── SaveCodeGuardRecord()
+│       ├── GetMyExportRecords()
+│       └── DeleteOldRecords()
+│
+├── DBManager/
+│   └── SVS_DBmanager.cs               (SQL 查詢管理)
+│       ├── QueryKey (enum)
+│       └── GetQuery(QueryKey)
+│
+├── Controllers/
+│   └── APController.cs
+│       ├── ExportUserList()
+│       ├── CreateEncryptedExcel()
+│       ├── EncryptExcelFile()
+│       └── ExportRecords()
+│
+└── Views/
+    ├── AP/
+    │   ├── GroupManagement.cshtml
+    │   └── ExportRecords.cshtml
+    └── Shared/
+        └── _Layout.cshtml
+```
+
+-----
+
+## ✅ 完整流程測試步驟
+
+1. **執行 SQL 建立表**
+   
+   ```sql
+   -- 在 SSMS 執行建表 SQL
+   USE [HI_TMMAIN]
+   GO
+   -- 執行上面的建表 SQL
+   ```
+1. **確認專案引用**
+
+- HI_CODEGUARD_DLL.dll
+- NPOI (NuGet 套件)
+- Newtonsoft.Json
+
+1. **編譯專案**
+
+- 確認沒有編譯錯誤
+- 確認所有 Model、Factory、Controller 都正確
+
+1. **測試功能**
+
+- 登入系統
+- 進入「系統群組權限管理」
+- 點擊「匯出帳號清單」
+- 查看授權碼 Modal
+- 下載 Excel 檔案
+- 用授權碼開啟 Excel
+- 點擊「匯出記錄」查看記錄
+
+-----
+
+完成! 🎉 現在所有程式碼都給你了!​​​​​​​​​​​​​​​​
