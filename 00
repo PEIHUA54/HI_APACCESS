@@ -1,859 +1,69 @@
- // 取得員工主檔
- public string GetEmpMast(string requestJson)
- {
-     var response = new GetEmpMastModel.GetEmpMastResponse();
+我了解了,你需要將所有使用 `[HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]` 的地方改成使用 DLL 呼叫 `GetEmpMast`,或者直接改成新的資料表 `[HI-AUTOS].[dbo].[M1EMP_MAST]`。
 
-     try
-     {
-         var request = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastRequest>(requestJson);
+讓我幫你整理需要修改的地方:
 
-         // 參數檢查
-         if (request.Type != "1" && request.Type != "2" && request.Type != "3")
-         {
-             response.Result_code = Common.Codes.TYPE_ERROR;
-             response.Msg = "Type 只接受 1/2/3";
-             return JsonConvert.SerializeObject(response);
-         }
-         if (request.Type == "3" && (request.EmpNoList == null || request.EmpNoList.Count == 0))
-         {
-             response.Result_code = Common.Codes.NO_EmpNoList;
-             response.Msg = "Type=3 時 EmpNoList 不可為空";
-             return JsonConvert.SerializeObject(response);
-         }
+## 需要修改的 SQL QueryKey
 
-         FGetEmpMast func = new FGetEmpMast();
-         response = func.Execute(request.Type, request.EmpNoList, request.Environment);
-     }
-     catch (Exception ex)
-     {
-         response = new GetEmpMastModel.GetEmpMastResponse
-         {
-             Result_code = Common.Codes.SYSTEM_ERROR,
-             Msg = "系統錯誤：" + ex.Message
-         };
-     }
+### 1. GetEmployeeList (用於搜尋員工)
 
-     return JsonConvert.SerializeObject(response);
- }
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+**原本:**
 
-namespace HI_APACCESS_DLL.Factory
-{
-    internal class FGetEmpMast
-    {
-        internal GetEmpMastModel.GetEmpMastResponse Execute(
-            string type, List<string> empNoList, string environment)
-        {
-            var response = new GetEmpMastModel.GetEmpMastResponse();
-
-            try
-            {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD";
-                    return response;
-                }
-
-                var resultList = new List<GetEmpMastModel.ResultData>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    var sql = @"
-SELECT 
-    M.[EMP_NO]     AS EmpNo,
-    M.[EMP_NAME]   AS EmpName,
-    M.[ORGAN_NO]   AS OrganNo,
-    M.[ORGAN_CAP]  AS OrganName,
-    M.[POST_NO]    AS PostNo,
-    M.[POST_NAME]  AS PostName,
-    M.[ENTER_DT]   AS EnterDate,
-    M.[END_DT]     AS EndDate
-FROM [HI-AUTOS].[dbo].[M1EMP_MAST] M
+```csharp
+case QueryKey.GetEmployeeList:
+    return @"
+SELECT TOP 1000 
+    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
+    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
 WHERE 1=1
 ";
+```
 
-                    var cmd = new SqlCommand();
-                    cmd.Connection = conn;
+**改為:**
 
-                    switch (type)
-                    {
-                        case "1": // 全部（在職+離職）
-                            break;
-
-                        case "2": // 在職（EndDate無）
-                            sql += @"
-AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
+```csharp
+case QueryKey.GetEmployeeList:
+    return @"
+SELECT TOP 1000 
+    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
+    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HI-AUTOS].[dbo].[M1EMP_MAST]
+WHERE 1=1
 ";
-                            break;
+```
 
-                        case "3": // 指定名單
-                            if (empNoList == null || empNoList.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.NO_EmpNoList;
-                                response.Msg = "Type=3 時 EmpNoList 不可為空";
-                                return response;
-                            }
+### 2. GetEmployeeInfo (用於取得單一員工資訊)
 
-                            // 清理名單（去空白、轉大寫、去重複）
-                            var cleaned = empNoList
-                                .Where(s => !string.IsNullOrWhiteSpace(s))
-                                .Select(s => s.Trim().ToUpper())
-                                .Distinct()
-                                .ToList();
+**原本:**
 
-                            if (cleaned.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.NO_EmpNoList;
-                                response.Msg = "EmpNoList 內容為空";
-                                return response;
-                            }
-
-                            var inParams = new List<string>();
-                            for (int i = 0; i < cleaned.Count; i++)
-                            {
-                                string p = $"@EMP{i}";
-                                inParams.Add(p);
-                                cmd.Parameters.AddWithValue(p, cleaned[i]);
-                            }
-                            sql += $" AND M.[EMP_NO] IN ({string.Join(",", inParams)})";
-                            break;
-
-                        default:
-                            response.Result_code = Common.Codes.TYPE_ERROR;
-                            response.Msg = "Type 只接受 1/2/3";
-                            return response;
-                    }
-
-                    sql += " ORDER BY M.[EMP_NO]";
-
-                    cmd.CommandText = sql;
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            resultList.Add(new GetEmpMastModel.ResultData
-                            {
-                                EmpNo = reader["EmpNo"]?.ToString(),
-                                EmpName = reader["EmpName"]?.ToString(),
-                                OrganNo = reader["OrganNo"]?.ToString(),
-                                OrganName = reader["OrganName"]?.ToString(),
-                                PostNo = reader["PostNo"]?.ToString(),
-                                PostName = reader["PostName"]?.ToString(),
-                                EnterDate = reader["EnterDate"]?.ToString(),
-                                EndDate = reader["EndDate"]?.ToString(),
-                            });
-                        }
-                    }
-                }
-
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_DATA;
-                    response.Msg = "查無資料";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
-            }
-            catch (Exception ex)
-            {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
-            }
-
-            return response;
-        }
-    }
-}
-
-
-取員工資料dll
-Request傳送參數:
-Environment環境TEST:測試、PROD:正式
-Type查詢類型1:全部名單(在職+離職)、2:在職名單、3:指定名單
-EmpNoList指定名單string[]
-
-我用type1，做查詢員工及匯入或新增的時候 要檢查此員工是否離職[END_DT]=是否有值，
-
-controller:
-   // 批次匯入使用者
-   [HttpPost]
-   public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
-   {
-       var service = GetAPService();
-
-       if (file == null || file.ContentLength == 0)
-           return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
-
-       if (string.IsNullOrWhiteSpace(apgNo))
-           return Json(new { success = false, message = "請先選擇群組" });
-
-       // ✅ Step 1: 從資料庫取得當前使用者可存取的群組清單
-       var allowedGroups = service.GetAllowedGroupsForUser(CurrentSystemId, this.Emp_NO);
-
-       if (!allowedGroups.Contains(apgNo))
-           throw new UnauthorizedAccessException("未授權的群組操作");
-
-       // ✅ Step 2: 驗證前端傳入的 apgNo 是否在授權清單中
-       if (!allowedGroups.Contains(apgNo))
-       {
-           return Json(new
-           {
-               success = false,
-               message = "無權限操作此群組"
-           });
-       }
-
-       // 副檔名限制
-       var ext = Path.GetExtension(file.FileName).ToLower();
-       if (ext != ".xls" && ext != ".xlsx")
-           return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
-
-       // 上傳暫存
-       var uploadDir = Server.MapPath("~/Upload");
-       if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
-
-       var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
-       var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
-
-       try
-       {
-           file.SaveAs(uploadPath);
-           // @SuppressWarnings("AccessControl")
-           // apgNo 已在 controller 層與 service 層雙重驗證
-           // ✅ Step 3: 使用已驗證的 apgNo 和 Emp_NO
-           var importResult = service.ImportUsersFromExcel(
-               uploadPath,
-               CurrentSystemId,
-               apgNo,          // 已驗證的群組
-               this.Emp_NO     // 當前使用者
-           );
-
-           //var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
-
-           if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
-           {
-               // 全部成功
-               return Json(new
-               {
-                   status = "success",
-                   message = $"匯入成功：共 {importResult.SuccessCount} 筆"
-               });
-           }
-           else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
-           {
-               // 全部失敗
-               return Json(new
-               {
-                   status = "fail",
-                   message = "匯入失敗：請重新上傳",
-                   errors = importResult.ErrorMessages
-               });
-           }
-           else
-           {
-               // 部分成功
-               return Json(new
-               {
-                   status = "partial",
-                   message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
-                   errors = importResult.ErrorMessages
-               });
-           }
-       }
-       catch (Exception ex)
-       {
-           return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
-       }
-       finally
-       {
-           if (System.IO.File.Exists(uploadPath))
-           {
-               var fc = new F_Common();
-               fc.SafeDeleteFile(uploadDir, safeName);
-           }
-       }
-   }
-
-   // 新增使用者
-   [HttpPost]
-   public JsonResult AddUser([Bind] UserModel model)
-   {
-       try
-       {
-           model.SYS_ID = CurrentSystemId;
-
-           if (ModelState.IsValid)
-           {
-               var service = GetAPService();
-               var result = service.InsertUser(model, Emp_NO);
-               if (result == null || !result.Contains("fail"))
-               {
-                   return Json(new { success = true, message = "使用者新增成功" });
-               }
-               else
-               {
-                   return Json(new { success = false, message = "使用者新增失敗：" + result });
-               }
-           }
-           return Json(new { success = false, message = "資料驗證失敗" });
-       }
-       catch (Exception ex)
-       {
-           return Json(new { success = false, message = "新增使用者發生錯誤：" + ex.Message });
-       }
-   }
-
-f_ap:
-
-     public ImportResult ImportUsersFromExcel(string filePath, string sysId, string an, string creator)
-     {
-         ImportResult result = new ImportResult()
-         {
-             ErrorMessages = new List<ImportError>()
-         };
-
-         try
-         {
-             an = an?.Trim();
-
-             // **1. 驗證權限**
-             if (!HasGroupPermission(sysId, an, creator))
-             {
-                 result.IsSuccess = false;
-                 result.ErrorMessage = an == "001"
-                     ? "僅001群組成員可以操作001群組的批次匯入"
-                     : "無權限操作此群組";
-                 return result;
-             }
-
-             // **2. 驗證群組存在 (加入 UserID 驗證)**
-             //                string validateGroupSql = @"
-             //            SELECT COUNT(1) 
-             //            FROM AP_GROUP g
-             //            WHERE g.SYS_ID = @SYS_ID 
-             //              AND g.APG_NO = @AN
-             //              AND EXISTS (
-             //                  SELECT 1 FROM AP_USER u
-             //                  WHERE u.SYS_ID = @SYS_ID
-             //                    AND (u.APG_NO = @AN OR u.APG_NO = '001')
-             //                    AND u.U_ID = @U_ID
-             //              )
-             //";
-
-             string validateGroupSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ImportUsersFromExcel);
-             var validateParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@AN", SqlDbType.Char, 3) { Value = an },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = creator }
-             };
-
-             //                string validateGroupSql = @"
-             //SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@AN
-             //";
-
-
-             //var validateParams = new List<SqlParameter>
-             //{
-             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-             //    new SqlParameter("@AN", SqlDbType.Char, 3) { Value = an }  
-             //};
-
-             var validateResult = SVS_DBmanager.QueryBySQL(validateGroupSql, validateParams);
-
-             if (validateResult.Rows.Count == 0 || Convert.ToInt32(validateResult.Rows[0][0]) == 0)
-             {
-                 result.IsSuccess = false;
-                 result.ErrorMessage = "群組不存在或無權限存取";
-                 return result;
-             }
-
-             // **3. 讀取 Excel**
-             var rows = ReadExcelData(filePath, result);
-             if (!result.IsSuccess || rows == null) return result;
-
-             // **4. 批次處理每筆資料**
-             int successCount = 0;
-             foreach (var row in rows)
-             {
-                 if (ProcessUserRow(row, sysId, an, creator, result))
-                 {
-                     successCount++;
-                 }
-             }
-
-             result.SuccessCount = successCount;
-             result.IsSuccess = true;
-         }
-         catch (Exception ex)
-         {
-             result.IsSuccess = false;
-             result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
-         }
-
-         return result;
-     }
-
-     /// <summary>
-     /// 檢查使用者是否有權限操作指定群組
-     /// </summary>
-     private bool HasGroupPermission(string sysId, string an, string userId)
-     {
-         try
-         {
-             string permissionCheckSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.HasGroupPermission);
-
-             var parameters = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
-             };
-
-             var result = SVS_DBmanager.QueryBySQL(permissionCheckSql, parameters);
-
-             return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
-         }
-         catch (Exception ex)
-         {
-             System.Diagnostics.Debug.WriteLine($"[HasGroupPermission] Error: {ex.Message}");
-             return false;
-         }
-     }
-
-     /// <summary>
-     /// 讀取 Excel 資料
-     /// </summary>
-     private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
-     {
-         var rows = new List<(int RowNumber, string EmpNo)>();
-
-         try
-         {
-             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 開始讀取: {filePath}");
-
-             using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-             using (var reader = ExcelReaderFactory.CreateReader(stream))
-             {
-                 int rowIndex = 0;
-                 while (reader.Read())
-                 {
-                     rowIndex++;
-
-                     // 第一列：檢查表頭
-                     if (rowIndex == 1)
-                     {
-                         string header = reader.GetString(0)?.Trim();
-                         System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 表頭: {header}");
-
-                         if (string.IsNullOrEmpty(header) || header != "員工編號")
-                         {
-                             result.IsSuccess = false;
-                             result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
-                             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
-                             return null;
-                         }
-                         continue;
-                     }
-
-                     // 讀取資料
-                     string empNo = reader.GetValue(0)?.ToString().Trim();
-                     if (!string.IsNullOrEmpty(empNo))
-                     {
-                         // 驗證員工編號長度
-                         if (empNo.Length > 10)
-                         {
-                             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ 行{rowIndex} 員工編號過長: {empNo}");
-                             result.ErrorMessages.Add(new ImportError
-                             {
-                                 RowNumber = rowIndex,
-                                 EmpNo = empNo,
-                                 Message = "員工編號長度超過10個字元"
-                             });
-                             continue;
-                         }
-
-                         rows.Add((rowIndex, empNo));
-                         System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 讀取行{rowIndex}: {empNo}");
-                     }
-                 }
-             }
-
-             // ⭐ 檢查是否有資料
-             if (rows.Count == 0)
-             {
-                 result.IsSuccess = false;
-                 result.ErrorMessage = "Excel 無任何員工資料";
-                 System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
-                 return null;
-             }
-
-             // ⭐⭐⭐ 關鍵：設定成功狀態 ⭐⭐⭐
-             result.IsSuccess = true;
-
-             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✓ 成功讀取 {rows.Count} 筆資料");
-             return rows;
-         }
-         catch (Exception ex)
-         {
-             result.IsSuccess = false;
-             result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
-             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗✗✗ Exception: {ex.Message}");
-             return null;
-         }
-     }
-
-     /// <summary>
-     /// 處理單筆員工資料
-     /// </summary>
-     private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
-     {
-         try
-         {
-             // 1. 檢查員工是否存在
-             //string checkEmpSql = "SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
-             string checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
-             var empParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
-             };
-             var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
-
-             if (empResult.Rows.Count == 0)
-             {
-                 result.ErrorMessages.Add(new ImportError
-                 {
-                     RowNumber = row.RowNumber,
-                     EmpNo = row.EmpNo,
-                     Message = "查無此員工"
-                 });
-                 return false;
-             }
-
-             string empName = empResult.Rows[0]["EMP_NAME"].ToString();
-
-             // ⭐ 驗證姓名長度（nvarchar(20)）
-             if (empName.Length > 20)
-             {
-                 result.ErrorMessages.Add(new ImportError
-                 {
-                     RowNumber = row.RowNumber,
-                     EmpNo = row.EmpNo,
-                     Message = "員工姓名長度超過20個字元"
-                 });
-                 return false;
-             }
-
-             // 2. 檢查是否已存在於同一個群組 (加入 creator 驗證)
-             //    string checkUserSql = @"
-             //SELECT COUNT(1) 
-             //FROM AP_USER 
-             //WHERE SYS_ID = @SYS_ID 
-             //  AND APG_NO = @AN 
-             //  AND U_ID = @U_ID
-             //  AND EXISTS (
-             //      SELECT 1 FROM AP_USER u2
-             //      WHERE u2.SYS_ID = @SYS_ID
-             //        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
-             //        AND u2.U_ID = @CREATOR
-             //  )";
-
-             string checkUserSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkuser);
-             var checkUserParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
-                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
-             };
-             //string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@AN AND U_ID=@U_ID";
-             //var checkUserParams = new List<SqlParameter>
-             //{
-             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  
-             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
-             //};
-             var userResult = SVS_DBmanager.QueryBySQL(checkUserSql, checkUserParams);
-
-             if (Convert.ToInt32(userResult.Rows[0][0]) > 0)
-             {
-                 result.ErrorMessages.Add(new ImportError
-                 {
-                     RowNumber = row.RowNumber,
-                     EmpNo = row.EmpNo,
-                     Message = "此群組已存在該員工"
-                 });
-                 return false;
-             }
-
-             // 3. 檢查是否已存在於該系統的其他群組 (加入 creator 驗證)
-             //    string checkSystemSql = @"
-             //SELECT COUNT(1) 
-             //FROM AP_USER 
-             //WHERE SYS_ID = @SYS_ID 
-             //  AND APG_NO <> @AN 
-             //  AND U_ID = @U_ID
-             //  AND EXISTS (
-             //      SELECT 1 FROM AP_USER u2
-             //      WHERE u2.SYS_ID = @SYS_ID
-             //        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
-             //        AND u2.U_ID = @CREATOR
-             //  )";
-             string checkSystemSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chksys);
-             var checkSystemParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
-                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
-             };
-             //string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@AN AND U_ID=@U_ID";
-             //var checkSystemParams = new List<SqlParameter>
-             //{
-             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  
-             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
-             //};
-             var systemResult = SVS_DBmanager.QueryBySQL(checkSystemSql, checkSystemParams);
-
-             if (Convert.ToInt32(systemResult.Rows[0][0]) > 0)
-             {
-                 result.ErrorMessages.Add(new ImportError
-                 {
-                     RowNumber = row.RowNumber,
-                     EmpNo = row.EmpNo,
-                     Message = "此系統其他群組已存在該員工"
-                 });
-                 return false;
-             }
-
-             // 4. 寫入 AP_USER (額外驗證 creator 權限)
-             string insertSql = @"
-         INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-         SELECT @SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE()
-         WHERE EXISTS (
-             SELECT 1 FROM AP_USER
-             WHERE SYS_ID = @SYS_ID
-               AND (APG_NO = @AN OR APG_NO = '001')
-               AND U_ID = @CREATOR
-         )";
-             var insertParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
-                 new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName },
-                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
-             };
-             //    string insertSql = @"
-             //INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
-             //VALUES(@SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE())";
-
-             //var insertParams = new List<SqlParameter>
-             //{
-             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an }, 
-             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
-             //    new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName }, 
-             //    new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
-             //};
-
-             SVS_DBmanager.ExecuteSQL(insertSql, insertParams);
-
-             return true;
-         }
-         catch (Exception exRow)
-         {
-             result.ErrorMessages.Add(new ImportError
-             {
-                 RowNumber = row.RowNumber,
-                 EmpNo = row.EmpNo,
-                 Message = "寫入錯誤：" + exRow.Message
-             });
-             return false;
-         }
-     }
-
-     /// <summary>
-     /// 取得使用者可操作的群組清單
-     /// 邏輯：
-     /// - 001群組成員：可操作所有群組（包括001）
-     /// - 非001群組成員：可操作所有群組，但不包括001
-     /// </summary>
-     public List<string> GetAllowedGroupsForUser(string sysId, string userId)
-     {
-         var allowedGroups = new List<string>();
-
-         try
-         {
-             // Step 1: 檢查是否為 001 群組成員
-             string checkAdminSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_admin);
-
-             var adminParams = new List<SqlParameter>
-             {
-                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
-                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
-             };
-
-             var adminResult = SVS_DBmanager.QueryBySQL(checkAdminSql, adminParams);
-             bool isAdmin = Convert.ToInt32(adminResult.Rows[0][0]) > 0;
-
-             if (isAdmin)
-             {
-                 //  001 群組成員：回傳所有群組（包括 001）
-                 string allGroupsSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_all);
-
-                 var allGroupsParams = new List<SqlParameter>
-                 {
-                     new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId }
-                 };
-
-                 var allGroupsResult = SVS_DBmanager.QueryBySQL(allGroupsSql, allGroupsParams);
-
-                 foreach (DataRow row in allGroupsResult.Rows)
-                 {
-                     allowedGroups.Add(row["APG_NO"].ToString().Trim());
-                 }
-
-                 System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 是 001 管理員，可存取所有群組: {string.Join(", ", allowedGroups)}");
-             }
-             else
-             {
-                 // 非 001 群組成員：回傳所有群組，但排除 001
-                 string nonAdminGroupsSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_noadmin);
-
-                 var nonAdminParams = new List<SqlParameter>
-                 {
-                     new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId }
-                 };
-
-                 var nonAdminResult = SVS_DBmanager.QueryBySQL(nonAdminGroupsSql, nonAdminParams);
-
-                 foreach (DataRow row in nonAdminResult.Rows)
-                 {
-                     allowedGroups.Add(row["APG_NO"].ToString().Trim());
-                 }
-
-                 System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 為非 001 使用者，可存取的群組（排除001）: {string.Join(", ", allowedGroups)}");
-             }
-         }
-         catch (Exception ex)
-         {
-             System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] 錯誤: {ex.Message}");
-         }
-
-         return allowedGroups;
-     }
-
-
-sql key:
-        public static string GetQuery(QueryKey key)
-        {
-            switch (key)
-            {
-                case QueryKey.GetParentGroups:
-                    return @"
-    SELECT [PARENT_APG_NO]
-    FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-    WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
-    ORDER BY PARENT_APG_NO
+```csharp
+case QueryKey.GetEmployeeInfo:
+    return @"
+    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+    FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
+    WHERE [EMP_NO] = @EMP_NO
 ";
+```
 
-                case QueryKey.GetAllGroups:
-                    return @"
-            SELECT [SYS_ID], [APG_NO], [APG_NAME], [PARENT_APG_NO], [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
-            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-            WHERE [SYS_ID] = @SYS_ID
-            ORDER BY [APG_NO]
+**改為:**
+
+```csharp
+case QueryKey.GetEmployeeInfo:
+    return @"
+    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+    FROM [HI-AUTOS].[dbo].[M1EMP_MAST]
+    WHERE [EMP_NO] = @EMP_NO
 ";
+```
 
-                case QueryKey.GetGroupByNo:
-                    return @"
-            SELECT [SYS_ID], [APG_NO], [APG_NAME],[PARENT_APG_NO],  [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
-            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-            WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
-";
+### 3. GetUserPermissions (用於取得使用者權限及部門資訊)
 
-                case QueryKey.GetAllFunctions:
-                    return @"
-  SELECT f.[SYS_ID], f.[FUNC_ID], f.[FUNC_NA], f.[PARENT_ID], f.[SORT_NO],
-           f.[IS_SHOW], f.[MEMO], f.[VIEW_H], f.[VIEW_HB], f.[FUNC_TYPE],
-           f.[CREATOR], f.[CREATE_TIME], f.[EDITOR], f.[EDIT_TIME],
-           CASE 
-               WHEN f.[PARENT_ID] IS NULL OR f.[PARENT_ID] = '' OR f.[PARENT_ID] = 'HOME' 
-                    THEN CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)) + '.0'
-               ELSE (
-                    SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
-                                  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
-                    FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
-                    WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] = @SYS_ID
-                )
-           END as SortPath
-    FROM [HI-AUTOS].[dbo].[AP_FUNC] f
-    WHERE f.[SYS_ID] = @SYS_ID 
-    ORDER BY SortPath, f.[FUNC_ID]
-";
+**原本:**
 
-                case QueryKey.GetButtonsByFuncId:
-                    return @"
-          SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
-[CONTROLLER], [ACTION], [LOC], [ONCLICK],
-[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
-FROM [HI-AUTOS].[dbo].[AP_RFUNC]
-WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
-ORDER BY CAST([BTNSEQ] AS INT)
-";
-
-                case QueryKey.GetAllButtons:
-                    return @"
-           SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
-[CONTROLLER], [ACTION], [LOC], [ONCLICK],
-[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
-FROM [HI-AUTOS].[dbo].[AP_RFUNC]
-WHERE [SYS_ID] = @SYS_ID
-ORDER BY [FUNC_ID], CAST([BTNSEQ] AS INT)
-";
-
-                case QueryKey.GetUsersByGroup:
-                    return @"
-            SELECT u.[SYS_ID], u.[APG_NO], g.[APG_NAME], u.[U_ID], u.[U_NAME], 
-                   u.[CREATOR], u.[CREATE_TIME], u.[EDITOR], u.[EDIT_TIME]
-            FROM [HI-AUTOS].[dbo].[AP_USER] u
-            LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-            WHERE u.[SYS_ID] = @SYS_ID
-";
-
-                case QueryKey.ChangeUserGroup_chkgroup:
-                    return @"
-SELECT COUNT(1) 
-FROM [HI-AUTOS].[dbo].[AP_GROUP]
-WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
-";
-
-                case QueryKey.ChangeUserGroup_chkuser:
-                    return @"
-SELECT COUNT(1)
-FROM [HI-AUTOS].[dbo].[AP_USER]
-WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @OLD_APG_NO AND [U_ID] = @U_ID
-";
-
-                case QueryKey.GetUserPermissions:
-                    return @"
-            SELECT  u.[SYS_ID],
+```csharp
+case QueryKey.GetUserPermissions:
+    return @"
+    SELECT  u.[SYS_ID],
         u.[APG_NO],
         g.[APG_NAME],
         u.[U_ID],
@@ -872,220 +82,41 @@ LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] emp
 WHERE u.[SYS_ID] = @SYS_ID
   AND u.[U_ID]  = @U_ID
 ";
+```
 
-                case QueryKey.GetEmployeeList:
-                    return @"
-SELECT TOP 1000 
-    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
-    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-WHERE 1=1
+**改為:**
+
+```csharp
+case QueryKey.GetUserPermissions:
+    return @"
+    SELECT  u.[SYS_ID],
+        u.[APG_NO],
+        g.[APG_NAME],
+        u.[U_ID],
+        u.[U_NAME],
+        emp.[ORGAN_CAP],    -- 部門
+        emp.[POST_NAME],    -- 職稱
+        u.[CREATOR],
+        u.[CREATE_TIME],
+        u.[EDITOR],
+        u.[EDIT_TIME]
+FROM [HI-AUTOS].[dbo].[AP_USER] u
+LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g
+       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
+LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] emp
+       ON emp.[EMP_NO] = u.[U_ID]
+WHERE u.[SYS_ID] = @SYS_ID
+  AND u.[U_ID]  = @U_ID
 ";
+```
 
-                case QueryKey.GetEmployeeInfo:
-                    return @"
-    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-    FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-    WHERE [EMP_NO] = @EMP_NO
-";
+### 4. GetAllUsersForExport (用於匯出使用者清單)
 
-                case QueryKey.GetPermissionSettings:
-                    return @"
-SELECT DISTINCT g.APG_NO, g.APG_NAME, f.FUNC_ID, f.FUNC_NA,
-               CASE WHEN ufc.FUNC_ID IS NOT NULL THEN 1 ELSE 0 END as HasPagePermission,
-              CASE 
-        WHEN f.[PARENT_ID] IS NULL OR f.[PARENT_ID] = '' OR f.[PARENT_ID] = 'HOME' 
-        THEN CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)) + '.0'
-        ELSE 
-            ISNULL(
-                (SELECT CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
-                 FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
-                 WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] = f.[SYS_ID]
-                ), 
-                '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
-            )
-        END as SortPath
-            FROM [HI-AUTOS].[dbo].[AP_GROUP] g
-            CROSS JOIN [HI-AUTOS].[dbo].[AP_FUNC] f
-            LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] ufc 
-                ON g.SYS_ID = ufc.SYS_ID AND g.APG_NO = ufc.APG_NO AND f.FUNC_ID = ufc.FUNC_ID
-            WHERE g.SYS_ID = @SYS_ID AND f.SYS_ID = @SYS_ID
-";
+**原本:**
 
-                case QueryKey.GetButtonPermissionItems:
-                    return @"
-            SELECT rf.BTNSEQ, rf.BTNID, rf.BTN_NAME,
-                   CASE WHEN ufc.BTNSEQ IS NOT NULL THEN 1 ELSE 0 END as HasPermission
-            FROM [HI-AUTOS].[dbo].[AP_RFUNC] rf
-            LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] ufc 
-                ON rf.SYS_ID = ufc.SYS_ID AND rf.FUNC_ID = ufc.FUNC_ID AND rf.BTNSEQ = ufc.BTNSEQ AND ufc.APG_NO = @APG_NO
-            WHERE rf.SYS_ID = @SYS_ID AND rf.FUNC_ID = @FUNC_ID
-            ORDER BY rf.BTNSEQ
-";
-
-                case QueryKey.GetNextGroupNo:
-                    return @"
-            SELECT ISNULL(MAX(CAST(APG_NO AS INT)), 0) + 1 as NextNo
-            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-            WHERE [SYS_ID] = @SYS_ID AND ISNUMERIC(APG_NO) = 1
-";
-
-                case QueryKey.GetNextButtonSeq:
-                    return @"
-            SELECT ISNULL(MAX(CAST(BTNSEQ AS INT)), 0) + 1 as NextSeq
-            FROM [HI-AUTOS].[dbo].[AP_RFUNC] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND ISNUMERIC(BTNSEQ) = 1
-";
-
-                case QueryKey.CanDeleteGroup:
-                    return @"
-            SELECT COUNT(*) as UserCount
-            FROM [HI-AUTOS].[dbo].[AP_USER] 
-            WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
-";
-
-                case QueryKey.CanDeleteFunction:
-                    return @"
-            SELECT COUNT(*) as PermissionCount
-            FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
-            
-            UNION ALL
-            
-            SELECT COUNT(*) as PermissionCount
-            FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
-";
-
-                case QueryKey.IsButtonIdExists:
-                    return @"
-            SELECT COUNT(*) as Count
-            FROM [HI-AUTOS].[dbo].[AP_RFUNC] 
-            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND [BTNID] = @BTNID
-";
-
-                case QueryKey.MoveItem:
-                    return @"
-            SELECT [FUNC_ID], [SORT_NO]
-            FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-            WHERE [SYS_ID] = @SYS_ID 
-            AND [FUNC_ID] != @SYS_ID
-            AND [IS_SHOW] = 'Y'
-            AND ((@PARENT_ID IS NULL AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '')) OR [PARENT_ID] = @PARENT_ID)
-            ORDER BY CAST(ISNULL([SORT_NO], '999') AS INT), [FUNC_ID]
-";
-
-                case QueryKey.MoveGroup:
-                    return @"
-            SELECT [FUNC_ID], [SORT_NO]
-            FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-            WHERE [SYS_ID] = @SYS_ID 
-            AND [FUNC_ID] != @SYS_ID
-            AND [IS_SHOW] = 'Y'
-            AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '' 
-                 OR [PARENT_ID] NOT IN (
-                    SELECT [FUNC_ID] FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-                    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] != @SYS_ID
-                 ))
-            ORDER BY CAST(ISNULL([SORT_NO], '999') AS INT), [FUNC_ID]
-";
-
-                case QueryKey.GetNextSortNo_parentId:
-                    return @"
-                SELECT ISNULL(MAX(CAST([SORT_NO] AS INT)), 0) + 1 as NextSortNo
-                FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-                WHERE [SYS_ID] = @SYS_ID 
-                AND [FUNC_ID] != @SYS_ID
-                AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '')
-                AND ISNUMERIC([SORT_NO]) = 1
-";
-
-                case QueryKey.GetNextSortNo:
-                    return @"
-                SELECT ISNULL(MAX(CAST([SORT_NO] AS INT)), 0) + 1 as NextSortNo
-                FROM [HI-AUTOS].[dbo].[AP_FUNC] 
-                WHERE [SYS_ID] = @SYS_ID 
-                AND [PARENT_ID] = @PARENT_ID
-                AND ISNUMERIC([SORT_NO]) = 1
-";
-
-                case QueryKey.ImportUsersFromExcel:
-                    return @"
-            SELECT COUNT(1) 
-            FROM AP_GROUP g
-            WHERE g.SYS_ID = @SYS_ID 
-              AND g.APG_NO = @AN
-              AND EXISTS (
-                  SELECT 1 FROM AP_USER u
-                  WHERE u.SYS_ID = @SYS_ID
-                    AND (u.APG_NO = @AN OR u.APG_NO = '001')
-                    AND u.U_ID = @U_ID
-              )
-";
-
-                case QueryKey.HasGroupPermission:
-                    return @"
-            SELECT 
-                CASE 
-                    -- 如果是 001 群組成員 → 有完整權限
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_USER 
-                        WHERE SYS_ID = @SYS_ID 
-                          AND RTRIM(APG_NO) = '001'
-                          AND U_ID = @U_ID
-                    ) THEN 1
-                    
-                    -- 如果目標是 001 但不是 001 → 無權限
-                    WHEN RTRIM(@AN) = '001' THEN 0
-                    
-                    -- 如果不是 001，但目標也不是 001 → 有權限
-                    WHEN EXISTS (
-                        SELECT 1 FROM AP_USER
-                        WHERE SYS_ID = @SYS_ID
-                          AND U_ID = @U_ID
-                    ) THEN 1
-                    
-                    ELSE 0
-                END AS HasPermission
-";
-
-                case QueryKey.ProcessUserRow_chkemp:
-                    return @"
-SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO
-";
-
-                case QueryKey.ProcessUserRow_chkuser:
-                    return @"
-            SELECT COUNT(1) 
-            FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID 
-              AND APG_NO = @AN 
-              AND U_ID = @U_ID
-              AND EXISTS (
-                  SELECT 1 FROM AP_USER u2
-                  WHERE u2.SYS_ID = @SYS_ID
-                    AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
-                    AND u2.U_ID = @CREATOR
-              )
-";
-
-                case QueryKey.ProcessUserRow_chksys:
-                    return @"
-            SELECT COUNT(1) 
-            FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID 
-              AND APG_NO <> @AN 
-              AND U_ID = @U_ID
-              AND EXISTS (
-                  SELECT 1 FROM AP_USER u2
-                  WHERE u2.SYS_ID = @SYS_ID
-                    AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
-                    AND u2.U_ID = @CREATOR
-              )
-";
-
-                case QueryKey.GetAllUsersForExport:
-                    return @"
+```csharp
+case QueryKey.GetAllUsersForExport:
+    return @"
 	SELECT 
             u.[U_ID],
             u.[U_NAME],
@@ -1105,122 +136,177 @@ SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO
         WHERE u.[SYS_ID] = @SYS_ID
         ORDER BY u.[APG_NO], u.[U_ID]
 ";
+```
 
-                case QueryKey.Get_Bodies:
-                    return @"
-declare @today date = getdate()
-select 
-TITLE, CONTENTS
-, concat('heading', ROW_NUMBER() over (order by EFF_DATE desc)) as HeadId
-, concat('collapse', ROW_NUMBER() over (order by EFF_DATE desc)) as CollapseId
-, case when OPEN_FLAG = 'Y' then 'tab-collapsed' else '' end as TabCollapsed
-, case when OPEN_FLAG = 'Y' then 'true' else 'false' end as IsExpanded
-, case when OPEN_FLAG = 'Y' then 'show' else '' end as Show
-, case when PRIORITY_FLAG = '1' then 'very-important' when PRIORITY_FLAG = '2' then 'important' else '' end as TagColor
-, case when PRIORITY_FLAG = '1' then 2 when PRIORITY_FLAG = '2' then 1 else 0 end as Tag
-, case when PRIORITY_FLAG = '1' then 'font-size-very-important' when PRIORITY_FLAG = '2' then 'font-size-important' else '' end as FontSize
-, case when MARK_FLAG = 'Y' then 'card-mark' else '' end as Mark
-, EFF_DATE
-from MR_H8BULLETIN where SYSTEM_ID = 'HI_APACCESS' and @today >= EFF_DATE and @today <= END_DATE
-";
+**這個已經改對了!**
 
-                case QueryKey.GetAvailableSystems:
-                    return @"
-                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME], s.[CREATOR], s.[CREATE_TIME], s.[EDITOR], s.[EDIT_TIME]
-                FROM [HI-APLOG].[dbo].[AP_SYS] s
-                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
-                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-                WHERE u.[U_ID] = @EMP_NO 
-                  AND u.[APG_NO] = '001' 
-                  AND g.[APG_NO] = '001'
-                ORDER BY s.[SYS_ID]
-";
+### 5. GetEmployeeName (用於取得員工姓名)
 
-                case QueryKey.GetMaintainableSystemOptions:
-                    return @"
-                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME]
-                FROM [HI-APLOG].[dbo].[AP_SYS] s
-                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
-                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-                WHERE u.[U_ID] = @EMP_NO 
-                  AND u.[APG_NO] = '001' 
-                  AND g.[APG_NO] = '001'
-                ORDER BY s.[SYS_ID]
-";
+**原本:**
 
-                case QueryKey.CheckSystemExistsInApSys:
-                    return @"
-                SELECT COUNT(1) 
-                FROM [HI-APLOG].[dbo].[AP_SYS] 
-                WHERE [SYS_ID] = @SYS_ID
-";
-
-                case QueryKey.CheckSystemHasGroup001:
-                    return @"
-                SELECT COUNT(1) 
-                FROM [HI-AUTOS].[dbo].[AP_GROUP] 
-                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001'
-";
-
-                case QueryKey.GetEmployeeName:
-                    return @"
+```csharp
+case QueryKey.GetEmployeeName:
+    return @"
                 SELECT EMP_NAME 
                 FROM [HILIFE_DB3].[DB_SHARE].[dbo].[M1EMP_MAST] 
                 WHERE EMP_NO = @EMP_NO
 ";
+```
 
-                case QueryKey.CheckUserInGroup001:
-                    return @"
-                SELECT COUNT(1) 
-                FROM [HI-AUTOS].[dbo].[AP_USER] 
-                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001' AND [U_ID] = @U_ID
-";
+**改為:**
 
-                case QueryKey.GetAllowedGroupsForUser_admin:
-                    return @"
-       SELECT COUNT(1) 
-            FROM AP_USER 
-            WHERE SYS_ID = @SYS_ID 
-              AND U_ID = @U_ID 
-              AND RTRIM(APG_NO) = '001'
+```csharp
+case QueryKey.GetEmployeeName:
+    return @"
+                SELECT EMP_NAME 
+                FROM [HI-AUTOS].[dbo].[M1EMP_MAST] 
+                WHERE EMP_NO = @EMP_NO
 ";
+```
 
-                case QueryKey.GetAllowedGroupsForUser_all:
-                    return @"
-                SELECT APG_NO 
-                FROM AP_GROUP 
-                WHERE SYS_ID = @SYS_ID
-                ORDER BY APG_NO
-";
+## F_AP 中需要修改的地方
 
-                case QueryKey.GetAllowedGroupsForUser_noadmin:
-                    return @"
-                SELECT APG_NO 
-                FROM AP_GROUP 
-                WHERE SYS_ID = @SYS_ID
-                  AND RTRIM(APG_NO) <> '001'
-                ORDER BY APG_NO
-";
-             
-                case QueryKey.GetMyExportRecords:
-                    return @"
-            SELECT 
-                [ID],
-                [FILE_NAME],
-                [CREATOR],
-                [CODE_GUARD],
-                CONVERT(varchar, [CREATE_TIME], 120) as CREATE_TIME,
-                ISNULL([SYS_ID], '') as SYS_ID
-            FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
-            WHERE [CREATOR] = @CREATOR
-              AND ([SYS_ID] = @SYS_ID OR @SYS_ID IS NULL)
-              AND [CREATE_TIME] >= DATEADD(MONTH, -3, GETDATE())
-            ORDER BY [CREATE_TIME] DESC
-";
+### ProcessUserRow 方法中的員工檢查
 
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(key), "未知的查詢代碼");
-            }
+**原本:**
+
+```csharp
+case QueryKey.ProcessUserRow_chkemp:
+    return @"
+SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO
+";
+```
+
+**這個已經改對了!**
+
+但是,你需要**額外增加離職檢查**:
+
+```csharp
+case QueryKey.ProcessUserRow_chkemp:
+    return @"
+SELECT EMP_NAME, END_DT 
+FROM [HI-AUTOS].[dbo].[M1EMP_MAST] 
+WHERE EMP_NO=@EMP_NO
+";
+```
+
+然後在 `ProcessUserRow` 方法中增加離職檢查:
+
+```csharp
+private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
+{
+    try
+    {
+        // 1. 檢查員工是否存在
+        string checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
+        var empParams = new List<SqlParameter>
+        {
+            new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+        };
+        var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
+
+        if (empResult.Rows.Count == 0)
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = "查無此員工"
+            });
+            return false;
         }
 
-* 有用到[HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 都要改掉dll呼叫或是怎麼改，現在資料表改這張[HI-AUTOS].[dbo].[M1EMP_MAST]
+        string empName = empResult.Rows[0]["EMP_NAME"].ToString();
+        
+        // ⭐ 新增：檢查是否離職
+        string endDate = empResult.Rows[0]["END_DT"]?.ToString().Trim();
+        if (!string.IsNullOrEmpty(endDate))
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = $"此員工已離職 (離職日期: {endDate})"
+            });
+            return false;
+        }
+
+        // ⭐ 驗證姓名長度（nvarchar(20)）
+        if (empName.Length > 20)
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = "員工姓名長度超過20個字元"
+            });
+            return false;
+        }
+
+        // ... 後續檢查邏輯不變
+```
+
+## Controller 的 AddUser 方法也需要增加離職檢查
+
+```csharp
+// 新增使用者
+[HttpPost]
+public JsonResult AddUser([Bind] UserModel model)
+{
+    try
+    {
+        model.SYS_ID = CurrentSystemId;
+
+        if (ModelState.IsValid)
+        {
+            // ⭐ 新增：檢查員工是否離職
+            var checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
+            var empParams = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = model.U_ID }
+            };
+            var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
+            
+            if (empResult.Rows.Count == 0)
+            {
+                return Json(new { success = false, message = "查無此員工" });
+            }
+            
+            string endDate = empResult.Rows[0]["END_DT"]?.ToString().Trim();
+            if (!string.IsNullOrEmpty(endDate))
+            {
+                return Json(new { success = false, message = $"此員工已離職 (離職日期: {endDate}),無法新增" });
+            }
+
+            var service = GetAPService();
+            var result = service.InsertUser(model, Emp_NO);
+            if (result == null || !result.Contains("fail"))
+            {
+                return Json(new { success = true, message = "使用者新增成功" });
+            }
+            else
+            {
+                return Json(new { success = false, message = "使用者新增失敗：" + result });
+            }
+        }
+        return Json(new { success = false, message = "資料驗證失敗" });
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "新增使用者發生錯誤：" + ex.Message });
+    }
+}
+```
+
+## 總結修改清單
+
+1. ✅ `GetEmployeeList` - 改資料表路徑
+1. ✅ `GetEmployeeInfo` - 改資料表路徑
+1. ✅ `GetUserPermissions` - 改資料表路徑
+1. ✅ `GetAllUsersForExport` - 已改好
+1. ✅ `GetEmployeeName` - 改資料表路徑
+1. ✅ `ProcessUserRow_chkemp` - 已改好,但要加 END_DT 欄位
+1. ⭐ `ProcessUserRow` 方法 - 新增離職檢查邏輯
+1. ⭐ `AddUser` Controller - 新增離職檢查邏輯
+
+這樣就能確保新增或匯入員工時,會檢查該員工是否已離職!​​​​​​​​​​​​​​​​
