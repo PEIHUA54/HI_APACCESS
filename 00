@@ -1,824 +1,1214 @@
-好的!我來改寫 JavaScript,避免使用 `.html()` 和字串拼接 HTML,改用 DOM 操作方式。
+ // 取得員工主檔
+ public string GetEmpMast(string requestJson)
+ {
+     var response = new GetEmpMastModel.GetEmpMastResponse();
 
------
+     try
+     {
+         var request = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastRequest>(requestJson);
 
-## 🔒 安全的 JavaScript 寫法 (符合 Fortify 規範)
+         // 參數檢查
+         if (request.Type != "1" && request.Type != "2" && request.Type != "3")
+         {
+             response.Result_code = Common.Codes.TYPE_ERROR;
+             response.Msg = "Type 只接受 1/2/3";
+             return JsonConvert.SerializeObject(response);
+         }
+         if (request.Type == "3" && (request.EmpNoList == null || request.EmpNoList.Count == 0))
+         {
+             response.Result_code = Common.Codes.NO_EmpNoList;
+             response.Msg = "Type=3 時 EmpNoList 不可為空";
+             return JsonConvert.SerializeObject(response);
+         }
 
-### GroupManagement.cshtml - JavaScript 部分
+         FGetEmpMast func = new FGetEmpMast();
+         response = func.Execute(request.Type, request.EmpNoList, request.Environment);
+     }
+     catch (Exception ex)
+     {
+         response = new GetEmpMastModel.GetEmpMastResponse
+         {
+             Result_code = Common.Codes.SYSTEM_ERROR,
+             Msg = "系統錯誤：" + ex.Message
+         };
+     }
 
-```javascript
-@section Scripts {
-<script>
-    $(document).ready(function() {
-        
-        // ========================================
-        // 匯出帳號清單
-        // ========================================
-        $('#btnExportUsers').click(function () {
-            // 直接開始下載
-            var downloadUrl = '@Url.Action("ExportUserList", "AP")';
-            
-            // 建立隱藏的 iframe 來下載檔案
-            var iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = downloadUrl;
-            document.body.appendChild(iframe);
-            
-            // 延遲顯示授權碼 Modal
-            setTimeout(function() {
-                checkAndShowAuthCode();
-            }, 1000);
-        });
-
-        // ========================================
-        // 檢查並顯示授權碼
-        // ========================================
-        function checkAndShowAuthCode() {
-            $.ajax({
-                url: '@Url.Action("GetAuthCodeInfo", "AP")',
-                type: 'GET',
-                dataType: 'json',
-                success: function(response) {
-                    if (response.success) {
-                        // ✅ 使用 .text() 而不是 .html()
-                        $('#displayAuthCode').text(response.authCode);
-                        $('#displayFileName').text(response.fileName + '.xlsx');
-                        $('#authCodeModal').modal('show');
-                    }
-                },
-                error: function() {
-                    console.log('無法取得授權碼資訊');
-                }
-            });
-        }
-
-        // ========================================
-        // 複製授權碼
-        // ========================================
-        $('#btnCopyAuthCode').click(function() {
-            var authCode = $('#displayAuthCode').text();
-            
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(authCode).then(function() {
-                    showCopySuccess();
-                }).catch(function() {
-                    fallbackCopy(authCode);
-                });
-            } else {
-                fallbackCopy(authCode);
-            }
-        });
-
-        function showCopySuccess() {
-            var btn = $('#btnCopyAuthCode');
-            var icon = btn.find('i');
-            
-            // ✅ 修改屬性和類別,不直接操作 HTML
-            icon.removeClass('fa-copy').addClass('fa-check');
-            btn.contents().filter(function() {
-                return this.nodeType === 3; // 文字節點
-            }).last().replaceWith(' 已複製!');
-            btn.removeClass('btn-outline-primary').addClass('btn-success');
-            
-            setTimeout(function() {
-                icon.removeClass('fa-check').addClass('fa-copy');
-                btn.contents().filter(function() {
-                    return this.nodeType === 3;
-                }).last().replaceWith(' 複製');
-                btn.removeClass('btn-success').addClass('btn-outline-primary');
-            }, 2000);
-        }
-
-        function fallbackCopy(text) {
-            var textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            
-            try {
-                document.execCommand('copy');
-                showCopySuccess();
-            } catch (err) {
-                alert('複製失敗,請手動複製授權碼');
-            }
-            
-            document.body.removeChild(textarea);
-        }
-
-        // ========================================
-        // 查看匯出記錄
-        // ========================================
-        $('#btnExportRecords').click(function () {
-            $('#exportRecordsModal').modal('show');
-            
-            // ✅ 顯示載入中 (使用 DOM 操作)
-            var content = document.getElementById('exportRecordsContent');
-            content.innerHTML = ''; // 清空
-            
-            var loadingDiv = document.createElement('div');
-            loadingDiv.className = 'text-center';
-            
-            var spinner = document.createElement('i');
-            spinner.className = 'fas fa-spinner fa-spin fa-2x';
-            
-            var loadingText = document.createElement('p');
-            loadingText.textContent = '載入中...';
-            
-            loadingDiv.appendChild(spinner);
-            loadingDiv.appendChild(loadingText);
-            content.appendChild(loadingDiv);
-            
-            loadExportRecords();
-        });
-
-        function loadExportRecords() {
-            $.ajax({
-                url: '@Url.Action("GetExportRecords", "AP")',
-                type: 'GET',
-                dataType: 'json',
-                success: function(response) {
-                    if (response.success) {
-                        displayRecords(response.records);
-                    } else {
-                        displayNoRecordsMessage(response.message);
-                    }
-                },
-                error: function() {
-                    displayErrorMessage();
-                }
-            });
-        }
-
-        // ✅ 使用 DOM 操作建立記錄表格
-        function displayRecords(records) {
-            var content = document.getElementById('exportRecordsContent');
-            content.innerHTML = ''; // 清空
-            
-            if (!records || records.length === 0) {
-                displayNoRecordsMessage('目前沒有匯出記錄');
-                return;
-            }
-            
-            // 建立 table-responsive div
-            var tableResponsive = document.createElement('div');
-            tableResponsive.className = 'table-responsive';
-            
-            // 建立 table
-            var table = document.createElement('table');
-            table.className = 'table table-striped table-hover mb-0';
-            
-            // 建立 thead
-            var thead = document.createElement('thead');
-            thead.className = 'thead-light';
-            var headerRow = document.createElement('tr');
-            
-            var headers = [
-                { text: '序號', width: '6%', align: 'center' },
-                { text: '檔案名稱', width: '30%', align: 'left' },
-                { text: '授權碼', width: '15%', align: 'center' },
-                { text: '系統ID', width: '12%', align: 'center' },
-                { text: '匯出人員', width: '12%', align: 'center' },
-                { text: '匯出時間', width: '18%', align: 'center' },
-                { text: '操作', width: '7%', align: 'center' }
-            ];
-            
-            headers.forEach(function(header) {
-                var th = document.createElement('th');
-                th.textContent = header.text;
-                th.style.width = header.width;
-                if (header.align === 'center') {
-                    th.className = 'text-center';
-                }
-                headerRow.appendChild(th);
-            });
-            
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-            
-            // 建立 tbody
-            var tbody = document.createElement('tbody');
-            
-            records.forEach(function(record, index) {
-                var row = document.createElement('tr');
-                
-                // 序號
-                var td1 = document.createElement('td');
-                td1.className = 'text-center';
-                td1.textContent = (index + 1).toString();
-                row.appendChild(td1);
-                
-                // 檔案名稱
-                var td2 = document.createElement('td');
-                var icon = document.createElement('i');
-                icon.className = 'fas fa-file-excel text-success';
-                td2.appendChild(icon);
-                td2.appendChild(document.createTextNode(' ' + record.FILE_NAME + '.xlsx'));
-                row.appendChild(td2);
-                
-                // 授權碼
-                var td3 = document.createElement('td');
-                td3.className = 'text-center';
-                var code = document.createElement('code');
-                code.className = 'auth-code-small';
-                code.textContent = record.CODE_GUARD;
-                td3.appendChild(code);
-                row.appendChild(td3);
-                
-                // 系統ID
-                var td4 = document.createElement('td');
-                td4.className = 'text-center';
-                var badge = document.createElement('span');
-                badge.className = 'badge badge-primary';
-                badge.textContent = record.SYS_ID;
-                td4.appendChild(badge);
-                row.appendChild(td4);
-                
-                // 匯出人員
-                var td5 = document.createElement('td');
-                td5.className = 'text-center';
-                td5.textContent = record.CREATOR;
-                row.appendChild(td5);
-                
-                // 匯出時間
-                var td6 = document.createElement('td');
-                td6.className = 'text-center';
-                td6.textContent = record.CREATE_TIME;
-                row.appendChild(td6);
-                
-                // 操作按鈕
-                var td7 = document.createElement('td');
-                td7.className = 'text-center';
-                var btn = document.createElement('button');
-                btn.className = 'btn btn-sm btn-outline-primary';
-                btn.setAttribute('data-code', record.CODE_GUARD);
-                btn.type = 'button';
-                
-                var btnIcon = document.createElement('i');
-                btnIcon.className = 'fas fa-copy';
-                btn.appendChild(btnIcon);
-                btn.appendChild(document.createTextNode(' 複製'));
-                
-                // 綁定點擊事件
-                btn.addEventListener('click', function() {
-                    var code = this.getAttribute('data-code');
-                    copyCodeFromTable(code, this);
-                });
-                
-                td7.appendChild(btn);
-                row.appendChild(td7);
-                
-                tbody.appendChild(row);
-            });
-            
-            table.appendChild(tbody);
-            tableResponsive.appendChild(table);
-            content.appendChild(tableResponsive);
-        }
-
-        // ✅ 顯示無記錄訊息 (DOM 操作)
-        function displayNoRecordsMessage(message) {
-            var content = document.getElementById('exportRecordsContent');
-            content.innerHTML = ''; // 清空
-            
-            var alert = document.createElement('div');
-            alert.className = 'alert alert-info text-center py-5';
-            
-            var icon = document.createElement('i');
-            icon.className = 'fas fa-inbox fa-3x mb-3 d-block';
-            
-            var title = document.createElement('h5');
-            title.textContent = '目前沒有匯出記錄';
-            
-            var text = document.createElement('p');
-            text.className = 'text-muted mb-0';
-            text.textContent = '最近 3 個月內沒有匯出帳號清單的記錄';
-            
-            alert.appendChild(icon);
-            alert.appendChild(title);
-            alert.appendChild(text);
-            content.appendChild(alert);
-        }
-
-        // ✅ 顯示錯誤訊息 (DOM 操作)
-        function displayErrorMessage() {
-            var content = document.getElementById('exportRecordsContent');
-            content.innerHTML = ''; // 清空
-            
-            var alert = document.createElement('div');
-            alert.className = 'alert alert-danger text-center';
-            
-            var icon = document.createElement('i');
-            icon.className = 'fas fa-times-circle';
-            
-            alert.appendChild(icon);
-            alert.appendChild(document.createTextNode(' 載入失敗'));
-            content.appendChild(alert);
-        }
-
-        // ✅ 複製授權碼 (從表格)
-        function copyCodeFromTable(code, btn) {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(code).then(function() {
-                    updateCopyButton(btn, true);
-                    setTimeout(function() {
-                        updateCopyButton(btn, false);
-                    }, 1500);
-                });
-            } else {
-                var textarea = document.createElement('textarea');
-                textarea.value = code;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                
-                try {
-                    document.execCommand('copy');
-                    updateCopyButton(btn, true);
-                    setTimeout(function() {
-                        updateCopyButton(btn, false);
-                    }, 1500);
-                } catch (err) {
-                    alert('複製失敗');
-                }
-                
-                document.body.removeChild(textarea);
-            }
-        }
-
-        // ✅ 更新複製按鈕狀態
-        function updateCopyButton(btn, isSuccess) {
-            var icon = btn.querySelector('i');
-            var textNode = btn.childNodes[1]; // 第二個子節點是文字
-            
-            if (isSuccess) {
-                icon.className = 'fas fa-check';
-                textNode.nodeValue = ' 已複製';
-                btn.classList.remove('btn-outline-primary');
-                btn.classList.add('btn-success');
-            } else {
-                icon.className = 'fas fa-copy';
-                textNode.nodeValue = ' 複製';
-                btn.classList.remove('btn-success');
-                btn.classList.add('btn-outline-primary');
-            }
-        }
-    });
-</script>
-
-<style>
-    /* 授權碼顯示框 */
-    .auth-code-container {
-        padding: 20px 0;
-    }
-    
-    .auth-code-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 15px 25px;
-        border-radius: 8px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        display: inline-block;
-    }
-    
-    .auth-code-text {
-        font-family: 'Courier New', monospace;
-        font-size: 28px;
-        font-weight: bold;
-        letter-spacing: 4px;
-        color: #ffffff;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        user-select: all;
-    }
-    
-    .auth-code-small {
-        font-family: 'Courier New', monospace;
-        font-size: 13px;
-        font-weight: bold;
-        letter-spacing: 1px;
-        background-color: #f8f9fa;
-        padding: 4px 8px;
-        border-radius: 4px;
-        border: 1px solid #dee2e6;
-        color: #495057;
-    }
-    
-    /* Modal 樣式 */
-    .bg-gradient-primary {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
-    }
-    
-    .bg-gradient-info {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
-    }
-    
-    /* 表格樣式 */
-    .table-responsive {
-        max-height: 500px;
-        overflow-y: auto;
-    }
-    
-    .table thead th {
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        z-index: 10;
-        border-bottom: 2px solid #dee2e6;
-    }
-    
-    .table tbody tr:hover {
-        background-color: #f1f3f5;
-    }
-</style>
-}
-```
-
------
-
-## 🔒 安全性改進說明
-
-### ❌ **避免使用的寫法 (Fortify 會報錯):**
-
-```javascript
-// ❌ 不要用 .html() 插入字串
-$('#content').html('<div>' + userInput + '</div>');
-
-// ❌ 不要用字串拼接 HTML
-var html = '<td>' + data + '</td>';
-$('#table').append(html);
-
-// ❌ 不要用 innerHTML 插入未經處理的字串
-element.innerHTML = '<div>' + userInput + '</div>';
-```
-
-### ✅ **使用的安全寫法:**
-
-```javascript
-// ✅ 使用 .text() 設定純文字
-$('#displayAuthCode').text(response.authCode);
-
-// ✅ 使用 DOM API 建立元素
-var div = document.createElement('div');
-div.textContent = data; // 純文字,不會被解析為 HTML
-div.className = 'my-class';
-parent.appendChild(div);
-
-// ✅ 使用 jQuery 建立元素
-var $div = $('<div>').text(data).addClass('my-class');
-$('#parent').append($div);
-
-// ✅ 清空內容用 innerHTML = ''
-content.innerHTML = ''; // 這個是安全的
-```
-
------
-
-## 📋 主要改進項目
-
-### 1. **授權碼顯示** ✅
-
-```javascript
-// ✅ 使用 .text() 而不是 .html()
-$('#displayAuthCode').text(response.authCode);
-$('#displayFileName').text(response.fileName + '.xlsx');
-```
-
-### 2. **複製按鈕狀態更新** ✅
-
-```javascript
-// ✅ 操作 DOM 元素和類別,不用字串拼接
-var icon = btn.querySelector('i');
-icon.className = 'fas fa-check';
-btn.classList.add('btn-success');
-```
-
-### 3. **建立記錄表格** ✅
-
-```javascript
-// ✅ 使用 createElement 和 appendChild
-var td = document.createElement('td');
-td.textContent = record.FILE_NAME; // 純文字
-row.appendChild(td);
-```
-
-### 4. **載入訊息** ✅
-
-```javascript
-// ✅ 使用 DOM 建立載入訊息
-var loadingText = document.createElement('p');
-loadingText.textContent = '載入中...';
-```
-
------
-
-## ✅ Fortify 掃描重點檢查
-
-這個版本應該可以通過以下 Fortify 檢查:
-
-- ✅ **Cross-Site Scripting (XSS)** - 沒有使用 `.html()` 或 `innerHTML` 插入未處理的字串
-- ✅ **DOM-based XSS** - 使用 `.textContent` 和 `.text()` 而不是 `.innerHTML`
-- ✅ **Code Injection** - 沒有動態執行程式碼
-- ✅ **HTML Injection** - 所有用戶輸入都使用純文字方式處理
-
------
-
-## 🎯 關鍵安全原則
-
-1. **永遠使用 `.text()` 或 `.textContent`** 來設定純文字
-1. **使用 `createElement` 建立元素**,不要用字串拼接
-1. **使用 `appendChild` 添加元素**,不要用 `.html()` 或 `innerHTML`
-1. **只在清空內容時使用 `innerHTML = ''`**
-
------
-
-完成! 這個版本應該可以通過 Fortify 掃描了! 🎉​​​​​​​​​​​​​​​​
-
-好的!你是內部系統可以用 EPPlus 免費版,而且要用**授權碼當作 Excel 的開啟密碼**。
-
------
-
-## 🔐 完整實作方案
-
-### 📋 需求確認:
-
-1. ✅ 使用 HI_CODEGUARD_DLL 產生8碼授權碼
-1. ✅ 授權碼 = Excel 開啟密碼
-1. ✅ 使用者必須輸入授權碼才能開啟 Excel
-1. ✅ 授權碼顯示在 Modal 中
-
------
-
-## 📝 完整程式碼
-
-### 1. Controller (已經正確了!)
-
-```csharp
-using OfficeOpenXml;
+     return JsonConvert.SerializeObject(response);
+ }
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Web.Mvc;
-using HI_CODEGUARD_DLL;
-using Newtonsoft.Json;
+using System.Linq;
+using System.Text;
 
-#region 匯出帳號清單
-
-/// <summary>
-/// 匯出帳號清單 (Excel加密 - 使用 EPPlus)
-/// </summary>
-[HttpGet]
-public ActionResult ExportUserList()
+namespace HI_APACCESS_DLL.Factory
 {
-    try
+    internal class FGetEmpMast
     {
-        string systemId = Session["CurrentSystemId"] as string;
-
-        // 1. 產生授權碼 (這個授權碼就是 Excel 的密碼)
-        CODE_GUARD codeGuard = new CODE_GUARD();
-        string getCodeRequest = JsonConvert.SerializeObject(new
+        internal GetEmpMastModel.GetEmpMastResponse Execute(
+            string type, List<string> empNoList, string environment)
         {
-            SysID = systemId,
-            Data = this.Emp_NO,
-            CodeLength = 8
-        });
+            var response = new GetEmpMastModel.GetEmpMastResponse();
 
-        string getCodeResponse = codeGuard.GetCode(getCodeRequest);
-        dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
-
-        if (codeResult.Result_code != "0000")
-        {
-            return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
-        }
-
-        string authCode = codeResult.Code.ToString();
-
-        // 2. 取得帳號清單
-        var service = GetAPService();
-        var userList = service.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
-        {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-        }
-
-        // 3. 產生加密 Excel (使用授權碼作為密碼)
-        string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-        byte[] excelBytes = CreateEncryptedExcelWithEPPlus(userList, systemId, authCode);
-
-        // 4. 儲存記錄到資料庫
-        var recordModel = new CodeGuardRecordModel
-        {
-            FILE_NAME = fileName,
-            CODE_GUARD = authCode,
-            CREATOR = this.Emp_NO,
-            SYS_ID = systemId
-        };
-
-        service.SaveCodeGuardRecord(recordModel);
-
-        // 5. 刪除超過3個月的舊記錄
-        service.DeleteOldRecords();
-
-        // 6. 儲存授權碼到 TempData (供前端顯示)
-        TempData["AuthCode"] = authCode;
-        TempData["FileName"] = fileName;
-
-        // 7. 回傳加密的 Excel 檔案
-        return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            $"{fileName}.xlsx");
-    }
-    catch (Exception ex)
-    {
-        return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
-    }
-}
-
-/// <summary>
-/// 使用 EPPlus 建立加密 Excel (授權碼 = Excel 密碼)
-/// </summary>
-private byte[] CreateEncryptedExcelWithEPPlus(List<UserExportModel> userList, string systemId, string password)
-{
-    // 設定 EPPlus 授權 (非商業用途)
-    ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-
-    using (var package = new ExcelPackage())
-    {
-        // 建立工作表
-        var worksheet = package.Workbook.Worksheets.Add("帳號清單");
-
-        // 設定標題列
-        var headers = new string[] 
-        { 
-            "系統", "帳號", "姓名", "群組代號", "群組名稱",
-            "部門代號", "部門名稱", "建立人員", "建立日期", "修改人員", "修改日期" 
-        };
-
-        for (int i = 0; i < headers.Length; i++)
-        {
-            worksheet.Cells[1, i + 1].Value = headers[i];
-        }
-
-        // 標題列樣式
-        using (var range = worksheet.Cells[1, 1, 1, headers.Length])
-        {
-            range.Style.Font.Bold = true;
-            range.Style.Font.Size = 11;
-            range.Style.Font.Name = "微軟正黑體";
-            range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
-            range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
-            range.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
-            range.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
-            range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-            range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-            range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-            range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-        }
-
-        // 填入資料
-        int row = 2;
-        foreach (var user in userList)
-        {
-            worksheet.Cells[row, 1].Value = systemId;
-            worksheet.Cells[row, 2].Value = user.U_ID;
-            worksheet.Cells[row, 3].Value = user.U_NAME;
-            worksheet.Cells[row, 4].Value = user.APG_NO;
-            worksheet.Cells[row, 5].Value = user.APG_NAME;
-            worksheet.Cells[row, 6].Value = user.ORGAN_NO;
-            worksheet.Cells[row, 7].Value = user.ORGAN_CAP;
-            worksheet.Cells[row, 8].Value = user.CREATOR;
-            worksheet.Cells[row, 9].Value = user.CREATE_TIME;
-            worksheet.Cells[row, 10].Value = user.EDITOR;
-            worksheet.Cells[row, 11].Value = user.EDIT_TIME;
-
-            // 資料列樣式
-            using (var dataRange = worksheet.Cells[row, 1, row, headers.Length])
+            try
             {
-                dataRange.Style.Font.Name = "微軟正黑體";
-                dataRange.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
-                dataRange.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-                dataRange.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-                dataRange.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
-                dataRange.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
+                {
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    return response;
+                }
+
+                var resultList = new List<GetEmpMastModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    var sql = @"
+SELECT 
+    M.[EMP_NO]     AS EmpNo,
+    M.[EMP_NAME]   AS EmpName,
+    M.[ORGAN_NO]   AS OrganNo,
+    M.[ORGAN_CAP]  AS OrganName,
+    M.[POST_NO]    AS PostNo,
+    M.[POST_NAME]  AS PostName,
+    M.[ENTER_DT]   AS EnterDate,
+    M.[END_DT]     AS EndDate
+FROM [HI-AUTOS].[dbo].[M1EMP_MAST] M
+WHERE 1=1
+";
+
+                    var cmd = new SqlCommand();
+                    cmd.Connection = conn;
+
+                    switch (type)
+                    {
+                        case "1": // 全部（在職+離職）
+                            break;
+
+                        case "2": // 在職（EndDate無）
+                            sql += @"
+AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
+";
+                            break;
+
+                        case "3": // 指定名單
+                            if (empNoList == null || empNoList.Count == 0)
+                            {
+                                response.Result_code = Common.Codes.NO_EmpNoList;
+                                response.Msg = "Type=3 時 EmpNoList 不可為空";
+                                return response;
+                            }
+
+                            // 清理名單（去空白、轉大寫、去重複）
+                            var cleaned = empNoList
+                                .Where(s => !string.IsNullOrWhiteSpace(s))
+                                .Select(s => s.Trim().ToUpper())
+                                .Distinct()
+                                .ToList();
+
+                            if (cleaned.Count == 0)
+                            {
+                                response.Result_code = Common.Codes.NO_EmpNoList;
+                                response.Msg = "EmpNoList 內容為空";
+                                return response;
+                            }
+
+                            var inParams = new List<string>();
+                            for (int i = 0; i < cleaned.Count; i++)
+                            {
+                                string p = $"@EMP{i}";
+                                inParams.Add(p);
+                                cmd.Parameters.AddWithValue(p, cleaned[i]);
+                            }
+                            sql += $" AND M.[EMP_NO] IN ({string.Join(",", inParams)})";
+                            break;
+
+                        default:
+                            response.Result_code = Common.Codes.TYPE_ERROR;
+                            response.Msg = "Type 只接受 1/2/3";
+                            return response;
+                    }
+
+                    sql += " ORDER BY M.[EMP_NO]";
+
+                    cmd.CommandText = sql;
+
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            resultList.Add(new GetEmpMastModel.ResultData
+                            {
+                                EmpNo = reader["EmpNo"]?.ToString(),
+                                EmpName = reader["EmpName"]?.ToString(),
+                                OrganNo = reader["OrganNo"]?.ToString(),
+                                OrganName = reader["OrganName"]?.ToString(),
+                                PostNo = reader["PostNo"]?.ToString(),
+                                PostName = reader["PostName"]?.ToString(),
+                                EnterDate = reader["EnterDate"]?.ToString(),
+                                EndDate = reader["EndDate"]?.ToString(),
+                            });
+                        }
+                    }
+                }
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_DATA;
+                    response.Msg = "查無資料";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
             }
 
-            row++;
+            return response;
         }
-
-        // 自動調整欄寬
-        worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
-        
-        // 加一點額外寬度
-        for (int i = 1; i <= headers.Length; i++)
-        {
-            worksheet.Column(i).Width += 2;
-        }
-
-        // 凍結首列
-        worksheet.View.FreezePanes(2, 1);
-
-        // ⭐⭐⭐ 關鍵:使用授權碼作為 Excel 開啟密碼 ⭐⭐⭐
-        package.Encryption.Password = password;
-
-        // 轉換成 byte array
-        return package.GetAsByteArray();
     }
 }
 
-/// <summary>
-/// 取得授權碼資訊 (Ajax)
-/// </summary>
-[HttpGet]
-public JsonResult GetAuthCodeInfo()
-{
-    try
-    {
-        if (TempData["AuthCode"] != null && TempData["FileName"] != null)
+
+取員工資料dll
+Request傳送參數:
+Environment環境TEST:測試、PROD:正式
+Type查詢類型1:全部名單(在職+離職)、2:在職名單、3:指定名單
+EmpNoList指定名單string[]
+
+我用type1，做查詢員工及匯入或新增的時候 要檢查此員工是否離職[END_DT]=是否有值，
+
+controller:
+   // 批次匯入使用者
+   [HttpPost]
+   public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+   {
+       var service = GetAPService();
+
+       if (file == null || file.ContentLength == 0)
+           return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+
+       if (string.IsNullOrWhiteSpace(apgNo))
+           return Json(new { success = false, message = "請先選擇群組" });
+
+       // ✅ Step 1: 從資料庫取得當前使用者可存取的群組清單
+       var allowedGroups = service.GetAllowedGroupsForUser(CurrentSystemId, this.Emp_NO);
+
+       if (!allowedGroups.Contains(apgNo))
+           throw new UnauthorizedAccessException("未授權的群組操作");
+
+       // ✅ Step 2: 驗證前端傳入的 apgNo 是否在授權清單中
+       if (!allowedGroups.Contains(apgNo))
+       {
+           return Json(new
+           {
+               success = false,
+               message = "無權限操作此群組"
+           });
+       }
+
+       // 副檔名限制
+       var ext = Path.GetExtension(file.FileName).ToLower();
+       if (ext != ".xls" && ext != ".xlsx")
+           return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+       // 上傳暫存
+       var uploadDir = Server.MapPath("~/Upload");
+       if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+       var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+       var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+       try
+       {
+           file.SaveAs(uploadPath);
+           // @SuppressWarnings("AccessControl")
+           // apgNo 已在 controller 層與 service 層雙重驗證
+           // ✅ Step 3: 使用已驗證的 apgNo 和 Emp_NO
+           var importResult = service.ImportUsersFromExcel(
+               uploadPath,
+               CurrentSystemId,
+               apgNo,          // 已驗證的群組
+               this.Emp_NO     // 當前使用者
+           );
+
+           //var importResult = service.ImportUsersFromExcel(uploadPath, CurrentSystemId , apgNo, this.Emp_NO);
+
+           if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+           {
+               // 全部成功
+               return Json(new
+               {
+                   status = "success",
+                   message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+               });
+           }
+           else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+           {
+               // 全部失敗
+               return Json(new
+               {
+                   status = "fail",
+                   message = "匯入失敗：請重新上傳",
+                   errors = importResult.ErrorMessages
+               });
+           }
+           else
+           {
+               // 部分成功
+               return Json(new
+               {
+                   status = "partial",
+                   message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                   errors = importResult.ErrorMessages
+               });
+           }
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+       }
+       finally
+       {
+           if (System.IO.File.Exists(uploadPath))
+           {
+               var fc = new F_Common();
+               fc.SafeDeleteFile(uploadDir, safeName);
+           }
+       }
+   }
+
+   // 新增使用者
+   [HttpPost]
+   public JsonResult AddUser([Bind] UserModel model)
+   {
+       try
+       {
+           model.SYS_ID = CurrentSystemId;
+
+           if (ModelState.IsValid)
+           {
+               var service = GetAPService();
+               var result = service.InsertUser(model, Emp_NO);
+               if (result == null || !result.Contains("fail"))
+               {
+                   return Json(new { success = true, message = "使用者新增成功" });
+               }
+               else
+               {
+                   return Json(new { success = false, message = "使用者新增失敗：" + result });
+               }
+           }
+           return Json(new { success = false, message = "資料驗證失敗" });
+       }
+       catch (Exception ex)
+       {
+           return Json(new { success = false, message = "新增使用者發生錯誤：" + ex.Message });
+       }
+   }
+
+f_ap:
+
+     public ImportResult ImportUsersFromExcel(string filePath, string sysId, string an, string creator)
+     {
+         ImportResult result = new ImportResult()
+         {
+             ErrorMessages = new List<ImportError>()
+         };
+
+         try
+         {
+             an = an?.Trim();
+
+             // **1. 驗證權限**
+             if (!HasGroupPermission(sysId, an, creator))
+             {
+                 result.IsSuccess = false;
+                 result.ErrorMessage = an == "001"
+                     ? "僅001群組成員可以操作001群組的批次匯入"
+                     : "無權限操作此群組";
+                 return result;
+             }
+
+             // **2. 驗證群組存在 (加入 UserID 驗證)**
+             //                string validateGroupSql = @"
+             //            SELECT COUNT(1) 
+             //            FROM AP_GROUP g
+             //            WHERE g.SYS_ID = @SYS_ID 
+             //              AND g.APG_NO = @AN
+             //              AND EXISTS (
+             //                  SELECT 1 FROM AP_USER u
+             //                  WHERE u.SYS_ID = @SYS_ID
+             //                    AND (u.APG_NO = @AN OR u.APG_NO = '001')
+             //                    AND u.U_ID = @U_ID
+             //              )
+             //";
+
+             string validateGroupSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ImportUsersFromExcel);
+             var validateParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@AN", SqlDbType.Char, 3) { Value = an },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = creator }
+             };
+
+             //                string validateGroupSql = @"
+             //SELECT COUNT(1) FROM AP_GROUP WHERE SYS_ID=@SYS_ID AND APG_NO=@AN
+             //";
+
+
+             //var validateParams = new List<SqlParameter>
+             //{
+             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+             //    new SqlParameter("@AN", SqlDbType.Char, 3) { Value = an }  
+             //};
+
+             var validateResult = SVS_DBmanager.QueryBySQL(validateGroupSql, validateParams);
+
+             if (validateResult.Rows.Count == 0 || Convert.ToInt32(validateResult.Rows[0][0]) == 0)
+             {
+                 result.IsSuccess = false;
+                 result.ErrorMessage = "群組不存在或無權限存取";
+                 return result;
+             }
+
+             // **3. 讀取 Excel**
+             var rows = ReadExcelData(filePath, result);
+             if (!result.IsSuccess || rows == null) return result;
+
+             // **4. 批次處理每筆資料**
+             int successCount = 0;
+             foreach (var row in rows)
+             {
+                 if (ProcessUserRow(row, sysId, an, creator, result))
+                 {
+                     successCount++;
+                 }
+             }
+
+             result.SuccessCount = successCount;
+             result.IsSuccess = true;
+         }
+         catch (Exception ex)
+         {
+             result.IsSuccess = false;
+             result.ErrorMessage = "處理 Excel 匯入時發生錯誤：" + ex.Message;
+         }
+
+         return result;
+     }
+
+     /// <summary>
+     /// 檢查使用者是否有權限操作指定群組
+     /// </summary>
+     private bool HasGroupPermission(string sysId, string an, string userId)
+     {
+         try
+         {
+             string permissionCheckSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.HasGroupPermission);
+
+             var parameters = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+             };
+
+             var result = SVS_DBmanager.QueryBySQL(permissionCheckSql, parameters);
+
+             return result.Rows.Count > 0 && Convert.ToInt32(result.Rows[0]["HasPermission"]) == 1;
+         }
+         catch (Exception ex)
+         {
+             System.Diagnostics.Debug.WriteLine($"[HasGroupPermission] Error: {ex.Message}");
+             return false;
+         }
+     }
+
+     /// <summary>
+     /// 讀取 Excel 資料
+     /// </summary>
+     private List<(int RowNumber, string EmpNo)> ReadExcelData(string filePath, ImportResult result)
+     {
+         var rows = new List<(int RowNumber, string EmpNo)>();
+
+         try
+         {
+             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 開始讀取: {filePath}");
+
+             using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+             using (var reader = ExcelReaderFactory.CreateReader(stream))
+             {
+                 int rowIndex = 0;
+                 while (reader.Read())
+                 {
+                     rowIndex++;
+
+                     // 第一列：檢查表頭
+                     if (rowIndex == 1)
+                     {
+                         string header = reader.GetString(0)?.Trim();
+                         System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 表頭: {header}");
+
+                         if (string.IsNullOrEmpty(header) || header != "員工編號")
+                         {
+                             result.IsSuccess = false;
+                             result.ErrorMessage = "Excel 格式錯誤：第一列第一欄必須是「員工編號」";
+                             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+                             return null;
+                         }
+                         continue;
+                     }
+
+                     // 讀取資料
+                     string empNo = reader.GetValue(0)?.ToString().Trim();
+                     if (!string.IsNullOrEmpty(empNo))
+                     {
+                         // 驗證員工編號長度
+                         if (empNo.Length > 10)
+                         {
+                             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ 行{rowIndex} 員工編號過長: {empNo}");
+                             result.ErrorMessages.Add(new ImportError
+                             {
+                                 RowNumber = rowIndex,
+                                 EmpNo = empNo,
+                                 Message = "員工編號長度超過10個字元"
+                             });
+                             continue;
+                         }
+
+                         rows.Add((rowIndex, empNo));
+                         System.Diagnostics.Debug.WriteLine($"[ReadExcelData] 讀取行{rowIndex}: {empNo}");
+                     }
+                 }
+             }
+
+             // ⭐ 檢查是否有資料
+             if (rows.Count == 0)
+             {
+                 result.IsSuccess = false;
+                 result.ErrorMessage = "Excel 無任何員工資料";
+                 System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗ {result.ErrorMessage}");
+                 return null;
+             }
+
+             // ⭐⭐⭐ 關鍵：設定成功狀態 ⭐⭐⭐
+             result.IsSuccess = true;
+
+             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✓ 成功讀取 {rows.Count} 筆資料");
+             return rows;
+         }
+         catch (Exception ex)
+         {
+             result.IsSuccess = false;
+             result.ErrorMessage = "讀取 Excel 時發生錯誤：" + ex.Message;
+             System.Diagnostics.Debug.WriteLine($"[ReadExcelData] ✗✗✗ Exception: {ex.Message}");
+             return null;
+         }
+     }
+
+     /// <summary>
+     /// 處理單筆員工資料
+     /// </summary>
+     private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
+     {
+         try
+         {
+             // 1. 檢查員工是否存在
+             //string checkEmpSql = "SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO";
+             string checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
+             var empParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+             };
+             var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
+
+             if (empResult.Rows.Count == 0)
+             {
+                 result.ErrorMessages.Add(new ImportError
+                 {
+                     RowNumber = row.RowNumber,
+                     EmpNo = row.EmpNo,
+                     Message = "查無此員工"
+                 });
+                 return false;
+             }
+
+             string empName = empResult.Rows[0]["EMP_NAME"].ToString();
+
+             // ⭐ 驗證姓名長度（nvarchar(20)）
+             if (empName.Length > 20)
+             {
+                 result.ErrorMessages.Add(new ImportError
+                 {
+                     RowNumber = row.RowNumber,
+                     EmpNo = row.EmpNo,
+                     Message = "員工姓名長度超過20個字元"
+                 });
+                 return false;
+             }
+
+             // 2. 檢查是否已存在於同一個群組 (加入 creator 驗證)
+             //    string checkUserSql = @"
+             //SELECT COUNT(1) 
+             //FROM AP_USER 
+             //WHERE SYS_ID = @SYS_ID 
+             //  AND APG_NO = @AN 
+             //  AND U_ID = @U_ID
+             //  AND EXISTS (
+             //      SELECT 1 FROM AP_USER u2
+             //      WHERE u2.SYS_ID = @SYS_ID
+             //        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
+             //        AND u2.U_ID = @CREATOR
+             //  )";
+
+             string checkUserSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkuser);
+             var checkUserParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+             };
+             //string checkUserSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO=@AN AND U_ID=@U_ID";
+             //var checkUserParams = new List<SqlParameter>
+             //{
+             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  
+             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+             //};
+             var userResult = SVS_DBmanager.QueryBySQL(checkUserSql, checkUserParams);
+
+             if (Convert.ToInt32(userResult.Rows[0][0]) > 0)
+             {
+                 result.ErrorMessages.Add(new ImportError
+                 {
+                     RowNumber = row.RowNumber,
+                     EmpNo = row.EmpNo,
+                     Message = "此群組已存在該員工"
+                 });
+                 return false;
+             }
+
+             // 3. 檢查是否已存在於該系統的其他群組 (加入 creator 驗證)
+             //    string checkSystemSql = @"
+             //SELECT COUNT(1) 
+             //FROM AP_USER 
+             //WHERE SYS_ID = @SYS_ID 
+             //  AND APG_NO <> @AN 
+             //  AND U_ID = @U_ID
+             //  AND EXISTS (
+             //      SELECT 1 FROM AP_USER u2
+             //      WHERE u2.SYS_ID = @SYS_ID
+             //        AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
+             //        AND u2.U_ID = @CREATOR
+             //  )";
+             string checkSystemSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chksys);
+             var checkSystemParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+             };
+             //string checkSystemSql = "SELECT COUNT(1) FROM AP_USER WHERE SYS_ID=@SYS_ID AND APG_NO<>@AN AND U_ID=@U_ID";
+             //var checkSystemParams = new List<SqlParameter>
+             //{
+             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },  
+             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+             //};
+             var systemResult = SVS_DBmanager.QueryBySQL(checkSystemSql, checkSystemParams);
+
+             if (Convert.ToInt32(systemResult.Rows[0][0]) > 0)
+             {
+                 result.ErrorMessages.Add(new ImportError
+                 {
+                     RowNumber = row.RowNumber,
+                     EmpNo = row.EmpNo,
+                     Message = "此系統其他群組已存在該員工"
+                 });
+                 return false;
+             }
+
+             // 4. 寫入 AP_USER (額外驗證 creator 權限)
+             string insertSql = @"
+         INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+         SELECT @SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE()
+         WHERE EXISTS (
+             SELECT 1 FROM AP_USER
+             WHERE SYS_ID = @SYS_ID
+               AND (APG_NO = @AN OR APG_NO = '001')
+               AND U_ID = @CREATOR
+         )";
+             var insertParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+                 new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName },
+                 new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+             };
+             //    string insertSql = @"
+             //INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+             //VALUES(@SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE())";
+
+             //var insertParams = new List<SqlParameter>
+             //{
+             //    new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+             //    new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an }, 
+             //    new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+             //    new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName }, 
+             //    new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+             //};
+
+             SVS_DBmanager.ExecuteSQL(insertSql, insertParams);
+
+             return true;
+         }
+         catch (Exception exRow)
+         {
+             result.ErrorMessages.Add(new ImportError
+             {
+                 RowNumber = row.RowNumber,
+                 EmpNo = row.EmpNo,
+                 Message = "寫入錯誤：" + exRow.Message
+             });
+             return false;
+         }
+     }
+
+     /// <summary>
+     /// 取得使用者可操作的群組清單
+     /// 邏輯：
+     /// - 001群組成員：可操作所有群組（包括001）
+     /// - 非001群組成員：可操作所有群組，但不包括001
+     /// </summary>
+     public List<string> GetAllowedGroupsForUser(string sysId, string userId)
+     {
+         var allowedGroups = new List<string>();
+
+         try
+         {
+             // Step 1: 檢查是否為 001 群組成員
+             string checkAdminSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_admin);
+
+             var adminParams = new List<SqlParameter>
+             {
+                 new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+                 new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = userId }
+             };
+
+             var adminResult = SVS_DBmanager.QueryBySQL(checkAdminSql, adminParams);
+             bool isAdmin = Convert.ToInt32(adminResult.Rows[0][0]) > 0;
+
+             if (isAdmin)
+             {
+                 //  001 群組成員：回傳所有群組（包括 001）
+                 string allGroupsSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_all);
+
+                 var allGroupsParams = new List<SqlParameter>
+                 {
+                     new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId }
+                 };
+
+                 var allGroupsResult = SVS_DBmanager.QueryBySQL(allGroupsSql, allGroupsParams);
+
+                 foreach (DataRow row in allGroupsResult.Rows)
+                 {
+                     allowedGroups.Add(row["APG_NO"].ToString().Trim());
+                 }
+
+                 System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 是 001 管理員，可存取所有群組: {string.Join(", ", allowedGroups)}");
+             }
+             else
+             {
+                 // 非 001 群組成員：回傳所有群組，但排除 001
+                 string nonAdminGroupsSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllowedGroupsForUser_noadmin);
+
+                 var nonAdminParams = new List<SqlParameter>
+                 {
+                     new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId }
+                 };
+
+                 var nonAdminResult = SVS_DBmanager.QueryBySQL(nonAdminGroupsSql, nonAdminParams);
+
+                 foreach (DataRow row in nonAdminResult.Rows)
+                 {
+                     allowedGroups.Add(row["APG_NO"].ToString().Trim());
+                 }
+
+                 System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] User {userId} 為非 001 使用者，可存取的群組（排除001）: {string.Join(", ", allowedGroups)}");
+             }
+         }
+         catch (Exception ex)
+         {
+             System.Diagnostics.Debug.WriteLine($"[GetAllowedGroups] 錯誤: {ex.Message}");
+         }
+
+         return allowedGroups;
+     }
+
+
+sql key:
+        public static string GetQuery(QueryKey key)
         {
-            var authCode = TempData["AuthCode"].ToString();
-            var fileName = TempData["FileName"].ToString();
-
-            // 保留 TempData 供下次使用
-            TempData.Keep("AuthCode");
-            TempData.Keep("FileName");
-
-            return Json(new
+            switch (key)
             {
-                success = true,
-                authCode = authCode,
-                fileName = fileName
-            }, JsonRequestBehavior.AllowGet);
-        }
+                case QueryKey.GetParentGroups:
+                    return @"
+    SELECT [PARENT_APG_NO]
+    FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+    WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
+    ORDER BY PARENT_APG_NO
+";
 
-        return Json(new { success = false }, JsonRequestBehavior.AllowGet);
-    }
-    catch (Exception ex)
-    {
-        return Json(new { success = false, message = ex.Message }, JsonRequestBehavior.AllowGet);
-    }
-}
+                case QueryKey.GetAllGroups:
+                    return @"
+            SELECT [SYS_ID], [APG_NO], [APG_NAME], [PARENT_APG_NO], [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+            WHERE [SYS_ID] = @SYS_ID
+            ORDER BY [APG_NO]
+";
 
-/// <summary>
-/// 取得匯出記錄 (Ajax)
-/// </summary>
-[HttpGet]
-public JsonResult GetExportRecords()
-{
-    try
-    {
-        string systemId = Session["CurrentSystemId"] as string;
+                case QueryKey.GetGroupByNo:
+                    return @"
+            SELECT [SYS_ID], [APG_NO], [APG_NAME],[PARENT_APG_NO],  [CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+            WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
+";
 
-        var service = GetAPService();
-        var records = service.GetMyExportRecords(this.Emp_NO, systemId);
+                case QueryKey.GetAllFunctions:
+                    return @"
+  SELECT f.[SYS_ID], f.[FUNC_ID], f.[FUNC_NA], f.[PARENT_ID], f.[SORT_NO],
+           f.[IS_SHOW], f.[MEMO], f.[VIEW_H], f.[VIEW_HB], f.[FUNC_TYPE],
+           f.[CREATOR], f.[CREATE_TIME], f.[EDITOR], f.[EDIT_TIME],
+           CASE 
+               WHEN f.[PARENT_ID] IS NULL OR f.[PARENT_ID] = '' OR f.[PARENT_ID] = 'HOME' 
+                    THEN CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)) + '.0'
+               ELSE (
+                    SELECT ISNULL(CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)), 
+                                  '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)))
+                    FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
+                    WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] = @SYS_ID
+                )
+           END as SortPath
+    FROM [HI-AUTOS].[dbo].[AP_FUNC] f
+    WHERE f.[SYS_ID] = @SYS_ID 
+    ORDER BY SortPath, f.[FUNC_ID]
+";
 
-        if (records != null && records.Count > 0)
-        {
-            return Json(new
-            {
-                success = true,
-                records = records
-            }, JsonRequestBehavior.AllowGet);
-        }
-        else
-        {
-            return Json(new
-            {
-                success = false,
-                message = "目前沒有匯出記錄"
-            }, JsonRequestBehavior.AllowGet);
-        }
-    }
-    catch (Exception ex)
-    {
-        return Json(new
-        {
-            success = false,
-            message = $"查詢失敗: {ex.Message}"
-        }, JsonRequestBehavior.AllowGet);
-    }
-}
+                case QueryKey.GetButtonsByFuncId:
+                    return @"
+          SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
+[CONTROLLER], [ACTION], [LOC], [ONCLICK],
+[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+FROM [HI-AUTOS].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+ORDER BY CAST([BTNSEQ] AS INT)
+";
 
-#endregion
-```
+                case QueryKey.GetAllButtons:
+                    return @"
+           SELECT [SYS_ID], [FUNC_ID], [BTNSEQ], [BTNID], [BTN_NAME],
+[CONTROLLER], [ACTION], [LOC], [ONCLICK],
+[CREATOR], [CREATE_TIME], [EDITOR], [EDIT_TIME]
+FROM [HI-AUTOS].[dbo].[AP_RFUNC]
+WHERE [SYS_ID] = @SYS_ID
+ORDER BY [FUNC_ID], CAST([BTNSEQ] AS INT)
+";
 
------
+                case QueryKey.GetUsersByGroup:
+                    return @"
+            SELECT u.[SYS_ID], u.[APG_NO], g.[APG_NAME], u.[U_ID], u.[U_NAME], 
+                   u.[CREATOR], u.[CREATE_TIME], u.[EDITOR], u.[EDIT_TIME]
+            FROM [HI-AUTOS].[dbo].[AP_USER] u
+            LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
+            WHERE u.[SYS_ID] = @SYS_ID
+";
 
-### 2. Factory - F_AP.cs (查詢要包含 CODE_GUARD)
+                case QueryKey.ChangeUserGroup_chkgroup:
+                    return @"
+SELECT COUNT(1) 
+FROM [HI-AUTOS].[dbo].[AP_GROUP]
+WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
+";
 
-```csharp
-/// <summary>
-/// 取得個人匯出記錄(最近3個月) - 包含授權碼
-/// </summary>
-public List<ExportRecordViewModel> GetMyExportRecords(string creator, string systemId)
-{
-    try
-    {
-        string sql = @"
+                case QueryKey.ChangeUserGroup_chkuser:
+                    return @"
+SELECT COUNT(1)
+FROM [HI-AUTOS].[dbo].[AP_USER]
+WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @OLD_APG_NO AND [U_ID] = @U_ID
+";
+
+                case QueryKey.GetUserPermissions:
+                    return @"
+            SELECT  u.[SYS_ID],
+        u.[APG_NO],
+        g.[APG_NAME],
+        u.[U_ID],
+        u.[U_NAME],
+        emp.[ORGAN_CAP],    -- 部門
+        emp.[POST_NAME],    -- 職稱
+        u.[CREATOR],
+        u.[CREATE_TIME],
+        u.[EDITOR],
+        u.[EDIT_TIME]
+FROM [HI-AUTOS].[dbo].[AP_USER] u
+LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g
+       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
+LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] emp
+       ON emp.[EMP_NO] = u.[U_ID]
+WHERE u.[SYS_ID] = @SYS_ID
+  AND u.[U_ID]  = @U_ID
+";
+
+                case QueryKey.GetEmployeeList:
+                    return @"
+SELECT TOP 1000 
+    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
+    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
+WHERE 1=1
+";
+
+                case QueryKey.GetEmployeeInfo:
+                    return @"
+    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
+    FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
+    WHERE [EMP_NO] = @EMP_NO
+";
+
+                case QueryKey.GetPermissionSettings:
+                    return @"
+SELECT DISTINCT g.APG_NO, g.APG_NAME, f.FUNC_ID, f.FUNC_NA,
+               CASE WHEN ufc.FUNC_ID IS NOT NULL THEN 1 ELSE 0 END as HasPagePermission,
+              CASE 
+        WHEN f.[PARENT_ID] IS NULL OR f.[PARENT_ID] = '' OR f.[PARENT_ID] = 'HOME' 
+        THEN CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10)) + '.0'
+        ELSE 
+            ISNULL(
+                (SELECT CAST(ISNULL(p.[SORT_NO], '999') AS VARCHAR(10)) + '.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
+                 FROM [HI-AUTOS].[dbo].[AP_FUNC] p 
+                 WHERE p.[FUNC_ID] = f.[PARENT_ID] AND p.[SYS_ID] = f.[SYS_ID]
+                ), 
+                '999.' + CAST(ISNULL(f.[SORT_NO], '999') AS VARCHAR(10))
+            )
+        END as SortPath
+            FROM [HI-AUTOS].[dbo].[AP_GROUP] g
+            CROSS JOIN [HI-AUTOS].[dbo].[AP_FUNC] f
+            LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] ufc 
+                ON g.SYS_ID = ufc.SYS_ID AND g.APG_NO = ufc.APG_NO AND f.FUNC_ID = ufc.FUNC_ID
+            WHERE g.SYS_ID = @SYS_ID AND f.SYS_ID = @SYS_ID
+";
+
+                case QueryKey.GetButtonPermissionItems:
+                    return @"
+            SELECT rf.BTNSEQ, rf.BTNID, rf.BTN_NAME,
+                   CASE WHEN ufc.BTNSEQ IS NOT NULL THEN 1 ELSE 0 END as HasPermission
+            FROM [HI-AUTOS].[dbo].[AP_RFUNC] rf
+            LEFT JOIN [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] ufc 
+                ON rf.SYS_ID = ufc.SYS_ID AND rf.FUNC_ID = ufc.FUNC_ID AND rf.BTNSEQ = ufc.BTNSEQ AND ufc.APG_NO = @APG_NO
+            WHERE rf.SYS_ID = @SYS_ID AND rf.FUNC_ID = @FUNC_ID
+            ORDER BY rf.BTNSEQ
+";
+
+                case QueryKey.GetNextGroupNo:
+                    return @"
+            SELECT ISNULL(MAX(CAST(APG_NO AS INT)), 0) + 1 as NextNo
+            FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+            WHERE [SYS_ID] = @SYS_ID AND ISNUMERIC(APG_NO) = 1
+";
+
+                case QueryKey.GetNextButtonSeq:
+                    return @"
+            SELECT ISNULL(MAX(CAST(BTNSEQ AS INT)), 0) + 1 as NextSeq
+            FROM [HI-AUTOS].[dbo].[AP_RFUNC] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND ISNUMERIC(BTNSEQ) = 1
+";
+
+                case QueryKey.CanDeleteGroup:
+                    return @"
+            SELECT COUNT(*) as UserCount
+            FROM [HI-AUTOS].[dbo].[AP_USER] 
+            WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = @APG_NO
+";
+
+                case QueryKey.CanDeleteFunction:
+                    return @"
+            SELECT COUNT(*) as PermissionCount
+            FROM [HI-AUTOS].[dbo].[AP_USER_FUNC_CONFIG] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+            
+            UNION ALL
+            
+            SELECT COUNT(*) as PermissionCount
+            FROM [HI-AUTOS].[dbo].[AP_USER_RFUNC_CONFIG] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID
+";
+
+                case QueryKey.IsButtonIdExists:
+                    return @"
+            SELECT COUNT(*) as Count
+            FROM [HI-AUTOS].[dbo].[AP_RFUNC] 
+            WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] = @FUNC_ID AND [BTNID] = @BTNID
+";
+
+                case QueryKey.MoveItem:
+                    return @"
+            SELECT [FUNC_ID], [SORT_NO]
+            FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+            WHERE [SYS_ID] = @SYS_ID 
+            AND [FUNC_ID] != @SYS_ID
+            AND [IS_SHOW] = 'Y'
+            AND ((@PARENT_ID IS NULL AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '')) OR [PARENT_ID] = @PARENT_ID)
+            ORDER BY CAST(ISNULL([SORT_NO], '999') AS INT), [FUNC_ID]
+";
+
+                case QueryKey.MoveGroup:
+                    return @"
+            SELECT [FUNC_ID], [SORT_NO]
+            FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+            WHERE [SYS_ID] = @SYS_ID 
+            AND [FUNC_ID] != @SYS_ID
+            AND [IS_SHOW] = 'Y'
+            AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '' 
+                 OR [PARENT_ID] NOT IN (
+                    SELECT [FUNC_ID] FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+                    WHERE [SYS_ID] = @SYS_ID AND [FUNC_ID] != @SYS_ID
+                 ))
+            ORDER BY CAST(ISNULL([SORT_NO], '999') AS INT), [FUNC_ID]
+";
+
+                case QueryKey.GetNextSortNo_parentId:
+                    return @"
+                SELECT ISNULL(MAX(CAST([SORT_NO] AS INT)), 0) + 1 as NextSortNo
+                FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+                WHERE [SYS_ID] = @SYS_ID 
+                AND [FUNC_ID] != @SYS_ID
+                AND ([PARENT_ID] IS NULL OR [PARENT_ID] = '')
+                AND ISNUMERIC([SORT_NO]) = 1
+";
+
+                case QueryKey.GetNextSortNo:
+                    return @"
+                SELECT ISNULL(MAX(CAST([SORT_NO] AS INT)), 0) + 1 as NextSortNo
+                FROM [HI-AUTOS].[dbo].[AP_FUNC] 
+                WHERE [SYS_ID] = @SYS_ID 
+                AND [PARENT_ID] = @PARENT_ID
+                AND ISNUMERIC([SORT_NO]) = 1
+";
+
+                case QueryKey.ImportUsersFromExcel:
+                    return @"
+            SELECT COUNT(1) 
+            FROM AP_GROUP g
+            WHERE g.SYS_ID = @SYS_ID 
+              AND g.APG_NO = @AN
+              AND EXISTS (
+                  SELECT 1 FROM AP_USER u
+                  WHERE u.SYS_ID = @SYS_ID
+                    AND (u.APG_NO = @AN OR u.APG_NO = '001')
+                    AND u.U_ID = @U_ID
+              )
+";
+
+                case QueryKey.HasGroupPermission:
+                    return @"
+            SELECT 
+                CASE 
+                    -- 如果是 001 群組成員 → 有完整權限
+                    WHEN EXISTS (
+                        SELECT 1 FROM AP_USER 
+                        WHERE SYS_ID = @SYS_ID 
+                          AND RTRIM(APG_NO) = '001'
+                          AND U_ID = @U_ID
+                    ) THEN 1
+                    
+                    -- 如果目標是 001 但不是 001 → 無權限
+                    WHEN RTRIM(@AN) = '001' THEN 0
+                    
+                    -- 如果不是 001，但目標也不是 001 → 有權限
+                    WHEN EXISTS (
+                        SELECT 1 FROM AP_USER
+                        WHERE SYS_ID = @SYS_ID
+                          AND U_ID = @U_ID
+                    ) THEN 1
+                    
+                    ELSE 0
+                END AS HasPermission
+";
+
+                case QueryKey.ProcessUserRow_chkemp:
+                    return @"
+SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO
+";
+
+                case QueryKey.ProcessUserRow_chkuser:
+                    return @"
+            SELECT COUNT(1) 
+            FROM AP_USER 
+            WHERE SYS_ID = @SYS_ID 
+              AND APG_NO = @AN 
+              AND U_ID = @U_ID
+              AND EXISTS (
+                  SELECT 1 FROM AP_USER u2
+                  WHERE u2.SYS_ID = @SYS_ID
+                    AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
+                    AND u2.U_ID = @CREATOR
+              )
+";
+
+                case QueryKey.ProcessUserRow_chksys:
+                    return @"
+            SELECT COUNT(1) 
+            FROM AP_USER 
+            WHERE SYS_ID = @SYS_ID 
+              AND APG_NO <> @AN 
+              AND U_ID = @U_ID
+              AND EXISTS (
+                  SELECT 1 FROM AP_USER u2
+                  WHERE u2.SYS_ID = @SYS_ID
+                    AND (u2.APG_NO = @AN OR u2.APG_NO = '001')
+                    AND u2.U_ID = @CREATOR
+              )
+";
+
+                case QueryKey.GetAllUsersForExport:
+                    return @"
+	SELECT 
+            u.[U_ID],
+            u.[U_NAME],
+            u.[APG_NO],
+            g.[APG_NAME],
+			m.[ORGAN_NO],
+			m.[ORGAN_CAP],
+            u.[CREATOR],
+            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME, 
+            u.[EDITOR],
+            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME    
+        FROM [HI-AUTOS].[dbo].[AP_USER] u
+        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
+            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+		LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m 
+            ON u.U_ID = m.EMP_NO
+        WHERE u.[SYS_ID] = @SYS_ID
+        ORDER BY u.[APG_NO], u.[U_ID]
+";
+
+                case QueryKey.Get_Bodies:
+                    return @"
+declare @today date = getdate()
+select 
+TITLE, CONTENTS
+, concat('heading', ROW_NUMBER() over (order by EFF_DATE desc)) as HeadId
+, concat('collapse', ROW_NUMBER() over (order by EFF_DATE desc)) as CollapseId
+, case when OPEN_FLAG = 'Y' then 'tab-collapsed' else '' end as TabCollapsed
+, case when OPEN_FLAG = 'Y' then 'true' else 'false' end as IsExpanded
+, case when OPEN_FLAG = 'Y' then 'show' else '' end as Show
+, case when PRIORITY_FLAG = '1' then 'very-important' when PRIORITY_FLAG = '2' then 'important' else '' end as TagColor
+, case when PRIORITY_FLAG = '1' then 2 when PRIORITY_FLAG = '2' then 1 else 0 end as Tag
+, case when PRIORITY_FLAG = '1' then 'font-size-very-important' when PRIORITY_FLAG = '2' then 'font-size-important' else '' end as FontSize
+, case when MARK_FLAG = 'Y' then 'card-mark' else '' end as Mark
+, EFF_DATE
+from MR_H8BULLETIN where SYSTEM_ID = 'HI_APACCESS' and @today >= EFF_DATE and @today <= END_DATE
+";
+
+                case QueryKey.GetAvailableSystems:
+                    return @"
+                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME], s.[CREATOR], s.[CREATE_TIME], s.[EDITOR], s.[EDIT_TIME]
+                FROM [HI-APLOG].[dbo].[AP_SYS] s
+                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
+                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+                WHERE u.[U_ID] = @EMP_NO 
+                  AND u.[APG_NO] = '001' 
+                  AND g.[APG_NO] = '001'
+                ORDER BY s.[SYS_ID]
+";
+
+                case QueryKey.GetMaintainableSystemOptions:
+                    return @"
+                SELECT DISTINCT s.[SYS_ID], s.[SYS_NAME]
+                FROM [HI-APLOG].[dbo].[AP_SYS] s
+                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
+                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+                WHERE u.[U_ID] = @EMP_NO 
+                  AND u.[APG_NO] = '001' 
+                  AND g.[APG_NO] = '001'
+                ORDER BY s.[SYS_ID]
+";
+
+                case QueryKey.CheckSystemExistsInApSys:
+                    return @"
+                SELECT COUNT(1) 
+                FROM [HI-APLOG].[dbo].[AP_SYS] 
+                WHERE [SYS_ID] = @SYS_ID
+";
+
+                case QueryKey.CheckSystemHasGroup001:
+                    return @"
+                SELECT COUNT(1) 
+                FROM [HI-AUTOS].[dbo].[AP_GROUP] 
+                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001'
+";
+
+                case QueryKey.GetEmployeeName:
+                    return @"
+                SELECT EMP_NAME 
+                FROM [HILIFE_DB3].[DB_SHARE].[dbo].[M1EMP_MAST] 
+                WHERE EMP_NO = @EMP_NO
+";
+
+                case QueryKey.CheckUserInGroup001:
+                    return @"
+                SELECT COUNT(1) 
+                FROM [HI-AUTOS].[dbo].[AP_USER] 
+                WHERE [SYS_ID] = @SYS_ID AND [APG_NO] = '001' AND [U_ID] = @U_ID
+";
+
+                case QueryKey.GetAllowedGroupsForUser_admin:
+                    return @"
+       SELECT COUNT(1) 
+            FROM AP_USER 
+            WHERE SYS_ID = @SYS_ID 
+              AND U_ID = @U_ID 
+              AND RTRIM(APG_NO) = '001'
+";
+
+                case QueryKey.GetAllowedGroupsForUser_all:
+                    return @"
+                SELECT APG_NO 
+                FROM AP_GROUP 
+                WHERE SYS_ID = @SYS_ID
+                ORDER BY APG_NO
+";
+
+                case QueryKey.GetAllowedGroupsForUser_noadmin:
+                    return @"
+                SELECT APG_NO 
+                FROM AP_GROUP 
+                WHERE SYS_ID = @SYS_ID
+                  AND RTRIM(APG_NO) <> '001'
+                ORDER BY APG_NO
+";
+             
+                case QueryKey.GetMyExportRecords:
+                    return @"
             SELECT 
                 [ID],
                 [FILE_NAME],
-                [CODE_GUARD],
                 [CREATOR],
+                [CODE_GUARD],
                 CONVERT(varchar, [CREATE_TIME], 120) as CREATE_TIME,
                 ISNULL([SYS_ID], '') as SYS_ID
             FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
@@ -826,483 +1216,11 @@ public List<ExportRecordViewModel> GetMyExportRecords(string creator, string sys
               AND ([SYS_ID] = @SYS_ID OR @SYS_ID IS NULL)
               AND [CREATE_TIME] >= DATEADD(MONTH, -3, GETDATE())
             ORDER BY [CREATE_TIME] DESC
-        ";
+";
 
-        List<SqlParameter> parameters = new List<SqlParameter>
-        {
-            new SqlParameter("@CREATOR", creator ?? (object)DBNull.Value),
-            new SqlParameter("@SYS_ID", string.IsNullOrEmpty(systemId) ? (object)DBNull.Value : systemId)
-        };
-
-        DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-        return SVS_DBmanager.ConvertToList<ExportRecordViewModel>(dt);
-    }
-    catch (Exception ex)
-    {
-        System.Diagnostics.Debug.WriteLine($"查詢匯出記錄失敗: {ex.Message}");
-        return new List<ExportRecordViewModel>();
-    }
-}
-```
-
------
-
-### 3. Model - ExportRecordViewModel (要有 CODE_GUARD)
-
-```csharp
-/// <summary>
-/// 匯出記錄顯示模型
-/// </summary>
-public class ExportRecordViewModel
-{
-    public int ID { get; set; }
-    public string FILE_NAME { get; set; }
-    public string CODE_GUARD { get; set; }  // ⭐ 授權碼欄位
-    public string CREATOR { get; set; }
-    public string CREATE_TIME { get; set; }
-    public string SYS_ID { get; set; }
-}
-```
-
------
-
-### 4. View - GroupManagement.cshtml (完整版)
-
-```html
-<!-- 授權碼顯示 Modal -->
-<div class="modal fade" id="authCodeModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
-    <div class="modal-dialog modal-dialog-centered" role="document">
-        <div class="modal-content">
-            <div class="modal-header bg-gradient-primary text-white">
-                <h5 class="modal-title">
-                    <i class="fas fa-key"></i> Excel 檔案授權碼
-                </h5>
-            </div>
-            <div class="modal-body">
-                <div class="text-center mb-3">
-                    <p class="mb-1"><strong>檔案名稱:</strong></p>
-                    <p class="text-muted small" id="displayFileName"></p>
-                </div>
-                
-                <div class="alert alert-warning text-center mb-3">
-                    <i class="fas fa-lock"></i>
-                    <strong>檔案已加密,請使用以下授權碼開啟:</strong>
-                </div>
-                
-                <div class="auth-code-container">
-                    <div class="d-flex justify-content-center align-items-center">
-                        <div class="auth-code-box">
-                            <span id="displayAuthCode" class="auth-code-text"></span>
-                        </div>
-                        <button type="button" class="btn btn-outline-primary ml-3" id="btnCopyAuthCode">
-                            <i class="fas fa-copy"></i> 複製
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="alert alert-info mt-3 mb-0">
-                    <small>
-                        <i class="fas fa-info-circle"></i> 
-                        請妥善保管此授權碼,遺失將無法開啟檔案!
-                    </small>
-                </div>
-            </div>
-            <div class="modal-footer justify-content-center">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">
-                    <i class="fas fa-times"></i> 關閉
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- 匯出記錄 Modal -->
-<div class="modal fade" id="exportRecordsModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
-        <div class="modal-content">
-            <div class="modal-header bg-gradient-info text-white">
-                <h5 class="modal-title">
-                    <i class="fas fa-history"></i> 匯出記錄 (最近3個月)
-                </h5>
-                <button type="button" class="close text-white" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" id="exportRecordsContent">
-                <div class="text-center">
-                    <i class="fas fa-spinner fa-spin fa-2x"></i>
-                    <p>載入中...</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">
-                    <i class="fas fa-times"></i> 關閉
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-@section Scripts {
-<script>
-    $(document).ready(function() {
-        
-        // ========================================
-        // 匯出帳號清單
-        // ========================================
-        $('#btnExportUsers').click(function () {
-            // 直接開始下載
-            var downloadUrl = '@Url.Action("ExportUserList", "AP")';
-            
-            // 建立隱藏的 iframe 來下載檔案
-            var iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = downloadUrl;
-            document.body.appendChild(iframe);
-            
-            // 延遲顯示授權碼 Modal
-            setTimeout(function() {
-                checkAndShowAuthCode();
-            }, 1000);
-        });
-
-        // ========================================
-        // 檢查並顯示授權碼
-        // ========================================
-        function checkAndShowAuthCode() {
-            $.ajax({
-                url: '@Url.Action("GetAuthCodeInfo", "AP")',
-                type: 'GET',
-                success: function(response) {
-                    if (response.success) {
-                        $('#displayAuthCode').text(response.authCode);
-                        $('#displayFileName').text(response.fileName + '.xlsx');
-                        $('#authCodeModal').modal('show');
-                    }
-                },
-                error: function() {
-                    console.log('無法取得授權碼資訊');
-                }
-            });
-        }
-
-        // ========================================
-        // 複製授權碼
-        // ========================================
-        $('#btnCopyAuthCode').click(function() {
-            var authCode = $('#displayAuthCode').text();
-            
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(authCode).then(function() {
-                    showCopySuccess();
-                }).catch(function() {
-                    fallbackCopy(authCode);
-                });
-            } else {
-                fallbackCopy(authCode);
-            }
-        });
-
-        function showCopySuccess() {
-            var btn = $('#btnCopyAuthCode');
-            var originalHtml = btn.html();
-            btn.html('<i class="fas fa-check"></i> 已複製!');
-            btn.removeClass('btn-outline-primary').addClass('btn-success');
-            
-            setTimeout(function() {
-                btn.html(originalHtml);
-                btn.removeClass('btn-success').addClass('btn-outline-primary');
-            }, 2000);
-        }
-
-        function fallbackCopy(text) {
-            var $temp = $('<textarea>');
-            $('body').append($temp);
-            $temp.val(text).select();
-            try {
-                document.execCommand('copy');
-                showCopySuccess();
-            } catch (err) {
-                alert('複製失敗,請手動複製授權碼');
-            }
-            $temp.remove();
-        }
-
-        // ========================================
-        // 查看匯出記錄
-        // ========================================
-        $('#btnExportRecords').click(function () {
-            $('#exportRecordsModal').modal('show');
-            loadExportRecords();
-        });
-
-        function loadExportRecords() {
-            $.ajax({
-                url: '@Url.Action("GetExportRecords", "AP")',
-                type: 'GET',
-                success: function(response) {
-                    if (response.success) {
-                        displayRecords(response.records);
-                    } else {
-                        $('#exportRecordsContent').html(
-                            '<div class="alert alert-warning text-center">' +
-                            '<i class="fas fa-exclamation-triangle"></i> ' +
-                            response.message +
-                            '</div>'
-                        );
-                    }
-                },
-                error: function() {
-                    $('#exportRecordsContent').html(
-                        '<div class="alert alert-danger text-center">' +
-                        '<i class="fas fa-times-circle"></i> 載入失敗' +
-                        '</div>'
-                    );
-                }
-            });
-        }
-
-        function displayRecords(records) {
-            if (records && records.length > 0) {
-                var html = '<div class="table-responsive">' +
-                           '<table class="table table-striped table-hover mb-0">' +
-                           '<thead class="thead-light">' +
-                           '<tr>' +
-                           '<th class="text-center" style="width: 5%;">序號</th>' +
-                           '<th style="width: 30%;">檔案名稱</th>' +
-                           '<th class="text-center" style="width: 15%;">授權碼</th>' +
-                           '<th class="text-center" style="width: 10%;">系統ID</th>' +
-                           '<th class="text-center" style="width: 12%;">匯出人員</th>' +
-                           '<th class="text-center" style="width: 18%;">匯出時間</th>' +
-                           '<th class="text-center" style="width: 10%;">操作</th>' +
-                           '</tr>' +
-                           '</thead>' +
-                           '<tbody>';
-                
-                for (var i = 0; i < records.length; i++) {
-                    html += '<tr>' +
-                            '<td class="text-center">' + (i + 1) + '</td>' +
-                            '<td><i class="fas fa-file-excel text-success"></i> ' + records[i].FILE_NAME + '.xlsx</td>' +
-                            '<td class="text-center"><code class="auth-code-small">' + records[i].CODE_GUARD + '</code></td>' +
-                            '<td class="text-center"><span class="badge badge-primary">' + records[i].SYS_ID + '</span></td>' +
-                            '<td class="text-center">' + records[i].CREATOR + '</td>' +
-                            '<td class="text-center">' + records[i].CREATE_TIME + '</td>' +
-                            '<td class="text-center">' +
-                            '<button class="btn btn-sm btn-outline-primary btn-copy-code" data-code="' + records[i].CODE_GUARD + '" title="複製授權碼">' +
-                            '<i class="fas fa-copy"></i> 複製' +
-                            '</button>' +
-                            '</td>' +
-                            '</tr>';
-                }
-                
-                html += '</tbody></table></div>';
-                $('#exportRecordsContent').html(html);
-                
-                // 綁定複製按鈕事件
-                $('.btn-copy-code').click(function() {
-                    var code = $(this).data('code');
-                    copyCodeFromTable(code, $(this));
-                });
-            } else {
-                $('#exportRecordsContent').html(
-                    '<div class="alert alert-info text-center py-5">' +
-                    '<i class="fas fa-inbox fa-3x mb-3 d-block"></i>' +
-                    '<h5>目前沒有匯出記錄</h5>' +
-                    '<p class="text-muted mb-0">最近 3 個月內沒有匯出帳號清單的記錄</p>' +
-                    '</div>'
-                );
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(key), "未知的查詢代碼");
             }
         }
 
-        function copyCodeFromTable(code, btn) {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(code).then(function() {
-                    var originalHtml = btn.html();
-                    btn.html('<i class="fas fa-check"></i> 已複製');
-                    btn.removeClass('btn-outline-primary').addClass('btn-success');
-                    
-                    setTimeout(function() {
-                        btn.html(originalHtml);
-                        btn.removeClass('btn-success').addClass('btn-outline-primary');
-                    }, 1500);
-                });
-            } else {
-                var $temp = $('<textarea>');
-                $('body').append($temp);
-                $temp.val(code).select();
-                try {
-                    document.execCommand('copy');
-                    var originalHtml = btn.html();
-                    btn.html('<i class="fas fa-check"></i> 已複製');
-                    btn.removeClass('btn-outline-primary').addClass('btn-success');
-                    setTimeout(function() {
-                        btn.html(originalHtml);
-                        btn.removeClass('btn-success').addClass('btn-outline-primary');
-                    }, 1500);
-                } catch (err) {
-                    alert('複製失敗');
-                }
-                $temp.remove();
-            }
-        }
-    });
-</script>
-
-<style>
-    /* 授權碼顯示框 */
-    .auth-code-container {
-        padding: 20px 0;
-    }
-    
-    .auth-code-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 15px 25px;
-        border-radius: 8px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        display: inline-block;
-    }
-    
-    .auth-code-text {
-        font-family: 'Courier New', monospace;
-        font-size: 28px;
-        font-weight: bold;
-        letter-spacing: 4px;
-        color: #ffffff;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        user-select: all;
-    }
-    
-    .auth-code-small {
-        font-family: 'Courier New', monospace;
-        font-size: 13px;
-        font-weight: bold;
-        letter-spacing: 1px;
-        background-color: #f8f9fa;
-        padding: 4px 8px;
-        border-radius: 4px;
-        border: 1px solid #dee2e6;
-        color: #495057;
-    }
-    
-    /* Modal 樣式 */
-    .bg-gradient-primary {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
-    }
-    
-    .bg-gradient-info {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
-    }
-    
-    /* 表格樣式 */
-    .table-responsive {
-        max-height: 500px;
-        overflow-y: auto;
-    }
-    
-    .table thead th {
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        z-index: 10;
-        border-bottom: 2px solid #dee2e6;
-    }
-    
-    .table tbody tr:hover {
-        background-color: #f1f3f5;
-    }
-</style>
-}
-```
-
------
-
-## 🎯 完整流程說明
-
-### 1. **產生授權碼**
-
-```csharp
-// Controller 中
-string authCode = codeResult.Code.ToString();  // 例如: "A99F24F2"
-```
-
-### 2. **授權碼作為 Excel 密碼**
-
-```csharp
-// CreateEncryptedExcelWithEPPlus 方法中
-package.Encryption.Password = password;  // password = "A99F24F2"
-```
-
-### 3. **儲存記錄到資料庫**
-
-```csharp
-var recordModel = new CodeGuardRecordModel
-{
-    FILE_NAME = fileName,
-    CODE_GUARD = authCode,  // 儲存授權碼
-    CREATOR = this.Emp_NO,
-    SYS_ID = systemId
-};
-```
-
-### 4. **顯示授權碼給使用者**
-
-```
-┌────────────────────────────────┐
-│ 🔑 Excel 檔案授權碼            │
-├────────────────────────────────┤
-│ 檔案名稱:                      │
-│ 20251125120000_匯出帳號清單.xlsx│
-│                                │
-│ ⚠️ 檔案已加密,請使用以下授權碼開啟│
-│                                │
-│ ┌──────────┐                  │
-│ │ A99F24F2 │ [複製]            │
-│ └──────────┘                  │
-│                                │
-│ ℹ️ 請妥善保管此授權碼!          │
-└────────────────────────────────┘
-```
-
-### 5. **使用者開啟 Excel**
-
-1. 雙擊 Excel 檔案
-1. Excel 提示:「此檔案受密碼保護」
-1. 輸入授權碼:「A99F24F2」
-1. 成功開啟檔案
-
-### 6. **查看歷史記錄**
-
-```
-序號 | 檔案名稱              | 授權碼   | 系統ID | 匯出人員 | 匯出時間        | 操作
-─────┼──────────────────────┼─────────┼────────┼─────────┼────────────────┼────────
- 1   | 📊 20251125_匯出.xlsx | A99F24F2 | HI_POS | E001    | 2024-11-25 12:00| [複製]
-```
-
------
-
-## ✅ 關鍵要點
-
-1. **授權碼 = Excel 密碼**
-   
-   ```csharp
-   package.Encryption.Password = authCode;  // 直接使用授權碼
-   ```
-1. **EPPlus 免費授權設定**
-   
-   ```csharp
-   ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-   ```
-1. **授權碼儲存到資料庫**
-
-- 可以查詢歷史記錄
-- 可以重新複製授權碼
-
-1. **真正的檔案加密**
-
-- ✅ 開啟檔案需要密碼
-- ✅ 無法直接查看內容
-- ✅ 複製檔案也需要密碼
-
------
-
-完成! 🎉 現在授權碼就是 Excel 的開啟密碼了!​​​​​​​​​​​​​​​​
+* 有用到[HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] 都要改掉dll呼叫或是怎麼改，現在資料表改這張[HI-AUTOS].[dbo].[M1EMP_MAST]
