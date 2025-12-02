@@ -1,252 +1,209 @@
-我了解了,你需要將所有使用 `[HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]` 的地方改成使用 DLL 呼叫 `GetEmpMast`,或者直接改成新的資料表 `[HI-AUTOS].[dbo].[M1EMP_MAST]`。
+對!你說得對!可以直接用你的 `HI_APACCESS_DLL` 的 `GetEmpMast` 方法!
 
-讓我幫你整理需要修改的地方:
+讓我重新整理離職檢查的完整方案:
 
-## 需要修改的 SQL QueryKey
+-----
 
-### 1. GetEmployeeList (用於搜尋員工)
+## 一、不需要修改 SQL QueryKey
 
-**原本:**
+因為我們改用 DLL,所以 `ProcessUserRow_chkemp` 這個 QueryKey 可以**刪除**或保持原樣備用。
 
-```csharp
-case QueryKey.GetEmployeeList:
-    return @"
-SELECT TOP 1000 
-    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
-    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-WHERE 1=1
-";
-```
+-----
 
-**改為:**
+## 二、F_AP 修改
+
+### 1. 新增輔助方法 - 呼叫 DLL 檢查員工
+
+在 `F_AP` 類別中新增:
 
 ```csharp
-case QueryKey.GetEmployeeList:
-    return @"
-SELECT TOP 1000 
-    LTRIM(RTRIM([EMP_NO])) AS [EMP_NO],
-    [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-FROM [HI-AUTOS].[dbo].[M1EMP_MAST]
-WHERE 1=1
-";
-```
-
-### 2. GetEmployeeInfo (用於取得單一員工資訊)
-
-**原本:**
-
-```csharp
-case QueryKey.GetEmployeeInfo:
-    return @"
-    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-    FROM [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST]
-    WHERE [EMP_NO] = @EMP_NO
-";
-```
-
-**改為:**
-
-```csharp
-case QueryKey.GetEmployeeInfo:
-    return @"
-    SELECT [EMP_NO], [EMP_NAME], [ORGAN_CAP], [POST_NAME]
-    FROM [HI-AUTOS].[dbo].[M1EMP_MAST]
-    WHERE [EMP_NO] = @EMP_NO
-";
-```
-
-### 3. GetUserPermissions (用於取得使用者權限及部門資訊)
-
-**原本:**
-
-```csharp
-case QueryKey.GetUserPermissions:
-    return @"
-    SELECT  u.[SYS_ID],
-        u.[APG_NO],
-        g.[APG_NAME],
-        u.[U_ID],
-        u.[U_NAME],
-        emp.[ORGAN_CAP],    -- 部門
-        emp.[POST_NAME],    -- 職稱
-        u.[CREATOR],
-        u.[CREATE_TIME],
-        u.[EDITOR],
-        u.[EDIT_TIME]
-FROM [HI-AUTOS].[dbo].[AP_USER] u
-LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g
-       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-LEFT JOIN [HILIFE_DB3].[DB_SHARE].dbo.[M1EMP_MAST] emp
-       ON emp.[EMP_NO] = u.[U_ID]
-WHERE u.[SYS_ID] = @SYS_ID
-  AND u.[U_ID]  = @U_ID
-";
-```
-
-**改為:**
-
-```csharp
-case QueryKey.GetUserPermissions:
-    return @"
-    SELECT  u.[SYS_ID],
-        u.[APG_NO],
-        g.[APG_NAME],
-        u.[U_ID],
-        u.[U_NAME],
-        emp.[ORGAN_CAP],    -- 部門
-        emp.[POST_NAME],    -- 職稱
-        u.[CREATOR],
-        u.[CREATE_TIME],
-        u.[EDITOR],
-        u.[EDIT_TIME]
-FROM [HI-AUTOS].[dbo].[AP_USER] u
-LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g
-       ON u.SYS_ID = g.SYS_ID AND u.APG_NO = g.APG_NO
-LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] emp
-       ON emp.[EMP_NO] = u.[U_ID]
-WHERE u.[SYS_ID] = @SYS_ID
-  AND u.[U_ID]  = @U_ID
-";
-```
-
-### 4. GetAllUsersForExport (用於匯出使用者清單)
-
-**原本:**
-
-```csharp
-case QueryKey.GetAllUsersForExport:
-    return @"
-	SELECT 
-            u.[U_ID],
-            u.[U_NAME],
-            u.[APG_NO],
-            g.[APG_NAME],
-			m.[ORGAN_NO],
-			m.[ORGAN_CAP],
-            u.[CREATOR],
-            CONVERT(varchar, u.[CREATE_TIME], 120) as CREATE_TIME, 
-            u.[EDITOR],
-            CONVERT(varchar, u.[EDIT_TIME], 120) as EDIT_TIME    
-        FROM [HI-AUTOS].[dbo].[AP_USER] u
-        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g 
-            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-		LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m 
-            ON u.U_ID = m.EMP_NO
-        WHERE u.[SYS_ID] = @SYS_ID
-        ORDER BY u.[APG_NO], u.[U_ID]
-";
-```
-
-**這個已經改對了!**
-
-### 5. GetEmployeeName (用於取得員工姓名)
-
-**原本:**
-
-```csharp
-case QueryKey.GetEmployeeName:
-    return @"
-                SELECT EMP_NAME 
-                FROM [HILIFE_DB3].[DB_SHARE].[dbo].[M1EMP_MAST] 
-                WHERE EMP_NO = @EMP_NO
-";
-```
-
-**改為:**
-
-```csharp
-case QueryKey.GetEmployeeName:
-    return @"
-                SELECT EMP_NAME 
-                FROM [HI-AUTOS].[dbo].[M1EMP_MAST] 
-                WHERE EMP_NO = @EMP_NO
-";
-```
-
-## F_AP 中需要修改的地方
-
-### ProcessUserRow 方法中的員工檢查
-
-**原本:**
-
-```csharp
-case QueryKey.ProcessUserRow_chkemp:
-    return @"
-SELECT EMP_NAME FROM [HI-AUTOS].[dbo].[M1EMP_MAST] WHERE EMP_NO=@EMP_NO
-";
-```
-
-**這個已經改對了!**
-
-但是,你需要**額外增加離職檢查**:
-
-```csharp
-case QueryKey.ProcessUserRow_chkemp:
-    return @"
-SELECT EMP_NAME, END_DT 
-FROM [HI-AUTOS].[dbo].[M1EMP_MAST] 
-WHERE EMP_NO=@EMP_NO
-";
-```
-
-然後在 `ProcessUserRow` 方法中增加離職檢查:
-
-```csharp
-private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
+/// <summary>
+/// 呼叫 DLL 檢查員工是否存在及是否離職
+/// </summary>
+/// <param name="empNo">員工編號</param>
+/// <param name="empName">員工姓名(輸出)</param>
+/// <param name="errorMessage">錯誤訊息(輸出)</param>
+/// <returns>true:可以使用, false:不可使用</returns>
+private bool ValidateEmployee(string empNo, out string empName, out string errorMessage)
 {
+    empName = string.Empty;
+    errorMessage = string.Empty;
+
     try
     {
-        // 1. 檢查員工是否存在
-        string checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
-        var empParams = new List<SqlParameter>
+        // 呼叫 DLL - Type 1 查詢全部(在職+離職)
+        var request = new
         {
-            new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = row.EmpNo }
+            Type = "1",
+            EmpNoList = new List<string> { empNo },
+            Environment = EnvHelper.EnvironmentForDll() // 你的環境判斷方法
         };
-        var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
 
-        if (empResult.Rows.Count == 0)
+        string requestJson = JsonConvert.SerializeObject(request);
+        string responseJson = new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
+        
+        var response = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastResponse>(responseJson);
+
+        // 檢查是否有查到資料
+        if (response.Result == null || response.Result.Count == 0)
         {
-            result.ErrorMessages.Add(new ImportError
-            {
-                RowNumber = row.RowNumber,
-                EmpNo = row.EmpNo,
-                Message = "查無此員工"
-            });
+            errorMessage = "查無此員工";
             return false;
         }
 
-        string empName = empResult.Rows[0]["EMP_NAME"].ToString();
-        
-        // ⭐ 新增：檢查是否離職
-        string endDate = empResult.Rows[0]["END_DT"]?.ToString().Trim();
-        if (!string.IsNullOrEmpty(endDate))
+        var empData = response.Result[0];
+        empName = empData.EmpName;
+
+        // ⭐ 檢查是否離職 (END_DT 有值 = 離職)
+        if (!string.IsNullOrEmpty(empData.EndDate?.Trim()))
         {
-            result.ErrorMessages.Add(new ImportError
-            {
-                RowNumber = row.RowNumber,
-                EmpNo = row.EmpNo,
-                Message = $"此員工已離職 (離職日期: {endDate})"
-            });
+            errorMessage = $"此員工已離職 (離職日期: {empData.EndDate})";
             return false;
         }
 
         // ⭐ 驗證姓名長度（nvarchar(20)）
         if (empName.Length > 20)
         {
+            errorMessage = "員工姓名長度超過20個字元";
+            return false;
+        }
+
+        return true;
+    }
+    catch (Exception ex)
+    {
+        errorMessage = "查詢員工資料時發生錯誤：" + ex.Message;
+        return false;
+    }
+}
+```
+
+### 2. 修改 ProcessUserRow 方法 (批次匯入用)
+
+```csharp
+/// <summary>
+/// 處理單筆員工資料
+/// </summary>
+private bool ProcessUserRow((int RowNumber, string EmpNo) row, string sysId, string an, string creator, ImportResult result)
+{
+    try
+    {
+        // 1. ⭐ 使用 DLL 檢查員工是否存在 + 是否離職
+        if (!ValidateEmployee(row.EmpNo, out string empName, out string errorMessage))
+        {
             result.ErrorMessages.Add(new ImportError
             {
                 RowNumber = row.RowNumber,
                 EmpNo = row.EmpNo,
-                Message = "員工姓名長度超過20個字元"
+                Message = errorMessage
             });
             return false;
         }
 
-        // ... 後續檢查邏輯不變
+        // 2. 檢查是否已存在於同一個群組
+        string checkUserSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkuser);
+        var checkUserParams = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+            new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+        };
+        var userResult = SVS_DBmanager.QueryBySQL(checkUserSql, checkUserParams);
+
+        if (Convert.ToInt32(userResult.Rows[0][0]) > 0)
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = "此群組已存在該員工"
+            });
+            return false;
+        }
+
+        // 3. 檢查是否已存在於該系統的其他群組
+        string checkSystemSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chksys);
+        var checkSystemParams = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+            new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+        };
+        var systemResult = SVS_DBmanager.QueryBySQL(checkSystemSql, checkSystemParams);
+
+        if (Convert.ToInt32(systemResult.Rows[0][0]) > 0)
+        {
+            result.ErrorMessages.Add(new ImportError
+            {
+                RowNumber = row.RowNumber,
+                EmpNo = row.EmpNo,
+                Message = "此系統其他群組已存在該員工"
+            });
+            return false;
+        }
+
+        // 4. 寫入 AP_USER
+        string insertSql = @"
+    INSERT INTO AP_USER(SYS_ID, APG_NO, U_ID, U_NAME, CREATOR, CREATE_TIME)
+    SELECT @SYS_ID, @AN, @U_ID, @U_NAME, @CREATOR, GETDATE()
+    WHERE EXISTS (
+        SELECT 1 FROM AP_USER
+        WHERE SYS_ID = @SYS_ID
+          AND (APG_NO = @AN OR APG_NO = '001')
+          AND U_ID = @CREATOR
+    )";
+        var insertParams = new List<SqlParameter>
+        {
+            new SqlParameter("@SYS_ID", SqlDbType.VarChar, 30) { Value = sysId },
+            new SqlParameter("@AN", SqlDbType.VarChar, 3) { Value = an },
+            new SqlParameter("@U_ID", SqlDbType.VarChar, 10) { Value = row.EmpNo },
+            new SqlParameter("@U_NAME", SqlDbType.NVarChar, 20) { Value = empName },
+            new SqlParameter("@CREATOR", SqlDbType.VarChar, 10) { Value = creator }
+        };
+
+        SVS_DBmanager.ExecuteSQL(insertSql, insertParams);
+
+        return true;
+    }
+    catch (Exception exRow)
+    {
+        result.ErrorMessages.Add(new ImportError
+        {
+            RowNumber = row.RowNumber,
+            EmpNo = row.EmpNo,
+            Message = "寫入錯誤：" + exRow.Message
+        });
+        return false;
+    }
+}
 ```
 
-## Controller 的 AddUser 方法也需要增加離職檢查
+### 3. 新增 ValidateEmployeeForInsert 方法 (單筆新增用)
+
+```csharp
+/// <summary>
+/// 單筆新增時驗證員工 (對外公開方法)
+/// </summary>
+/// <param name="empNo">員工編號</param>
+/// <param name="empName">員工姓名(輸出)</param>
+/// <returns>錯誤訊息,null表示驗證通過</returns>
+public string ValidateEmployeeForInsert(string empNo, out string empName)
+{
+    if (!ValidateEmployee(empNo, out empName, out string errorMessage))
+    {
+        return errorMessage;
+    }
+    return null; // 驗證通過
+}
+```
+
+-----
+
+## 三、Controller 修改
+
+### 修改 AddUser (單筆新增)
 
 ```csharp
 // 新增使用者
@@ -259,26 +216,21 @@ public JsonResult AddUser([Bind] UserModel model)
 
         if (ModelState.IsValid)
         {
-            // ⭐ 新增：檢查員工是否離職
-            var checkEmpSql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.ProcessUserRow_chkemp);
-            var empParams = new List<SqlParameter>
-            {
-                new SqlParameter("@EMP_NO", SqlDbType.VarChar, 10) { Value = model.U_ID }
-            };
-            var empResult = SVS_DBmanager.QueryBySQL(checkEmpSql, empParams);
+            var service = GetAPService();
             
-            if (empResult.Rows.Count == 0)
+            // ⭐ 使用 F_AP 的方法檢查員工是否離職
+            string validationError = service.ValidateEmployeeForInsert(model.U_ID, out string empName);
+            if (validationError != null)
             {
-                return Json(new { success = false, message = "查無此員工" });
-            }
-            
-            string endDate = empResult.Rows[0]["END_DT"]?.ToString().Trim();
-            if (!string.IsNullOrEmpty(endDate))
-            {
-                return Json(new { success = false, message = $"此員工已離職 (離職日期: {endDate}),無法新增" });
+                return Json(new { success = false, message = validationError });
             }
 
-            var service = GetAPService();
+            // 如果 model.U_NAME 是空的,使用從 DLL 取得的姓名
+            if (string.IsNullOrWhiteSpace(model.U_NAME))
+            {
+                model.U_NAME = empName;
+            }
+
             var result = service.InsertUser(model, Emp_NO);
             if (result == null || !result.Contains("fail"))
             {
@@ -298,15 +250,110 @@ public JsonResult AddUser([Bind] UserModel model)
 }
 ```
 
-## 總結修改清單
+### ImportUsers 方法保持不變
 
-1. ✅ `GetEmployeeList` - 改資料表路徑
-1. ✅ `GetEmployeeInfo` - 改資料表路徑
-1. ✅ `GetUserPermissions` - 改資料表路徑
-1. ✅ `GetAllUsersForExport` - 已改好
-1. ✅ `GetEmployeeName` - 改資料表路徑
-1. ✅ `ProcessUserRow_chkemp` - 已改好,但要加 END_DT 欄位
-1. ⭐ `ProcessUserRow` 方法 - 新增離職檢查邏輯
-1. ⭐ `AddUser` Controller - 新增離職檢查邏輯
+```csharp
+// 批次匯入使用者
+[HttpPost]
+public ActionResult ImportUsers(HttpPostedFileBase file, string apgNo, string sysID)
+{
+    var service = GetAPService();
 
-這樣就能確保新增或匯入員工時,會檢查該員工是否已離職!​​​​​​​​​​​​​​​​
+    if (file == null || file.ContentLength == 0)
+        return Json(new { success = false, message = "請選擇要匯入的Excel檔案" });
+
+    if (string.IsNullOrWhiteSpace(apgNo))
+        return Json(new { success = false, message = "請先選擇群組" });
+
+    // 驗證群組權限
+    var allowedGroups = service.GetAllowedGroupsForUser(CurrentSystemId, this.Emp_NO);
+
+    if (!allowedGroups.Contains(apgNo))
+        throw new UnauthorizedAccessException("未授權的群組操作");
+
+    if (!allowedGroups.Contains(apgNo))
+    {
+        return Json(new
+        {
+            success = false,
+            message = "無權限操作此群組"
+        });
+    }
+
+    // 副檔名限制
+    var ext = Path.GetExtension(file.FileName).ToLower();
+    if (ext != ".xls" && ext != ".xlsx")
+        return Json(new { success = false, message = "請上傳Excel檔案（.xls 或 .xlsx）" });
+
+    // 上傳暫存
+    var uploadDir = Server.MapPath("~/Upload");
+    if (!Directory.Exists(uploadDir)) Directory.CreateDirectory(uploadDir);
+
+    var safeName = $"Import_{apgNo}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
+    var uploadPath = PathValidator.GetSafePath(uploadDir, safeName);
+
+    try
+    {
+        file.SaveAs(uploadPath);
+        
+        // ⭐ 這裡會自動呼叫 ProcessUserRow,裡面已經包含離職檢查
+        var importResult = service.ImportUsersFromExcel(
+            uploadPath,
+            CurrentSystemId,
+            apgNo,
+            this.Emp_NO
+        );
+
+        if (importResult.SuccessCount > 0 && importResult.ErrorMessages.Count == 0)
+        {
+            return Json(new
+            {
+                status = "success",
+                message = $"匯入成功：共 {importResult.SuccessCount} 筆"
+            });
+        }
+        else if (importResult.SuccessCount == 0 && importResult.ErrorMessages.Count > 0)
+        {
+            return Json(new
+            {
+                status = "fail",
+                message = "匯入失敗：請重新上傳",
+                errors = importResult.ErrorMessages
+            });
+        }
+        else
+        {
+            return Json(new
+            {
+                status = "partial",
+                message = $"匯入部分成功：成功 {importResult.SuccessCount} 筆，失敗 {importResult.ErrorMessages.Count} 筆",
+                errors = importResult.ErrorMessages
+            });
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "匯入過程發生錯誤：" + ex.Message });
+    }
+    finally
+    {
+        if (System.IO.File.Exists(uploadPath))
+        {
+            var fc = new F_Common();
+            fc.SafeDeleteFile(uploadDir, safeName);
+        }
+    }
+}
+```
+
+-----
+
+## 總結修改重點
+
+1. ✅ **新增 `ValidateEmployee` 私有方法** - 統一呼叫 DLL 檢查員工
+1. ✅ **新增 `ValidateEmployeeForInsert` 公開方法** - 給 Controller 呼叫
+1. ✅ **修改 `ProcessUserRow`** - 批次匯入時使用 DLL 檢查
+1. ✅ **修改 `AddUser` Controller** - 單筆新增時呼叫 F_AP 檢查
+1. ✅ **不需要修改 SQL** - 直接用 DLL
+
+這樣就完全使用 DLL 來檢查員工資料,包含是否離職的判斷!​​​​​​​​​​​​​​​​
