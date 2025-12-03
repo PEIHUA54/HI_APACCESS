@@ -1,24 +1,23 @@
-好的,我重新看了你原本的寫法。
+了解了!你要的是:
 
-你原本是 `height: 680px`,現在問題是:
+1. **三個區塊各自有滾輪** ✅
+1. **區塊高度要隨視窗大小調整**,避免被卡掉 ✅
+1. **不要雙層滾輪**(頁面滾輪 + 區塊滾輪同時存在)✅
 
-1. 當螢幕小的時候,680px 會超出視窗,導致下方內容看不到
-1. 你要的是:螢幕縮小時,三個區塊要**自動調整高度**,內容可以在**區塊內滾動**
-
-## 解決方案:使用 `calc()` 動態計算高度
+## 完整解決方案
 
 ```html
 <style>
-    /* 動態計算高度 = 視窗高度 - 上方元件高度 */
+    /* 使用 vh 讓區塊高度根據視窗大小自動調整 */
     .management-section {
         background: white;
         border: 1px solid #dee2e6;
         border-radius: 8px;
         padding: 15px;
-        height: calc(100vh - 400px); /* 100vh = 視窗高度, 400px = 上方查詢區+群組選擇區+間距 */
-        min-height: 400px; /* 最小高度避免太小 */
-        max-height: 680px; /* 最大高度不超過原本設定 */
-        overflow-y: auto; /* 保留滾輪 */
+        height: 70vh; /* 使用視窗高度的 70% */
+        max-height: 680px; /* 最大不超過 680px */
+        min-height: 400px; /* 最小 400px */
+        overflow-y: auto; /* 保留各自的滾輪 */
     }
 
     .section-header {
@@ -28,7 +27,7 @@
         border-bottom: 1px solid #dee2e6;
         font-weight: bold;
         color: #495057;
-        position: sticky; /* 固定在頂部 */
+        position: sticky; /* 固定在區塊頂部 */
         top: -15px;
         z-index: 10;
     }
@@ -283,23 +282,29 @@
 </style>
 ```
 
-## 關鍵修改
+## 關鍵設定說明
 
 ```css
 .management-section {
-    height: calc(100vh - 400px); /* 動態計算 */
-    min-height: 400px;           /* 最小 400px */
-    max-height: 680px;           /* 最大 680px (你原本的高度) */
-    overflow-y: auto;            /* 保留滾輪 */
+    height: 70vh;        /* 視窗高度的 70%,會隨視窗縮放 */
+    max-height: 680px;   /* 大螢幕時最大 680px */
+    min-height: 400px;   /* 小螢幕時最小 400px */
+    overflow-y: auto;    /* 各自有滾輪 */
 }
 ```
 
-**說明:**
+**運作方式:**
 
-- `100vh` = 視窗高度 100%
-- `400px` = 你上方的查詢區 + 群組選擇區 + 標題 + 間距(大概估計,你可以調整)
-- **大螢幕**: 會用 `max-height: 680px`
-- **小螢幕**: 會自動縮小,但不會小於 `min-height: 400px`
-- **每個區塊都有滾輪**,內容不會被卡掉
+- ✅ **大螢幕(高度 > 971px)**: 使用 `max-height: 680px`
+- ✅ **中等螢幕**: 使用 `70vh` (視窗高度的 70%)
+- ✅ **小螢幕(高度 < 571px)**: 使用 `min-height: 400px`
+- ✅ **每個區塊都有自己的滾輪**
+- ✅ **header 會固定在區塊頂部** (sticky)
 
-如果 `400px` 不準,你可以調整成你實際的上方高度!​​​​​​​​​​​​​​​​
+**你可以調整的數值:**
+
+- `70vh` → 改成 `60vh`、`65vh` 或 `75vh`
+- `max-height: 680px` → 改成你想要的最大高度
+- `min-height: 400px` → 改成你想要的最小高度
+
+這樣視窗縮小時,三個區塊會**等比例縮小**,不會被卡掉!​​​​​​​​​​​​​​​​
