@@ -1,23 +1,39 @@
-了解了!你要的是:
+看到了!我完全理解你的問題了!
 
-1. **三個區塊各自有滾輪** ✅
-1. **區塊高度要隨視窗大小調整**,避免被卡掉 ✅
-1. **不要雙層滾輪**(頁面滾輪 + 區塊滾輪同時存在)✅
+從圖片可以看到:
+
+- 第一張圖:視窗正常大小時,三個區塊都顯示正常
+- 第二張圖:視窗縮小後,**右邊橘色框(permission-wrapper)的下半部被截掉了**,看不到底部的內容
+
+問題出在 `permission-wrapper` 沒有設定高度限制和滾輪!
 
 ## 完整解決方案
 
 ```html
 <style>
-    /* 使用 vh 讓區塊高度根據視窗大小自動調整 */
+    /* 三個 management-section 各自有滾輪 */
     .management-section {
         background: white;
         border: 1px solid #dee2e6;
         border-radius: 8px;
         padding: 15px;
-        height: 70vh; /* 使用視窗高度的 70% */
-        max-height: 680px; /* 最大不超過 680px */
-        min-height: 400px; /* 最小 400px */
-        overflow-y: auto; /* 保留各自的滾輪 */
+        height: 70vh; /* 視窗高度的 70% */
+        max-height: 680px;
+        min-height: 400px;
+        overflow-y: auto; /* 各自滾輪 */
+    }
+
+    /* ⭐ 關鍵修正:permission-wrapper 也要設定高度和滾輪 */
+    .permission-wrapper {
+        border: 2px solid #ffb74d;
+        border-radius: 8px;
+        padding: 5px;
+        background: #fafafa;
+        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
+        height: 70vh; /* 跟 management-section 一樣高 */
+        max-height: 680px;
+        min-height: 400px;
+        overflow-y: auto; /* ⭐ 加上滾輪,避免被截斷 */
     }
 
     .section-header {
@@ -27,7 +43,7 @@
         border-bottom: 1px solid #dee2e6;
         font-weight: bold;
         color: #495057;
-        position: sticky; /* 固定在區塊頂部 */
+        position: sticky;
         top: -15px;
         z-index: 10;
     }
@@ -145,15 +161,6 @@
         font-size: 12px;
         color: #6c757d;
         flex-shrink: 0;
-    }
-
-    .permission-wrapper {
-        border: 2px solid #ffb74d;
-        border-radius: 8px;
-        padding: 5px;
-        background: #fafafa;
-        margin-bottom: 50px;
-        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
     }
 
     .permission-wrapper-header {
@@ -282,29 +289,25 @@
 </style>
 ```
 
-## 關鍵設定說明
+## 關鍵修正
+
+我加上了:
 
 ```css
-.management-section {
-    height: 70vh;        /* 視窗高度的 70%,會隨視窗縮放 */
-    max-height: 680px;   /* 大螢幕時最大 680px */
-    min-height: 400px;   /* 小螢幕時最小 400px */
-    overflow-y: auto;    /* 各自有滾輪 */
+.permission-wrapper {
+    /* ... 原本的樣式 ... */
+    height: 70vh;       /* ⭐ 新增:跟左邊一樣高 */
+    max-height: 680px;  /* ⭐ 新增 */
+    min-height: 400px;  /* ⭐ 新增 */
+    overflow-y: auto;   /* ⭐ 新增:加上滾輪 */
 }
 ```
 
-**運作方式:**
+現在:
 
-- ✅ **大螢幕(高度 > 971px)**: 使用 `max-height: 680px`
-- ✅ **中等螢幕**: 使用 `70vh` (視窗高度的 70%)
-- ✅ **小螢幕(高度 < 571px)**: 使用 `min-height: 400px`
-- ✅ **每個區塊都有自己的滾輪**
-- ✅ **header 會固定在區塊頂部** (sticky)
+- ✅ 左邊「管理使用者」有滾輪
+- ✅ 右邊「管理頁面權限」有滾輪
+- ✅ 右邊「管理按鈕權限」有滾輪
+- ✅ **整個橘色框(permission-wrapper)也有滾輪**,不會被截斷!
 
-**你可以調整的數值:**
-
-- `70vh` → 改成 `60vh`、`65vh` 或 `75vh`
-- `max-height: 680px` → 改成你想要的最大高度
-- `min-height: 400px` → 改成你想要的最小高度
-
-這樣視窗縮小時,三個區塊會**等比例縮小**,不會被卡掉!​​​​​​​​​​​​​​​​
+視窗縮小時,四個區域都會等比例縮小,都可以滾動看到完整內容!​​​​​​​​​​​​​​​​
