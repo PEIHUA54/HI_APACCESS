@@ -108,3 +108,219 @@
 
      return SVS_DBmanager.ExecuteSQL(sql, parameters);
  }
+
+問題出在 JavaScript 中的字串處理!當員工姓名中包含**單引號 `'`** 或其他特殊字元時,會導致 JavaScript 語法錯誤。
+
+例如: 員工姓名是 `O'Brien`,產生的 HTML 會變成:
+
+```javascript
+onclick="deleteUser('E001', 'O'Brien')"  // ❌ 語法錯誤!
+```
+
+## 解決方案
+
+### 方案1: 使用 data 屬性 (推薦)
+
+修改 `loadUsers()` 函數:
+
+```javascript
+// 載入使用者列表
+function loadUsers() {
+    $.get('@Url.Action("GetUsersByGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+        if (response.success) {
+            let html = '';
+            const canManageHere = canManageUsersHere();
+
+            if (response.data.length > 0) {
+                response.data.forEach(function (user) {
+                    // ⭐ 改用 data 屬性,不直接寫在 onclick 中
+                    const manageBtns = canManageHere ? `
+        <button type="button"
+                class="btn btn-sm btn-warning btn-small btn-change-group"
+                data-userid="${user.U_ID}"
+                data-username="${escapeHtml(user.U_NAME)}"
+                data-groupno="${currentGroup}">
+            變更群組
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-danger btn-small btn-delete-user"
+                data-userid="${user.U_ID}"
+                data-username="${escapeHtml(user.U_NAME)}">
+            刪除
+        </button>` : '';
+
+                    html += `
+        <div class="user-item">
+            <div>
+                <strong>${escapeHtml(user.U_ID)}</strong><br>
+                <small>${escapeHtml(user.U_NAME)}</small><br>
+                <div class="extra-info">
+                      建立人員:${escapeHtml(user.CREATOR || '')}
+                      建立日期:${user.CREATE_TIME || ''}<br>
+                      修改人員:${escapeHtml(user.EDITOR || '')}
+                      修改日期:${user.EDIT_TIME || ''}
+                </div>
+            </div>
+            <div>
+                ${manageBtns}
+            </div>
+        </div>`;
+                });
+            } else {
+                html = '<div class="no-data">此群組暫無使用者</div>';
+            }
+            $('#userList').html(html);
+        }
+    });
+}
+
+// ⭐ 新增: HTML 跳脫函數
+function escapeHtml(text) {
+    if (!text) return '';
+    var map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+// ⭐ 改用事件委派綁定按鈕
+$(document).ready(function() {
+    // 綁定刪除按鈕
+    $(document).on('click', '.btn-delete-user', function() {
+        const userId = $(this).data('userid');
+        const userName = $(this).data('username');
+        deleteUser(userId, userName);
+    });
+
+    // 綁定變更群組按鈕
+    $(document).on('click', '.btn-change-group', function() {
+        const userId = $(this).data('userid');
+        const userName = $(this).data('username');
+        const groupNo = $(this).data('groupno');
+        openChangeGroupModal(userId, userName, groupNo);
+    });
+});
+
+// deleteUser 函數保持不變
+function deleteUser(userId, userName) {
+    if (!isAdmin && currentGroup === '001') {
+        alert('無法在 001 群組刪除使用者。');
+        return;
+    }
+    if (confirm(`確定要將 "${userName}" 從群組中移除嗎？`)) {
+        $.post('@Url.Action("DeleteUser", "AP")', {
+            apg_no: currentGroup,
+            u_id: userId,
+            sysID: currentSysID
+        }, function (response) {
+            if (response.success) {
+                alert(response.message);
+                loadUsers();
+            } else {
+                alert(response.message);
+            }
+        });
+    }
+}
+```
+
+-----
+
+### 方案2: 使用 JSON.stringify 跳脫 (替代方案)
+
+如果你想保留 onclick 方式:
+
+```javascript
+// 載入使用者列表
+function loadUsers() {
+    $.get('@Url.Action("GetUsersByGroup", "AP")', { apg_no: currentGroup, sysID: currentSysID }, function (response) {
+        if (response.success) {
+            let html = '';
+            const canManageHere = canManageUsersHere();
+
+            if (response.data.length > 0) {
+                response.data.forEach(function (user) {
+                    // ⭐ 使用 JSON.stringify 跳脫字串
+                    const userIdEscaped = JSON.stringify(user.U_ID);
+                    const userNameEscaped = JSON.stringify(user.U_NAME);
+                    const groupEscaped = JSON.stringify(currentGroup);
+
+                    const manageBtns = canManageHere ? `
+        <button type="button"
+                class="btn btn-sm btn-warning btn-small btn-change-group"
+                onclick='openChangeGroupModal(${userIdEscaped}, ${userNameEscaped}, ${groupEscaped})'>
+            變更群組
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-danger btn-small btn-delete-user"
+                onclick='deleteUser(${userIdEscaped}, ${userNameEscaped})'>
+            刪除
+        </button>` : '';
+
+                    html += `
+        <div class="user-item">
+            <div>
+                <strong>${escapeHtml(user.U_ID)}</strong><br>
+                <small>${escapeHtml(user.U_NAME)}</small><br>
+                <div class="extra-info">
+                      建立人員:${escapeHtml(user.CREATOR || '')}
+                      建立日期:${user.CREATE_TIME || ''}<br>
+                      修改人員:${escapeHtml(user.EDITOR || '')}
+                      修改日期:${user.EDIT_TIME || ''}
+                </div>
+            </div>
+            <div>
+                ${manageBtns}
+            </div>
+        </div>`;
+                });
+            } else {
+                html = '<div class="no-data">此群組暫無使用者</div>';
+            }
+            $('#userList').html(html);
+        }
+    });
+}
+
+// ⭐ HTML 跳脫函數
+function escapeHtml(text) {
+    if (!text) return '';
+    var map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+```
+
+**注意:** 使用 `JSON.stringify` 時,onclick 的引號要改用**單引號**包住整個字串。
+
+-----
+
+## 推薦使用方案1
+
+原因:
+
+1. ✅ **更安全** - data 屬性不會有 XSS 風險
+1. ✅ **更易維護** - 邏輯分離,HTML 更乾淨
+1. ✅ **更符合現代標準** - 事件委派是最佳實踐
+1. ✅ **效能更好** - 只綁定一次事件
+
+-----
+
+## 常見會導致錯誤的字元
+
+- 單引號 `'` → 例: `O'Brien`
+- 雙引號 `"` → 例: `王"小明"`
+- 反斜線 `\` → 例: `C:\path`
+- 換行符 `\n`
+- HTML 標籤 `<script>`
+
+使用 data 屬性 + 事件委派可以完全避免這些問題!​​​​​​​​​​​​​​​​
