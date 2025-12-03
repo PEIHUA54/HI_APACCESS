@@ -1,13 +1,6 @@
-看到了!我完全理解你的問題了!
+了解!你不要 `permission-wrapper` (橘色框)有滾輪,只要裡面的**兩個區塊**各自有滾輪。
 
-從圖片可以看到:
-
-- 第一張圖:視窗正常大小時,三個區塊都顯示正常
-- 第二張圖:視窗縮小後,**右邊橘色框(permission-wrapper)的下半部被截掉了**,看不到底部的內容
-
-問題出在 `permission-wrapper` 沒有設定高度限制和滾輪!
-
-## 完整解決方案
+## 修正方案
 
 ```html
 <style>
@@ -23,17 +16,14 @@
         overflow-y: auto; /* 各自滾輪 */
     }
 
-    /* ⭐ 關鍵修正:permission-wrapper 也要設定高度和滾輪 */
+    /* ⭐ permission-wrapper 不要滾輪,只是外框 */
     .permission-wrapper {
         border: 2px solid #ffb74d;
         border-radius: 8px;
         padding: 5px;
         background: #fafafa;
         box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
-        height: 70vh; /* 跟 management-section 一樣高 */
-        max-height: 680px;
-        min-height: 400px;
-        overflow-y: auto; /* ⭐ 加上滾輪,避免被截斷 */
+        /* 不設定 height 和 overflow,讓內容自然撐開 */
     }
 
     .section-header {
@@ -289,25 +279,35 @@
 </style>
 ```
 
-## 關鍵修正
-
-我加上了:
+## 關鍵差異
 
 ```css
 .permission-wrapper {
-    /* ... 原本的樣式 ... */
-    height: 70vh;       /* ⭐ 新增:跟左邊一樣高 */
-    max-height: 680px;  /* ⭐ 新增 */
-    min-height: 400px;  /* ⭐ 新增 */
-    overflow-y: auto;   /* ⭐ 新增:加上滾輪 */
+    /* 原本的樣式保留 */
+    border: 2px solid #ffb74d;
+    border-radius: 8px;
+    padding: 5px;
+    background: #fafafa;
+    box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
+    
+    /* ⭐ 不設定 height 和 overflow-y */
+    /* 讓橘色框自然撐開,沒有自己的滾輪 */
+}
+
+.management-section {
+    /* 只有這三個區塊有滾輪 */
+    height: 70vh;
+    max-height: 680px;
+    min-height: 400px;
+    overflow-y: auto; /* ✅ 只有這三個區塊有滾輪 */
 }
 ```
 
-現在:
+現在的效果:
 
-- ✅ 左邊「管理使用者」有滾輪
-- ✅ 右邊「管理頁面權限」有滾輪
-- ✅ 右邊「管理按鈕權限」有滾輪
-- ✅ **整個橘色框(permission-wrapper)也有滾輪**,不會被截斷!
+- ✅ **左邊「管理使用者」**有自己的滾輪
+- ✅ **右邊「管理頁面權限」**有自己的滾輪
+- ✅ **右邊「管理按鈕權限」**有自己的滾輪
+- ✅ **橘色框(permission-wrapper)沒有滾輪**,只是外框裝飾
 
-視窗縮小時,四個區域都會等比例縮小,都可以滾動看到完整內容!​​​​​​​​​​​​​​​​
+這樣就只有三個區塊各自有滾輪,橘色框不會有滾輪了!​​​​​​​​​​​​​​​​
