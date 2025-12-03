@@ -1,21 +1,21 @@
-是的!我給你完整可以直接貼上的程式碼。
+了解!你需要**保留每個區塊內部的滾輪**,但要**統一高度**避免版面不整齊。
 
------
+## 修正方案
 
-## 完整的 CSS (直接替換你原本的 `<style>` 區塊)
+把 `overflow-y: auto` 加回來,並給固定或最大高度:
 
 ```html
 <style>
-    /* 使用 flexbox 讓三個區塊等高,移除固定高度避免雙層滾輪 */
+    /* 每個管理區塊都有自己的滾輪 */
     .management-section {
         background: white;
         border: 1px solid #dee2e6;
         border-radius: 8px;
         padding: 15px;
-        min-height: 300px; /* 設定最小高度避免太小 */
+        height: 600px; /* 固定高度 */
+        overflow-y: auto; /* 加回滾輪 */
     }
 
-    /* 使用 flexbox 讓三個區塊等高 */
     .management-row {
         display: flex;
         gap: 15px;
@@ -32,15 +32,22 @@
         max-width: 66.666%;
     }
 
-    /* 權限區域內部的兩欄布局 */
     .permission-inner-row {
         display: flex;
         gap: 15px;
+        height: 100%; /* 讓內部兩欄填滿 */
     }
 
     .permission-col {
         flex: 1;
         min-width: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* 確保權限區塊內的 section 也能滾動 */
+    .permission-col .management-section {
+        flex: 1;
     }
 
     .section-header {
@@ -50,6 +57,9 @@
         border-bottom: 1px solid #dee2e6;
         font-weight: bold;
         color: #495057;
+        position: sticky;
+        top: -15px;
+        z-index: 10;
     }
 
     .user-item {
@@ -299,111 +309,40 @@
         background: #E3F2FD !important;
     }
 
-    @media (max-height: 800px) {
+    /* 小螢幕調整高度 */
+    @@media (max-height: 900px) {
         .management-section {
-            min-height: 250px;
+            height: 500px;
         }
     }
 
-    @media (max-height: 600px) {
+    @@media (max-height: 800px) {
         .management-section {
-            min-height: 200px;
+            height: 450px;
+        }
+    }
+
+    @@media (max-height: 700px) {
+        .management-section {
+            height: 400px;
         }
     }
 </style>
 ```
 
------
+## 重點修正
 
-## 完整的 HTML (只需要修改「三個管理區塊」這一段)
+1. ✅ **加回 `overflow-y: auto`** - 每個區塊都有自己的滾輪
+1. ✅ **設定 `height: 600px`** - 統一高度,三個區塊等高
+1. ✅ **加回 `position: sticky`** - section-header 會固定在頂部
+1. ✅ **用 `@@media` 響應式調整** - 小螢幕時降低高度
+1. ✅ **permission-col 用 flexbox** - 確保內部兩個區塊也等高
 
-找到這段:
+這樣:
 
-```html
-<!-- 三個管理區塊 -->
-<div class="row">
-    ...
-</div>
-```
+- ✅ 每個區塊都有滾輪,資料不會被卡掉
+- ✅ 三個區塊高度一致,版面整齊
+- ✅ 小螢幕會自動降低高度
+- ✅ 標題列會固定在頂部(sticky)
 
-**完整替換成:**
-
-```html
-<!-- 三個管理區塊 -->
-<div class="management-row">
-    <!-- 左邊:管理使用者 -->
-    <div class="management-col-left">
-        <div class="management-section">
-            <div class="section-header">
-                <i class="fas fa-users"></i> 管理使用者
-                <button type="button" class="btn btn-primary btn-sm" onclick="openUserModal()" id="addUserBtn" disabled>
-                    <i class="fas fa-plus"></i> 新增使用者
-                </button>
-                <button type="button" class="btn btn-info btn-sm" onclick="openImportModal()" id="importUserBtn" disabled>
-                    <i class="fas fa-file-import"></i> 批次匯入
-                </button>
-            </div>
-            <div id="userList">
-                <div class="no-data">請先選擇群組</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 右邊:管理頁面、按鈕 -->
-    <div class="management-col-right">
-        <div class="permission-wrapper">
-            <!-- 儲存提醒與按鈕 -->
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div class="flex-grow-1">
-                    <div class="save-reminder" id="saveReminder">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <strong>注意!</strong> 已修改權限設定,請記得「儲存權限」!
-                    </div>
-                </div>
-                <div>
-                    <button type="button" class="btn btn-success" onclick="saveAllPermissions()" id="saveAllBtn" disabled>
-                        <i class="fas fa-save"></i> 儲存權限
-                    </button>
-                </div>
-            </div>
-
-            <!-- 權限管理的兩個區塊 -->
-            <div class="permission-inner-row">
-                <!-- 中間:管理頁面權限 -->
-                <div class="permission-col">
-                    <div class="management-section">
-                        <div class="section-header">
-                            <i class="fas fa-file-alt"></i> 管理頁面權限
-                        </div>
-                        <div id="pageList">
-                            <div class="no-data">請先選擇群組</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 右邊:管理按鈕權限 -->
-                <div class="permission-col">
-                    <div class="management-section">
-                        <div class="section-header">
-                            <i class="fas fa-mouse-pointer"></i> 管理按鈕權限
-                        </div>
-                        <div id="buttonList">
-                            <div class="no-data">請先選擇群組</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-```
-
------
-
-## 修改步驟
-
-1. **替換 `<style>` 標籤** - 整個替換掉
-1. **找到「三個管理區塊」** - 搜尋 `<!-- 三個管理區塊 -->`
-1. **替換整個 `<div class="row">...</div>`** - 從 `<!-- 三個管理區塊 -->` 開始到 `</div>` 結束
-
-其他部分(Modal、查詢區、群組選擇區)都不用動!​​​​​​​​​​​​​​​​
+你可以根據實際需求調整 `height: 600px` 這個數值!​​​​​​​​​​​​​​​​
