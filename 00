@@ -1,313 +1,121 @@
-了解!你不要 `permission-wrapper` (橘色框)有滾輪,只要裡面的**兩個區塊**各自有滾輪。
-
-## 修正方案
-
-```html
-<style>
-    /* 三個 management-section 各自有滾輪 */
-    .management-section {
-        background: white;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 15px;
-        height: 70vh; /* 視窗高度的 70% */
-        max-height: 680px;
-        min-height: 400px;
-        overflow-y: auto; /* 各自滾輪 */
-    }
-
-    /* ⭐ permission-wrapper 不要滾輪,只是外框 */
-    .permission-wrapper {
-        border: 2px solid #ffb74d;
-        border-radius: 8px;
-        padding: 5px;
-        background: #fafafa;
-        box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
-        /* 不設定 height 和 overflow,讓內容自然撐開 */
-    }
-
-    .section-header {
-        background: #f8f9fa;
-        margin: -15px -15px 15px -15px;
-        padding: 12px 15px;
-        border-bottom: 1px solid #dee2e6;
-        font-weight: bold;
-        color: #495057;
-        position: sticky;
-        top: -15px;
-        z-index: 10;
-    }
-
-    .user-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: #f8f9fa;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .page-item:hover {
-        background-color: #e9ecef !important;
-    }
-
-    .btn-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: white;
-        cursor: pointer;
-        user-select: none;
-        transition: all 0.2s;
-    }
-
-    .btn-item:hover {
-        background-color: #f0f8ff !important;
-    }
-
-    .btn-item.has-permission {
-        background: #e3f2fd;
-        border-color: #2196f3;
-    }
-
-    .page-item, .btn-item {
-        padding: 8px 12px;
-        margin: 5px 0;
-        border: 1px solid #e9ecef;
-        border-radius: 4px;
-        background: #f8f9fa;
-        cursor: pointer;
-        user-select: none;
-        transition: all 0.2s;
-        display: block;
-    }
-
-    .page-item:hover, .btn-item:hover {
-        background-color: #e9ecef !important;
-    }
-
-    .page-item.has-permission {
-        background: #e8f5e8;
-        line-height: 1.4;
-    }
-
-    .page-item.parent-page {
-        background: #e3f2fd !important;
-        border-color: #2196f3;
-        border-left: 4px solid #2196f3;
-        line-height: 1.4;
-    }
-
-    .page-item.parent-page:hover {
-        background-color: #e3f2fd !important;
-    }
-
-    .page-item.parent-page.has-permission {
-        background: #e3f2fd;
-        border-color: #2196f3;
-        border-left: 4px solid #2196f3;
-    }
-
-    .btn-item.has-permission {
-        background: #e3f2fd;
-        border-color: #2196f3;
-    }
-
-    .permission-content {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        gap: 12px;
-    }
-
-    .permission-checkbox {
-        margin: 0 !important;
-        padding: 0 !important;
-        pointer-events: none;
-        flex-shrink: 0;
-        width: 16px !important;
-        height: 16px !important;
-        cursor: pointer;
-        transform: scale(1) !important;
-        -webkit-transform: scale(1) !important;
-        -moz-transform: scale(1) !important;
-        vertical-align: middle;
-        box-sizing: border-box !important;
-        -webkit-appearance: checkbox !important;
-        -moz-appearance: checkbox !important;
-        appearance: checkbox !important;
-    }
-
-    .permission-title {
-        font-weight: bold;
-        flex: 1;
-        min-width: 0;
-    }
-
-    .permission-info {
-        font-size: 12px;
-        color: #6c757d;
-        flex-shrink: 0;
-    }
-
-    .permission-wrapper-header {
-        background: #fff3e0;
-        margin: -10px -10px 20px -20px;
-        padding: 10px 10px;
-        border-bottom: 2px solid #ffb74d;
-        font-weight: bold;
-        color: #f57c00;
-        border-radius: 6px 6px 0 0;
-    }
-
-    .group-selector {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-    }
-
-    .btn-small {
-        padding: 2px 8px;
-        font-size: 12px;
-    }
-
-    .no-data {
-        text-align: center;
-        color: #6c757d;
-        font-style: italic;
-        padding: 40px 20px;
-    }
-
-    .save-reminder {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 3px;
-        border-radius: 5px;
-        margin-bottom: 2px;
-        display: none;
-    }
-
-    .save-reminder .fa-exclamation-triangle {
-        color: #f39c12;
-        margin-right: 8px;
-    }
-
-    .parent-page-header {
-        background: #e3f2fd;
-        border: 1px solid #2196f3;
-        border-radius: 4px;
-        padding: 10px 15px;
-        margin: 10px 0 5px 0;
-        font-weight: bold;
-        color: #1976d2;
-        font-size: 14px;
-        line-height: 1.4;
-    }
-
-    .child-page-item {
-        margin-left: 20px;
-        position: relative;
-    }
-
-    .child-page-item::before {
-        content: "└─";
-        position: absolute;
-        left: -20px;
-        color: #6c757d;
-        font-family: monospace;
-    }
-
-    .modal-body .form-group label {
-        font-weight: 600;
-        margin-bottom: 5px;
-        display: block;
-    }
-
-    .modal-body .form-control {
-        width: 100%;
-        margin-bottom: 10px;
-    }
-
-    .modal-body .row {
-        margin-left: -10px;
-        margin-right: -10px;
-    }
-
-    .modal-body .col-md-6 {
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-
-    .extra-info {
-        font-size: 0.8rem;
-        color: #666;
-        margin-top: 2px;
-        line-height: 1.2;
-    }
-
-    .page-item.parent-page {
-        background: #E3F2FD !important;
-        border-color: #2196f3 !important;
-        border-left: 4px solid #2196f3 !important;
-    }
-
-    .page-item.type-1 {
-        background: #E8F5E9 !important;
-    }
-
-    .page-item.type-2 {
-        background: #FFF4E1 !important;
-    }
-
-    .page-item.has-permission.type-1 {
-        background: #E8F5E9 !important;
-    }
-
-    .page-item.has-permission.type-2 {
-        background: #FFF4E1 !important;
-    }
-
-    .page-item.has-permission.parent-page {
-        background: #E3F2FD !important;
-    }
-</style>
-```
-
-## 關鍵差異
-
-```css
-.permission-wrapper {
-    /* 原本的樣式保留 */
-    border: 2px solid #ffb74d;
-    border-radius: 8px;
-    padding: 5px;
-    background: #fafafa;
-    box-shadow: 0 2px 8px rgba(255, 183, 77, 0.15);
-    
-    /* ⭐ 不設定 height 和 overflow-y */
-    /* 讓橘色框自然撐開,沒有自己的滾輪 */
+現在問題是data資料若同一分鐘取授權碼會一樣
+{
+  "SysID": "HI_POS",
+  "Data": "3750", =>> "Data": "375020251205085414"  
+  "CodeLength": 6
 }
+改成資料加上年月日時分秒
+這樣取道的授權碼才不會一樣
+ public string GetCode(string requestJson)
+ {
+     var response = new MGetCode.GetCodeResponse();
 
-.management-section {
-    /* 只有這三個區塊有滾輪 */
-    height: 70vh;
-    max-height: 680px;
-    min-height: 400px;
-    overflow-y: auto; /* ✅ 只有這三個區塊有滾輪 */
-}
-```
+     try
+     {
+         var request = JsonConvert.DeserializeObject<MGetCode.GetCodeRequest>(requestJson);
 
-現在的效果:
+         if (request == null)
+         {
+             response = new MGetCode.GetCodeResponse
+             {
+                 Result_code = Common.Codes.PARAMETER_ERROR,
+                 Msg = "請求參數格式錯誤"
+             };
+             return JsonConvert.SerializeObject(response);
+         }
 
-- ✅ **左邊「管理使用者」**有自己的滾輪
-- ✅ **右邊「管理頁面權限」**有自己的滾輪
-- ✅ **右邊「管理按鈕權限」**有自己的滾輪
-- ✅ **橘色框(permission-wrapper)沒有滾輪**,只是外框裝飾
+         FGetCode func = new FGetCode();
+         response = func.Execute(request.SysID, request.Data, request.CodeLength);
+     }
+     catch (Exception ex)
+     {
+         response = new MGetCode.GetCodeResponse
+         {
+             Result_code = Common.Codes.SYSTEM_ERROR,
+             Msg = "系統錯誤：" + ex.Message
+         };
+     }
 
-這樣就只有三個區塊各自有滾輪,橘色框不會有滾輪了!​​​​​​​​​​​​​​​​
+     return JsonConvert.SerializeObject(response);
+ }
+   internal class FGetCode
+   {
+       // 產授權碼
+       public MGetCode.GetCodeResponse Execute(string sysID, string data, int codeLength)
+       {
+           var response = new MGetCode.GetCodeResponse();
+
+           try
+           {
+               // 參數驗證
+               if (string.IsNullOrWhiteSpace(sysID))
+               {
+                   response.Result_code = Common.Codes.PARAMETER_ERROR;
+                   response.Msg = "系統ID不可為空";
+                   return response;
+               }
+
+               if (string.IsNullOrWhiteSpace(data))
+               {
+                   response.Result_code = Common.Codes.PARAMETER_ERROR;
+                   response.Msg = "資料不可為空";
+                   return response;
+               }
+
+               if (codeLength <= 0)
+               {
+                   response.Result_code = Common.Codes.PARAMETER_ERROR;
+                   response.Msg = "授權碼長度必須大於0";
+                   return response;
+               }
+
+               // 產生授權碼
+               string code = GetCode(sysID, data, codeLength);
+
+               response.Result_code = Common.Codes.SUCCESS;
+               response.Msg = "成功";
+               response.Code = code; 
+           }
+           catch (Exception ex)
+           {
+               response.Result_code = Common.Codes.SYSTEM_ERROR;
+               response.Msg = "產生授權碼失敗：" + ex.Message;
+           }
+
+           return response;
+       }
+
+       // 計算授權碼
+       private string GetCode(string sysId, string data, int codeLength)
+       {
+           DateTime tryTime = DateTime.Now;
+
+           // 時間精確到分鐘,秒數設為0
+           tryTime = new DateTime(tryTime.Year, tryTime.Month, tryTime.Day,
+                  tryTime.Hour, tryTime.Minute, 0);
+           string timeStr = tryTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+           // 組合原始字串: 系統ID + 資料 + 時間
+           string rawString = sysId + data + timeStr;
+
+           byte[] inputBytes = Encoding.UTF8.GetBytes(rawString);
+
+           // SHA256 雜湊處理
+           using (SHA256 sha256 = SHA256.Create())
+           {
+               byte[] hashBytes = sha256.ComputeHash(inputBytes);
+               StringBuilder hex = new StringBuilder();
+               foreach (byte b in hashBytes)
+               {
+                   hex.AppendFormat("{0:X2}", b);
+               }
+
+               // 取前N碼作為授權碼
+               string fullHash = hex.ToString();
+               if (codeLength > fullHash.Length)
+                   codeLength = fullHash.Length;
+
+               return fullHash.Substring(0, codeLength).ToUpper();
+           }
+       }
+   }
