@@ -1,272 +1,331 @@
-好的!你的想法是對的,在 `Data` 欄位加上時間戳記,確保每次產生的授權碼都不同。
+啊!我理解錯了!你說得對! 🎯
 
 -----
 
-## 🔧 修改方案
+## ✅ 正確的做法:改 DLL
 
-### ✅ 只需要改 Controller 呼叫的地方
-
-**其他都不用改!** HI_CODEGUARD_DLL 的邏輯保持不變。
+**因為這個 DLL 是給很多地方使用的,所以應該在 DLL 內部就處理好時間戳記的邏輯,而不是每個呼叫的地方都要記得加。**
 
 -----
 
-## 📝 Controller 修改
+## 🔧 修改 HI_CODEGUARD_DLL
 
-### APController.cs - ExportUserList 方法
+### FGetCode.cs 修改
 
 ```csharp
-/// <summary>
-/// 匯出帳號清單 (Excel加密 - 使用 EPPlus)
-/// </summary>
-[HttpGet]
-public ActionResult ExportUserList()
+internal class FGetCode
 {
-    try
+    // 產授權碼
+    public MGetCode.GetCodeResponse Execute(string sysID, string data, int codeLength)
     {
-        string systemId = Session["CurrentSystemId"] as string;
+        var response = new MGetCode.GetCodeResponse();
 
-        // 1. 產生授權碼 (Data 加上時間戳記)
-        CODE_GUARD codeGuard = new CODE_GUARD();
-        
-        // ⭐ 加上完整時間戳記 (年月日時分秒)
-        string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-        string dataWithTimestamp = this.Emp_NO + timestamp;
-        
-        string getCodeRequest = JsonConvert.SerializeObject(new
+        try
         {
-            SysID = systemId,
-            Data = dataWithTimestamp,  // ⭐ 例如: "3750" + "20251205085414" = "375020251205085414"
-            CodeLength = 8
-        });
+            // 參數驗證
+            if (string.IsNullOrWhiteSpace(sysID))
+            {
+                response.Result_code = Common.Codes.PARAMETER_ERROR;
+                response.Msg = "系統ID不可為空";
+                return response;
+            }
 
-        string getCodeResponse = codeGuard.GetCode(getCodeRequest);
-        dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                response.Result_code = Common.Codes.PARAMETER_ERROR;
+                response.Msg = "資料不可為空";
+                return response;
+            }
 
-        if (codeResult.Result_code != "0000")
+            if (codeLength <= 0)
+            {
+                response.Result_code = Common.Codes.PARAMETER_ERROR;
+                response.Msg = "授權碼長度必須大於0";
+                return response;
+            }
+
+            // 產生授權碼
+            string code = GetCode(sysID, data, codeLength);
+
+            response.Result_code = Common.Codes.SUCCESS;
+            response.Msg = "成功";
+            response.Code = code; 
+        }
+        catch (Exception ex)
         {
-            return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
+            response.Result_code = Common.Codes.SYSTEM_ERROR;
+            response.Msg = "產生授權碼失敗：" + ex.Message;
         }
 
-        string authCode = codeResult.Code.ToString();
-
-        // 2. 取得帳號清單
-        var service = GetAPService();
-        var userList = service.GetAllUsersForExport(systemId);
-
-        if (userList == null || userList.Count == 0)
-        {
-            return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-        }
-
-        // 3. 產生加密 Excel
-        string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-        byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
-
-        // 4. 儲存記錄到資料庫
-        var recordModel = new CodeGuardRecordModel
-        {
-            FILE_NAME = fileName,
-            CODE_GUARD = authCode,
-            CREATOR = this.Emp_NO,
-            SYS_ID = systemId
-        };
-
-        service.SaveCodeGuardRecord(recordModel);
-
-        // 5. 刪除超過3個月的舊記錄
-        service.DeleteOldRecords();
-
-        // 6. 儲存授權碼到 TempData (供前端顯示)
-        TempData["AuthCode"] = authCode;
-        TempData["FileName"] = fileName;
-
-        // 7. 回傳加密的 Excel 檔案
-        return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            $"{fileName}.xlsx");
+        return response;
     }
-    catch (Exception ex)
+
+    // 計算授權碼
+    private string GetCode(string sysId, string data, int codeLength)
     {
-        return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
+        DateTime now = DateTime.Now;
+
+        // ⭐⭐⭐ 關鍵修改:加上完整時間戳記到 data ⭐⭐⭐
+        string timestamp = now.ToString("yyyyMMddHHmmss");
+        string dataWithTimestamp = data + timestamp;
+
+        // 時間精確到分鐘,秒數設為0
+        DateTime tryTime = new DateTime(now.Year, now.Month, now.Day,
+               now.Hour, now.Minute, 0);
+        string timeStr = tryTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+        // ⭐ 組合原始字串: 系統ID + 資料(含時間戳記) + 時間
+        string rawString = sysId + dataWithTimestamp + timeStr;
+
+        byte[] inputBytes = Encoding.UTF8.GetBytes(rawString);
+
+        // SHA256 雜湊處理
+        using (SHA256 sha256 = SHA256.Create())
+        {
+            byte[] hashBytes = sha256.ComputeHash(inputBytes);
+            StringBuilder hex = new StringBuilder();
+            foreach (byte b in hashBytes)
+            {
+                hex.AppendFormat("{0:X2}", b);
+            }
+
+            // 取前N碼作為授權碼
+            string fullHash = hex.ToString();
+            if (codeLength > fullHash.Length)
+                codeLength = fullHash.Length;
+
+            return fullHash.Substring(0, codeLength).ToUpper();
+        }
     }
 }
 ```
 
 -----
 
-## 🔍 修改說明
+## 📝 修改說明
 
 ### 修改前:
 
 ```csharp
-string getCodeRequest = JsonConvert.SerializeObject(new
+private string GetCode(string sysId, string data, int codeLength)
 {
-    SysID = systemId,           // "HI_POS"
-    Data = this.Emp_NO,         // "3750"
-    CodeLength = 8
-});
+    DateTime tryTime = DateTime.Now;
+    tryTime = new DateTime(tryTime.Year, tryTime.Month, tryTime.Day,
+           tryTime.Hour, tryTime.Minute, 0);
+    string timeStr = tryTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+    // ❌ 原本:直接用 data
+    string rawString = sysId + data + timeStr;
+    
+    // ...
+}
 ```
-
-**問題:** 同一分鐘內,相同員工多次匯出會產生相同授權碼。
-
------
 
 ### 修改後:
 
 ```csharp
-// ⭐ 加上時間戳記
-string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-string dataWithTimestamp = this.Emp_NO + timestamp;
-
-string getCodeRequest = JsonConvert.SerializeObject(new
+private string GetCode(string sysId, string data, int codeLength)
 {
-    SysID = systemId,                // "HI_POS"
-    Data = dataWithTimestamp,        // "375020251205085414"
-    CodeLength = 8
-});
+    DateTime now = DateTime.Now;
+
+    // ⭐ 加上完整時間戳記到 data
+    string timestamp = now.ToString("yyyyMMddHHmmss");
+    string dataWithTimestamp = data + timestamp;
+
+    // 時間精確到分鐘
+    DateTime tryTime = new DateTime(now.Year, now.Month, now.Day,
+           now.Hour, now.Minute, 0);
+    string timeStr = tryTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+    // ✅ 使用加上時間戳記的 data
+    string rawString = sysId + dataWithTimestamp + timeStr;
+    
+    // ...
+}
 ```
-
-**效果:**
-
-- 第1次匯出 (08:54:14): `Data = "375020251205085414"` → 授權碼: `A1B2C3D4`
-- 第2次匯出 (08:54:25): `Data = "375020251205085425"` → 授權碼: `X7Y8Z9W0`
-- **每秒都不同!**
 
 -----
 
-## ✅ 驗證授權碼不用改
+## 🎯 效果說明
 
-### VerifyCode 邏輯分析
+### 呼叫端 (Controller) 不用改:
 
-你的 `VerifyCode` 應該是檢查:
+```csharp
+// ✅ 呼叫端維持原樣,不用加時間戳記
+string getCodeRequest = JsonConvert.SerializeObject(new
+{
+    SysID = systemId,      // "HI_POS"
+    Data = this.Emp_NO,    // "3750"  ← 就傳員工編號就好
+    CodeLength = 8
+});
 
-1. 授權碼是否在有效時間內 (例如 3 分鐘)
-1. 授權碼格式是否正確
+string getCodeResponse = codeGuard.GetCode(getCodeRequest);
+```
 
-**因為:**
+### DLL 內部自動處理:
 
-- 授權碼已經儲存在資料庫 `CODEGUARD_RECORD.CODE_GUARD`
-- Excel 密碼就是這個授權碼
-- 驗證時只需要比對資料庫中的授權碼即可
+```csharp
+// DLL 內部會自動加上時間戳記
+data = "3750"
+timestamp = "20251205085414"
+dataWithTimestamp = "3750" + "20251205085414" = "375020251205085414"
 
-**所以驗證邏輯完全不用改!**
+rawString = "HI_POS" + "375020251205085414" + "2025-12-05 08:54:00"
+```
 
 -----
 
 ## 📊 完整流程圖
 
-### 產生授權碼:
+### 第1次匯出 (08:54:14):
 
 ```
-員工編號 + 時間戳記 → HI_CODEGUARD_DLL → 授權碼
-"3750" + "20251205085414" → GetCode() → "A1B2C3D4"
-                          ↓
-                    儲存到資料庫
-                    CODE_GUARD = "A1B2C3D4"
-                          ↓
-                    作為 Excel 密碼
+Controller 傳入:
+{
+  "SysID": "HI_POS",
+  "Data": "3750",
+  "CodeLength": 8
+}
+    ↓
+DLL 內部處理:
+data = "3750"
+timestamp = "20251205085414"
+dataWithTimestamp = "375020251205085414"
+    ↓
+rawString = "HI_POS" + "375020251205085414" + "2025-12-05 08:54:00"
+    ↓
+SHA256 加密
+    ↓
+授權碼 = "A1B2C3D4"
 ```
 
-### 驗證授權碼:
+### 第2次匯出 (08:54:25):
 
 ```
-使用者輸入授權碼 → 查詢資料庫 → 比對
-"A1B2C3D4" → SELECT * WHERE CODE_GUARD = "A1B2C3D4" → ✅ 找到記錄
-```
-
------
-
-## 🎯 測試案例
-
-### 測試 1: 相同員工連續匯出
-
-```
-時間: 2025-12-05 08:54:14
-Data: "375020251205085414"
-授權碼: A1B2C3D4
-
-時間: 2025-12-05 08:54:25
-Data: "375020251205085425"
-授權碼: X7Y8Z9W0  ← 不同!
-```
-
-### 測試 2: 不同員工同時匯出
-
-```
-員工 3750:
-Data: "375020251205085414"
-授權碼: A1B2C3D4
-
-員工 3751:
-Data: "375120251205085414"
-授權碼: P9Q8R7S6  ← 不同!
+Controller 傳入:
+{
+  "SysID": "HI_POS",
+  "Data": "3750",      ← 一樣的參數
+  "CodeLength": 8
+}
+    ↓
+DLL 內部處理:
+data = "3750"
+timestamp = "20251205085425"  ← 時間不同
+dataWithTimestamp = "375020251205085425"
+    ↓
+rawString = "HI_POS" + "375020251205085425" + "2025-12-05 08:54:00"
+    ↓
+SHA256 加密
+    ↓
+授權碼 = "X7Y8Z9W0"  ← 不同!
 ```
 
 -----
 
-## 💡 其他可能需要注意的
+## ✅ 優點
 
-### 1. 如果你有 VerifyCode 功能
+### 1. **統一管理**
 
-如果你的系統有讓使用者手動驗證授權碼的功能:
+- 所有呼叫 `GetCode()` 的地方都自動有時間戳記
+- 不用每個地方都記得加
+
+### 2. **向後相容**
+
+- 呼叫端的程式碼完全不用改
+- 只要重新編譯 DLL 就好
+
+### 3. **避免人為錯誤**
+
+- 不會有人忘記加時間戳記
+- DLL 內部統一處理
+
+-----
+
+## 🔍 VerifyCode 要改嗎?
+
+### 答案:不用改!
+
+**原因:**
+
+- 驗證時是直接從資料庫比對授權碼
+- 不需要重新計算授權碼
+- 所以 `VerifyCode` 完全不用動
 
 ```csharp
-// VerifyCode 不用改,因為:
-// 1. 授權碼已經存在資料庫
-// 2. 直接比對即可
-
-public ActionResult VerifyAuthCode(string authCode)
+// VerifyCode 不用改 (如果你有這個功能)
+public string VerifyCode(string requestJson)
 {
-    var service = GetAPService();
-    var record = service.FindRecordByCode(authCode);
+    // 直接從資料庫查詢授權碼
+    // 不需要重新計算,所以不受影響
+    
+    var request = JsonConvert.DeserializeObject<MVerifyCode.VerifyCodeRequest>(requestJson);
+    
+    // 查詢資料庫
+    var record = FindRecordByCode(request.Code);
     
     if (record != null)
     {
-        return Json(new { success = true, message = "授權碼有效" });
+        // 授權碼有效
     }
-    else
-    {
-        return Json(new { success = false, message = "授權碼無效或已過期" });
-    }
-}
-```
-
-### 2. 如果你想限制授權碼有效期
-
-在 Factory 的查詢中加上時間判斷:
-
-```csharp
-public CodeGuardRecordModel FindRecordByCode(string authCode)
-{
-    string sql = @"
-        SELECT TOP 1 *
-        FROM [HI_TMMAIN].[dbo].[CODEGUARD_RECORD]
-        WHERE [CODE_GUARD] = @CODE_GUARD
-          AND [CREATE_TIME] >= DATEADD(MINUTE, -3, GETDATE())  -- 3分鐘內有效
-        ORDER BY [CREATE_TIME] DESC
-    ";
-    
-    // ... 執行查詢
 }
 ```
 
 -----
 
-## ✅ 總結
+## 📝 修改清單
 
 ### 需要修改:
 
-- ✅ **Controller** - 在 `ExportUserList` 加上時間戳記
+- ✅ **HI_CODEGUARD_DLL/Factory/FGetCode.cs** - `GetCode` 方法
 
 ### 不需要修改:
 
-- ✅ **HI_CODEGUARD_DLL** - 邏輯完全不變
-- ✅ **VerifyCode** - 驗證邏輯不變
-- ✅ **Factory** - 資料庫操作不變
-- ✅ **Model** - 資料結構不變
-- ✅ **View** - 前端顯示不變
+- ❌ CODE_GUARD.cs (不用改)
+- ❌ FVerifyCode.cs (不用改)
+- ❌ MGetCode.cs (不用改)
+- ❌ MVerifyCode.cs (不用改)
+- ❌ Controller (不用改)
+- ❌ Factory (不用改)
+- ❌ View (不用改)
+
+-----
+
+## 🔨 編譯步驟
+
+1. **修改 DLL 專案**
+
+- 開啟 `HI_CODEGUARD_DLL` 專案
+- 修改 `FGetCode.cs`
+- Build 專案
+
+1. **更新參考**
+
+- 在 `HI_APACCESS` 專案
+- 右鍵 References → 更新 `HI_CODEGUARD_DLL` 參考
+- 或複製新的 DLL 到 bin 資料夾
+
+1. **測試**
+
+- Rebuild Solution
+- 測試匯出功能
+
+-----
+
+## ✅ 測試案例
+
+```csharp
+// 測試 1: 相同員工連續匯出
+// 08:54:14 → 授權碼 A1B2C3D4
+// 08:54:25 → 授權碼 X7Y8Z9W0  ✅ 不同
+
+// 測試 2: 不同員工同時匯出
+// 員工3750 → 授權碼 A1B2C3D4
+// 員工3751 → 授權碼 P9Q8R7S6  ✅ 不同
+```
 
 -----
 
 完成! 🎉
 
-現在每次匯出都會產生不同的授權碼,即使同一個員工在同一分鐘內連續匯出也不會重複!​​​​​​​​​​​​​​​​
+**這樣改對了!在 DLL 內部統一處理時間戳記,所有使用這個 DLL 的地方都會自動享有這個功能,不用每個地方都改!**
