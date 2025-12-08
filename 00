@@ -1,84 +1,80 @@
-本版確定為3.0.1
-<script>
-alert('匯出失敗: 無法載入檔案或組件 
-'Microsoft.IO.RecyclableMemoryStream, 
-Version=3.0.0.0, Culture=neutral,
- PublicKeyToken=31bf3856ad364e35'
- 或其相依性的其中之一。 找到的組件資訊清單定義與組件參考不符。
- (發生例外狀況於 HRESULT: 0x80131040)'); window.history.back();
-</script>
 
+問題找到了！雖然您安裝的是 3.0.1 版本,但系統執行時還在找 3.0.0 版本。這是**組件繫結(Assembly Binding)**的問題。
 
-    /// <summary>
-    /// 匯出帳號清單 (Excel加密 - EPPlus)
-    /// </summary>
-    [HttpGet]
-    public ActionResult ExportUserList()
-    {
-        try
-        {
-            string systemId = Session["CurrentSystemId"] as string;
+## 解決方法:在 Web.config 加入 Binding Redirect
 
-            // 1. 產生授權碼 (Excel 的密碼)
-            CODE_GUARD codeGuard = new CODE_GUARD();
+在您的 `Web.config` 檔案中,找到 `<configuration>` 區段,加入以下設定:
 
-            // Data:員編+時間
-            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-            string dataWithTimestamp = this.Emp_NO + timestamp;
+```xml
+<configuration>
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      
+      <!-- 加入這段 -->
+      <dependentAssembly>
+        <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
+                          publicKeyToken="31bf3856ad364e35" 
+                          culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-3.0.1.0" 
+                         newVersion="3.0.1.0" />
+      </dependentAssembly>
+      
+      <!-- 其他已存在的 dependentAssembly 設定... -->
+      
+    </assemblyBinding>
+  </runtime>
+</configuration>
+```
 
-            string getCodeRequest = JsonConvert.SerializeObject(new
-            {
-                SysID = systemId,
-                Data = dataWithTimestamp,
-                CodeLength = 8
-            });
+### 如果 Web.config 已經有 `<runtime>` 區段:
 
-            string getCodeResponse = codeGuard.GetCode(getCodeRequest);
-            dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
+直接在 `<assemblyBinding>` 裡面加入上面的 `<dependentAssembly>` 區塊即可。
 
-            if (codeResult.Result_code != "0000")
-            {
-                return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
-            }
+### 完整範例:
 
-            string authCode = codeResult.Code.ToString();
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <configSections>
+    <!-- ... -->
+  </configSections>
+  
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      
+      <!-- 加入 RecyclableMemoryStream 的重新導向 -->
+      <dependentAssembly>
+        <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
+                          publicKeyToken="31bf3856ad364e35" 
+                          culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-3.0.1.0" 
+                         newVersion="3.0.1.0" />
+      </dependentAssembly>
+      
+      <!-- 可能已經存在的其他設定 -->
+      <dependentAssembly>
+        <assemblyIdentity name="Newtonsoft.Json" culture="neutral" publicKeyToken="30ad4fe6b2a6aeed" />
+        <bindingRedirect oldVersion="0.0.0.0-13.0.0.0" newVersion="13.0.0.0" />
+      </dependentAssembly>
+      
+    </assemblyBinding>
+  </runtime>
+  
+  <!-- 其他設定... -->
+</configuration>
+```
 
-            // 2. 取得帳號清單
-            var service = GetAPService();
-            var userList = service.GetAllUsersForExport(systemId);
+## 加入後的步驟:
 
-            if (userList == null || userList.Count == 0)
-            {
-                return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
-            }
+1. **儲存 Web.config**
+1. **清除方案** (Build → Clean Solution)
+1. **重建方案** (Build → Rebuild Solution)
+1. **重新執行**
 
-            // 3. 產生加密 Excel (使用授權碼=密碼)
-            string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
-            byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
+這樣就能解決版本不匹配的問題了!
 
-            // 4. 新增授權碼紀錄
-            var recordModel = new CodeGuardRecordModel
-            {
-                FILE_NAME = fileName,
-                CODE_GUARD = authCode,
-                CREATOR = this.Emp_NO,
-                SYS_ID = systemId
-            };
-            service.SaveCodeGuardRecord(recordModel);
+-----
 
-            // 5. 刪超過3個月的記錄
-            service.DeleteOldRecords();
+**為什麼需要這樣做?**
 
-            // 6. 儲存授權碼
-            TempData["AuthCode"] = authCode;
-            TempData["FileName"] = fileName;
-
-            // 7. 回傳加密的 Excel 檔案
-            return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                $"{fileName}.xlsx");
-        }
-        catch (Exception ex)
-        {
-            return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
-        }
-    }
+某些相依套件(如 EPPlus)內部可能參照了 `Microsoft.IO.RecyclableMemoryStream` 3.0.0 版本,但您專案安裝的是 3.0.1。`bindingRedirect` 的作用就是告訴系統:「不管程式要求哪個版本(0.0.0.0 到 3.0.1.0),統一使用 3.0.1.0」。​​​​​​​​​​​​​​​​
