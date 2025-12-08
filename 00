@@ -1,75 +1,84 @@
-我找到錯誤了。在 `ExportUserList` 這一行,問題出在 JavaScript 字串中包含了 Razor 語法,但沒有正確處理。
-
-看這段程式碼:
-
-```javascript
-// 匯出帳號清單
-$('#btnExportUsers').click(function () {
-    var downloadUrl = '@Url.Action("ExportUserList", "AP")';
-```
-
-錯誤訊息 “missing ) after argument list” 指的是在這個位置,Razor 產生的 URL 可能包含特殊字元導致 JavaScript 語法錯誤。
-
-**解決方法:**
-
-將 Razor 語法改用 `Html.Raw` 包裝,或確保字串正確編碼:
-
-```javascript
-// 匯出帳號清單
-$('#btnExportUsers').click(function () {
-    var downloadUrl = @Html.Raw(Json.Encode(Url.Action("ExportUserList", "AP")));
-    
-    var iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = downloadUrl;
-    document.body.appendChild(iframe);
-
-    // 延遲顯示授權碼 Modal
-    setTimeout(function() {
-        checkAndShowAuthCode();
-    }, 1000);
-});
-```
-
-或者更簡單的方式,直接在 HTML 中定義:
-
-在 `@section Scripts` 之前加入:
-
-```html
+本版確定為3.0.1
 <script>
-    var exportUserListUrl = '@Url.Action("ExportUserList", "AP")';
-    var getAuthCodeInfoUrl = '@Url.Action("GetAuthCodeInfo", "AP")';
-    var getExportRecordsUrl = '@Url.Action("GetExportRecords", "AP")';
+alert('匯出失敗: 無法載入檔案或組件 
+'Microsoft.IO.RecyclableMemoryStream, 
+Version=3.0.0.0, Culture=neutral,
+ PublicKeyToken=31bf3856ad364e35'
+ 或其相依性的其中之一。 找到的組件資訊清單定義與組件參考不符。
+ (發生例外狀況於 HRESULT: 0x80131040)'); window.history.back();
 </script>
-```
 
-然後在 Scripts section 中使用這些變數:
 
-```javascript
-$('#btnExportUsers').click(function () {
-    var iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = exportUserListUrl;
-    document.body.appendChild(iframe);
+    /// <summary>
+    /// 匯出帳號清單 (Excel加密 - EPPlus)
+    /// </summary>
+    [HttpGet]
+    public ActionResult ExportUserList()
+    {
+        try
+        {
+            string systemId = Session["CurrentSystemId"] as string;
 
-    setTimeout(function() {
-        checkAndShowAuthCode();
-    }, 1000);
-});
+            // 1. 產生授權碼 (Excel 的密碼)
+            CODE_GUARD codeGuard = new CODE_GUARD();
 
-function checkAndShowAuthCode() {
-    $.ajax({
-        url: getAuthCodeInfoUrl,
-        // ... 其他設定
-    });
-}
+            // Data:員編+時間
+            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            string dataWithTimestamp = this.Emp_NO + timestamp;
 
-function loadExportRecords() {
-    $.ajax({
-        url: getExportRecordsUrl,
-        // ... 其他設定
-    });
-}
-```
+            string getCodeRequest = JsonConvert.SerializeObject(new
+            {
+                SysID = systemId,
+                Data = dataWithTimestamp,
+                CodeLength = 8
+            });
 
-這樣可以避免 Razor 語法在 JavaScript 字串中產生的潛在問題。​​​​​​​​​​​​​​​​
+            string getCodeResponse = codeGuard.GetCode(getCodeRequest);
+            dynamic codeResult = JsonConvert.DeserializeObject(getCodeResponse);
+
+            if (codeResult.Result_code != "0000")
+            {
+                return Content($"<script>alert('產生授權碼失敗: {codeResult.Msg}'); window.history.back();</script>", "text/html");
+            }
+
+            string authCode = codeResult.Code.ToString();
+
+            // 2. 取得帳號清單
+            var service = GetAPService();
+            var userList = service.GetAllUsersForExport(systemId);
+
+            if (userList == null || userList.Count == 0)
+            {
+                return Content("<script>alert('查無資料'); window.history.back();</script>", "text/html");
+            }
+
+            // 3. 產生加密 Excel (使用授權碼=密碼)
+            string fileName = $"{DateTime.Now:yyyyMMddHHmmss}_匯出帳號清單";
+            byte[] excelBytes = CreateEncryptedExcel(userList, systemId, authCode);
+
+            // 4. 新增授權碼紀錄
+            var recordModel = new CodeGuardRecordModel
+            {
+                FILE_NAME = fileName,
+                CODE_GUARD = authCode,
+                CREATOR = this.Emp_NO,
+                SYS_ID = systemId
+            };
+            service.SaveCodeGuardRecord(recordModel);
+
+            // 5. 刪超過3個月的記錄
+            service.DeleteOldRecords();
+
+            // 6. 儲存授權碼
+            TempData["AuthCode"] = authCode;
+            TempData["FileName"] = fileName;
+
+            // 7. 回傳加密的 Excel 檔案
+            return File(excelBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                $"{fileName}.xlsx");
+        }
+        catch (Exception ex)
+        {
+            return Content($"<script>alert('匯出失敗: {ex.Message}'); window.history.back();</script>", "text/html");
+        }
+    }
