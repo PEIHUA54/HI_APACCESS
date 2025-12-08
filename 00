@@ -1,80 +1,163 @@
+了解了！問題出在**發佈後的 bin 資料夾**可能包含了錯誤的 DLL 版本。
 
-問題找到了！雖然您安裝的是 3.0.1 版本,但系統執行時還在找 3.0.0 版本。這是**組件繫結(Assembly Binding)**的問題。
+## 解決方法
 
-## 解決方法:在 Web.config 加入 Binding Redirect
+### 方法1: 清理發佈資料夾 (最優先嘗試)
 
-在您的 `Web.config` 檔案中,找到 `<configuration>` 區段,加入以下設定:
+1. **刪除站台的 bin 資料夾**
 
-```xml
-<configuration>
-  <runtime>
-    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
-      
-      <!-- 加入這段 -->
-      <dependentAssembly>
-        <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
-                          publicKeyToken="31bf3856ad364e35" 
-                          culture="neutral" />
-        <bindingRedirect oldVersion="0.0.0.0-3.0.1.0" 
-                         newVersion="3.0.1.0" />
-      </dependentAssembly>
-      
-      <!-- 其他已存在的 dependentAssembly 設定... -->
-      
-    </assemblyBinding>
-  </runtime>
-</configuration>
-```
+- 到 IIS 站台實體路徑
+- 完整刪除 `bin` 資料夾
 
-### 如果 Web.config 已經有 `<runtime>` 區段:
+1. **重新發佈**
 
-直接在 `<assemblyBinding>` 裡面加入上面的 `<dependentAssembly>` 區塊即可。
+- 在 Visual Studio 中重新發佈
+- 確保 `Microsoft.IO.RecyclableMemoryStream.dll` (3.0.1) 有被複製過去
 
-### 完整範例:
+1. **檢查發佈後的 DLL**
 
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <configSections>
-    <!-- ... -->
-  </configSections>
-  
-  <runtime>
-    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
-      
-      <!-- 加入 RecyclableMemoryStream 的重新導向 -->
-      <dependentAssembly>
-        <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
-                          publicKeyToken="31bf3856ad364e35" 
-                          culture="neutral" />
-        <bindingRedirect oldVersion="0.0.0.0-3.0.1.0" 
-                         newVersion="3.0.1.0" />
-      </dependentAssembly>
-      
-      <!-- 可能已經存在的其他設定 -->
-      <dependentAssembly>
-        <assemblyIdentity name="Newtonsoft.Json" culture="neutral" publicKeyToken="30ad4fe6b2a6aeed" />
-        <bindingRedirect oldVersion="0.0.0.0-13.0.0.0" newVersion="13.0.0.0" />
-      </dependentAssembly>
-      
-    </assemblyBinding>
-  </runtime>
-  
-  <!-- 其他設定... -->
-</configuration>
-```
-
-## 加入後的步驟:
-
-1. **儲存 Web.config**
-1. **清除方案** (Build → Clean Solution)
-1. **重建方案** (Build → Rebuild Solution)
-1. **重新執行**
-
-這樣就能解決版本不匹配的問題了!
+- 到站台 bin 資料夾
+- 右鍵點 `Microsoft.IO.RecyclableMemoryStream.dll` → 內容 → 詳細資料
+- 確認**檔案版本是 3.0.1**
 
 -----
 
-**為什麼需要這樣做?**
+### 方法2: 檢查發佈設定
 
-某些相依套件(如 EPPlus)內部可能參照了 `Microsoft.IO.RecyclableMemoryStream` 3.0.0 版本,但您專案安裝的是 3.0.1。`bindingRedirect` 的作用就是告訴系統:「不管程式要求哪個版本(0.0.0.0 到 3.0.1.0),統一使用 3.0.1.0」。​​​​​​​​​​​​​​​​
+在發佈設定中,確保沒有排除這個 DLL:
+
+**發佈設定檔 (.pubxml)**
+
+```xml
+<PropertyGroup>
+  <ExcludeFilesFromDeployment>
+    <!-- 確保這裡沒有排除 RecyclableMemoryStream -->
+  </ExcludeFilesFromDeployment>
+</PropertyGroup>
+```
+
+-----
+
+### 方法3: 強制複製 DLL
+
+1. 在 Visual Studio 中找到 `Microsoft.IO.RecyclableMemoryStream` 參考
+1. 右鍵 → 內容
+1. 設定 `複製到本機 (Copy Local)` = **True**
+
+-----
+
+### 方法4: 檢查 GAC (全域組件快取)
+
+伺服器的 GAC 可能有舊版本:
+
+1. 在伺服器上開啟命令提示字元 (系統管理員)
+1. 執行:
+
+```cmd
+gacutil /l Microsoft.IO.RecyclableMemoryStream
+```
+
+1. 如果有舊版本,移除它:
+
+```cmd
+gacutil /u Microsoft.IO.RecyclableMemoryStream
+```
+
+-----
+
+### 方法5: 檢查 Web.config 轉換
+
+確認發佈時的 `Web.Release.config` 沒有移除 bindingRedirect:
+
+**Web.Release.config**
+
+```xml
+<configuration xmlns:xdt="http://schemas.microsoft.com/XML-Document-Transform">
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      <!-- 確保這段沒有被 xdt:Transform="Remove" -->
+      <dependentAssembly>
+        <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
+                          publicKeyToken="31bf3856ad364e35" 
+                          culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-3.0.1.0" 
+                         newVersion="3.0.1.0" />
+      </dependentAssembly>
+    </assemblyBinding>
+  </runtime>
+</configuration>
+```
+
+-----
+
+## 最快的檢查步驟:
+
+**在 IIS 伺服器上:**
+
+1. 進入站台實體路徑的 `bin` 資料夾
+1. 找到 `Microsoft.IO.RecyclableMemoryStream.dll`
+1. 右鍵 → 內容 → 詳細資料
+1. 查看**檔案版本**
+
+**如果版本不是 3.0.1:**
+
+- 刪除整個 bin 資料夾
+- 從開發環境複製正確的 bin 資料夾過去
+- 或重新完整發佈
+
+**如果版本是 3.0.1,但還是有錯誤:**
+
+- 檢查站台的 `Web.config` 是否有 bindingRedirect
+- 重新啟動 IIS 應用程式集區
+
+-----
+
+90% 的情況都是發佈後 bin 資料夾裡混雜了舊版本 DLL,**完整刪除 bin 資料夾再重新發佈**通常就能解決!​​​​​​​​​​​​​​​​
+
+**可以!** 降到 3.0.0 是最快的解法! 👍
+
+## 降版步驟:
+
+### 1. 在 Visual Studio 中降版
+
+1. 右鍵點選專案 → **管理 NuGet 套件**
+1. 找到 `Microsoft.IO.RecyclableMemoryStream`
+1. 在右側版本下拉選單選擇 **3.0.0**
+1. 點擊**更新/安裝**
+
+### 2. 更新 Web.config 的 bindingRedirect
+
+```xml
+<dependentAssembly>
+  <assemblyIdentity name="Microsoft.IO.RecyclableMemoryStream" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    culture="neutral" />
+  <bindingRedirect oldVersion="0.0.0.0-3.0.0.0" 
+                   newVersion="3.0.0.0" />
+</dependentAssembly>
+```
+
+### 3. 清理重建
+
+1. **清除方案** (Build → Clean Solution)
+1. **重建方案** (Build → Rebuild Solution)
+1. **重新發佈**
+
+-----
+
+## 為什麼降版可行?
+
+因為系統或某些相依套件(可能是 EPPlus 或其他套件)就是要求 3.0.0 版本。與其一直跟版本衝突搏鬥,**直接配合它要的版本最省事**。
+
+3.0.0 和 3.0.1 之間通常只是小修正,功能上不會有太大差異,所以降版是安全且實務的做法。
+
+-----
+
+## 最終確認:
+
+降版後,在發佈的 `bin` 資料夾確認:
+
+- `Microsoft.IO.RecyclableMemoryStream.dll` 版本是 **3.0.0.0**
+- 站台能正常運作
+
+**這樣就完美解決了!** 🎉​​​​​​​​​​​​​​​​
