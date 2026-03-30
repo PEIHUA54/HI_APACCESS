@@ -1,53 +1,740 @@
-  員工下拉選向應該要從這裡取 環境的話EnvHelper.EnvironmentForDll()、 type =2(在職)、 不用指定名單
-   // 範例
-   var request = new
-   {
-       Type = "3",  // 指定名單
-       EmpNoList = new List<string> { empNo },  // 只查詢這個員工
-       Environment = EnvHelper.EnvironmentForDll()
-   };
+好的，我完整整理一次所有需要修改和新增的程式碼：
+1. Model 新增 (Models/M_SYS/M_SYS.cs)
+在現有的 Model 檔案中新增這些類別：
+
+// 新增：員工選項Model（用於下拉選單）
+public class EmployeeOption
+{
+    [Display(Name = "員工編號")]
+    public string EMP_NO { get; set; }
+
+    [Display(Name = "員工姓名")]
+    public string EMP_NAME { get; set; }
+
+    [Display(Name = "部門")]
+    public string ORGAN_CAP { get; set; }
+
+    [Display(Name = "階職")]
+    public string POST_NAME { get; set; }
+}
+
+// 新增：Controller選項Model（用於下拉選單）
+public class ControllerOption
+{
+    [Display(Name = "Controller名稱")]
+    public string CONTROLLER_NAME { get; set; }
+}
+
+// 新增：員工主檔 Response Model
+public class GetEmpMastResponse
+{
+    public string Result_code { get; set; }
+    public string Msg { get; set; }
+    public List<EmpMastData> EmpList { get; set; }
+}
+
+// 新增：員工資料
+public class EmpMastData
+{
+    public string EMP_NO { get; set; }
+    public string EMP_NAME { get; set; }
+    public string ORGAN_CAP { get; set; }
+    public string POST_NAME { get; set; }
+}
 
 
-new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
+2. Factory 修改和新增 (Factory/F_SYS/F_SYS.cs)
+在檔案最上方確認有這些 using：
 
-我是不是要給你看哪裡有這段？  
+using Newtonsoft.Json;
+using HI_APACCESS_DLL;
 
 
-這是 HI_APACCESS_DLL 是呼叫這個
-  // 取得員工主檔
- public string GetEmpMast(string requestJson)
- {
-     var response = new GetEmpMastModel.GetEmpMastResponse();
+在 F_SYS 類別中新增這些方法：
 
-     try
-     {
-         var request = JsonConvert.DeserializeObject<GetEmpMastModel.GetEmpMastRequest>(requestJson);
+// 新增：取得員工清單 - 使用 HI_APACCESS_DLL
+public List<EmployeeOption> GetEmployeeList(string keyword = "")
+{
+    try
+    {
+        // 準備請求參數
+        var request = new
+        {
+            Type = "2",  // 2 = 在職人員
+            EmpNoList = (List<string>)null,  // 不指定名單
+            Environment = EnvHelper.EnvironmentForDll()
+        };
 
-         // 參數檢查
-         if (request.Type != "1" && request.Type != "2" && request.Type != "3")
-         {
-             response.Result_code = Common.Codes.TYPE_ERROR;
-             response.Msg = "Type 只接受 1/2/3";
-             return JsonConvert.SerializeObject(response);
-         }
-         if (request.Type == "3" && (request.EmpNoList == null || request.EmpNoList.Count == 0))
-         {
-             response.Result_code = Common.Codes.NO_EmpNoList;
-             response.Msg = "Type=3 時 EmpNoList 不可為空";
-             return JsonConvert.SerializeObject(response);
-         }
+        string requestJson = JsonConvert.SerializeObject(request);
+        
+        // 呼叫 DLL 取得員工資料
+        string responseJson = new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
+        
+        // 解析回應
+        var response = JsonConvert.DeserializeObject<GetEmpMastResponse>(responseJson);
+        
+        if (response.Result_code == "0000" && response.EmpList != null)
+        {
+            var employees = response.EmpList.Select(emp => new EmployeeOption
+            {
+                EMP_NO = emp.EMP_NO,
+                EMP_NAME = emp.EMP_NAME,
+                ORGAN_CAP = emp.ORGAN_CAP ?? "",
+                POST_NAME = emp.POST_NAME ?? ""
+            }).ToList();
 
-         FGetEmpMast func = new FGetEmpMast();
-         response = func.Execute(request.Type, request.EmpNoList, request.Environment);
-     }
-     catch (Exception ex)
-     {
-         response = new GetEmpMastModel.GetEmpMastResponse
-         {
-             Result_code = Common.Codes.SYSTEM_ERROR,
-             Msg = "系統錯誤：" + ex.Message
-         };
-     }
+            // 如果有關鍵字，進行過濾
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                employees = employees.Where(e => 
+                    e.EMP_NO.Contains(keyword) || 
+                    e.EMP_NAME.Contains(keyword)
+                ).ToList();
+            }
 
-     return JsonConvert.SerializeObject(response);
- }
+            return employees;
+        }
+        else
+        {
+            return new List<EmployeeOption>();
+        }
+    }
+    catch (Exception ex)
+    {
+        return new List<EmployeeOption>();
+    }
+}
+
+// 新增：取得Controller清單
+public List<ControllerOption> GetControllerList(string sysId)
+{
+    string sql = @"
+    SELECT DISTINCT [CONTROLLER_NAME]
+    FROM [HI-APLOG].[dbo].[AP_SYS_CTRL]
+    WHERE [SYS_ID] = @SYS_ID
+    ORDER BY [CONTROLLER_NAME]";
+
+    List<SqlParameter> parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", sysId)
+    };
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    return SVS_DBmanager.ConvertToList<ControllerOption>(dt);
+}
+
+
+修改現有的 InsertSystemToApSys 方法：
+
+// 修改：新增系統到AP_SYS（包含新欄位）
+public string InsertSystemToApSys(M_SYS_Apply model, string creator)
+{
+    string sql = @"
+    INSERT INTO [HI-APLOG].[dbo].[AP_SYS] 
+    ([SYS_ID], [SYS_NAME], [NOTIFY_AUTOS_IT], [NOTIFY_AUTOS_USERS], [AUTOS_CONTROLLER_NAME], [CREATE_TIME], [CREATOR])
+    VALUES (@SYS_ID, @SYS_NAME, @NOTIFY_AUTOS_IT, @NOTIFY_AUTOS_USERS, @AUTOS_CONTROLLER_NAME, GETDATE(), @CREATOR)";
+
+    List<SqlParameter> parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", model.SYS_ID),
+        new SqlParameter("@SYS_NAME", model.SYS_NAME),
+        new SqlParameter("@NOTIFY_AUTOS_IT", model.NOTIFY_AUTOS_IT ?? (object)DBNull.Value),
+        new SqlParameter("@NOTIFY_AUTOS_USERS", model.NOTIFY_AUTOS_USERS ?? (object)DBNull.Value),
+        new SqlParameter("@AUTOS_CONTROLLER_NAME", model.AUTOS_CONTROLLER_NAME ?? (object)DBNull.Value),
+        new SqlParameter("@CREATOR", creator)
+    };
+
+    return SVS_DBmanager.ExecuteSQL(sql, parameters);
+}
+
+
+修改現有的 UpdateSystemName 方法名稱和內容：
+
+// 修改：更新系統（包含新欄位）- 原本的 UpdateSystemName 改成這個
+public string UpdateSystem(M_SYS_Apply model, string editor)
+{
+    string sql = @"
+    UPDATE [HI-APLOG].[dbo].[AP_SYS] 
+    SET [SYS_NAME] = @SYS_NAME, 
+        [NOTIFY_AUTOS_IT] = @NOTIFY_AUTOS_IT, 
+        [NOTIFY_AUTOS_USERS] = @NOTIFY_AUTOS_USERS, 
+        [AUTOS_CONTROLLER_NAME] = @AUTOS_CONTROLLER_NAME,
+        [EDIT_TIME] = GETDATE(), 
+        [EDITOR] = @EDITOR
+    WHERE [SYS_ID] = @SYS_ID";
+
+    List<SqlParameter> parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", model.SYS_ID),
+        new SqlParameter("@SYS_NAME", model.SYS_NAME),
+        new SqlParameter("@NOTIFY_AUTOS_IT", model.NOTIFY_AUTOS_IT ?? (object)DBNull.Value),
+        new SqlParameter("@NOTIFY_AUTOS_USERS", model.NOTIFY_AUTOS_USERS ?? (object)DBNull.Value),
+        new SqlParameter("@AUTOS_CONTROLLER_NAME", model.AUTOS_CONTROLLER_NAME ?? (object)DBNull.Value),
+        new SqlParameter("@EDITOR", editor)
+    };
+
+    return SVS_DBmanager.ExecuteSQL(sql, parameters);
+}
+
+
+3. Controller 修改和新增 (Controllers/SYSController.cs)
+在現有的 Controller 中新增這些方法：
+
+// 新增：取得員工清單（用於下拉選單）
+[HttpGet]
+public JsonResult GetEmployeeList(string keyword = "")
+{
+    try
+    {
+        var employees = F_SYS.GetEmployeeList(keyword);
+        
+        // 組合顯示文字
+        var result = employees.Select(emp => new {
+            id = emp.EMP_NO,
+            text = $"{emp.EMP_NO} - {emp.EMP_NAME}",
+            EMP_NO = emp.EMP_NO,
+            EMP_NAME = emp.EMP_NAME,
+            ORGAN_CAP = emp.ORGAN_CAP,
+            POST_NAME = emp.POST_NAME
+        });
+        
+        return Json(new { success = true, data = result }, JsonRequestBehavior.AllowGet);
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "取得員工清單失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
+    }
+}
+
+// 新增：取得Controller清單（用於下拉選單）
+[HttpGet]
+public JsonResult GetControllerList(string sysId)
+{
+    try
+    {
+        var controllers = F_SYS.GetControllerList(sysId);
+        return Json(new { success = true, data = controllers }, JsonRequestBehavior.AllowGet);
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "取得Controller清單失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
+    }
+}
+
+// 新增：取得系統詳細資料（用於編輯）
+[HttpGet]
+public JsonResult GetSystemDetail(string sysId)
+{
+    try
+    {
+        var systems = F_SYS.GetAvailableSystems(this.Emp_NO);
+        var system = systems.FirstOrDefault(s => s.SYS_ID == sysId);
+        
+        if (system != null)
+        {
+            return Json(new { success = true, data = system }, JsonRequestBehavior.AllowGet);
+        }
+        else
+        {
+            return Json(new { success = false, message = "找不到系統資料" }, JsonRequestBehavior.AllowGet);
+        }
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = "取得系統資料失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
+    }
+}
+
+
+修改現有的 ProcessSystemApply 方法：
+
+// 修改：系統申請處理流程
+private string ProcessSystemApply(M_SYS_Apply model, string empNo, string empName)
+{
+    string result = null;
+
+    // 1: 檢查系統是否存在於 AP_SYS
+    bool systemExists = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
+
+    if (!systemExists)
+    {
+        // 系統不存在 -> 新增系統（包含新欄位）
+        result = F_SYS.InsertSystemToApSys(model, empNo);
+        if (result != null && result.Contains("fail")) return result;
+    }
+    else
+    {
+        // 系統存在 -> 更新系統（包含新欄位）- 改用 UpdateSystem
+        result = F_SYS.UpdateSystem(model, empNo);
+        if (result != null && result.Contains("fail")) return result;
+    }
+
+    // 2: 檢查是否有 001 群組
+    bool group001Exists = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
+    if (!group001Exists)
+    {
+        result = F_SYS.InsertGroup001(model.SYS_ID, empNo);
+        if (result != null && result.Contains("fail")) return result;
+    }
+
+    // 3: 檢查使用者是否已在 001 群組
+    bool userExists = F_SYS.CheckUserInGroup001(model.SYS_ID, empNo);
+    if (!userExists)
+    {
+        result = F_SYS.InsertUserToGroup001(model.SYS_ID, empNo, empName);
+        if (result != null && result.Contains("fail")) return result;
+    }
+
+    return result;
+}
+
+
+4. View 完整修改 (Views/SYS/SYS_APPLY.cshtml)
+在 <head> 或頁面上方加入 Select2 CSS：
+
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+
+
+完整替換 Modal 的 HTML：
+
+<!-- 新增/修改 Modal -->
+<div class="modal fade" id="systemModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">新增系統</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="systemForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sysId">系統ID <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="sysId" name="SYS_ID" required maxlength="100" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sysName">系統名稱 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="sysName" name="SYS_NAME" required maxlength="100" autocomplete="off">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 新增：權限通知對象_資訊人員 -->
+                    <div class="form-group">
+                        <label for="notifyIt">權限通知對象_資訊人員</label>
+                        <select class="form-control select2-multiple" id="notifyIt" name="NOTIFY_AUTOS_IT" multiple="multiple" style="width: 100%;">
+                        </select>
+                        <small class="form-text text-muted">可複選多位資訊人員，輸入員工編號或姓名搜尋</small>
+                    </div>
+
+                    <!-- 顯示已選擇的資訊人員 -->
+                    <div id="selectedItList" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的資訊人員：</label>
+                        <div id="selectedItContent" class="selected-content"></div>
+                    </div>
+
+                    <!-- 新增：權限通知對象_一般USER -->
+                    <div class="form-group">
+                        <label for="notifyUsers">權限通知對象_一般USER</label>
+                        <select class="form-control select2-multiple" id="notifyUsers" name="NOTIFY_AUTOS_USERS" multiple="multiple" style="width: 100%;">
+                        </select>
+                        <small class="form-text text-muted">可複選多位使用者，輸入員工編號或姓名搜尋</small>
+                    </div>
+
+                    <!-- 顯示已選擇的一般USER -->
+                    <div id="selectedUsersList" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的一般USER：</label>
+                        <div id="selectedUsersContent" class="selected-content"></div>
+                    </div>
+
+                    <!-- 新增：權限CONTROLLER名稱 -->
+                    <div class="form-group">
+                        <label for="controllerName">權限CONTROLLER名稱</label>
+                        <select class="form-control" id="controllerName" name="AUTOS_CONTROLLER_NAME" style="width: 100%;">
+                            <option value="">-- 請先輸入系統ID --</option>
+                        </select>
+                        <small class="form-text text-muted">請先輸入系統ID後再選擇Controller</small>
+                    </div>
+
+                    <!-- 顯示已選擇的Controller -->
+                    <div id="selectedController" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的Controller：</label>
+                        <div id="selectedControllerContent" class="selected-content"></div>
+                    </div>
+
+                    <input type="hidden" id="actionType" name="Action" value="Add">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-green" id="btnSave">儲存</button>
+                <button type="button" class="btn btn-gray" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+在現有的 <style> 區塊中新增這些樣式：
+
+/* 新增：已選擇項目的顯示樣式 */
+.selected-list {
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.selected-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.selected-tag {
+    background: #007bff;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Select2 下拉選單樣式調整 */
+.select2-results__option {
+    padding: 0 !important;
+}
+
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: #e9ecef !important;
+}
+
+/* Select2 選項內的表格樣式 */
+.employee-option-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.employee-option-table td {
+    padding: 8px;
+    border-right: 1px solid #ddd;
+}
+
+.employee-option-table td:last-child {
+    border-right: none;
+}
+
+
+在 @section Scripts 區塊，在現有 jQuery 後面加入 Select2，然後完整替換 Scripts 內容：
+
+@section Scripts{
+    <!-- 加入 Select2 -->
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+    <script>
+        $(document).ready(function () {
+            initPage();
+        });
+
+        function initPage() {
+            // 新增按鈕事件
+            $('#btnAdd').off('click').on('click', function () {
+                resetForm();
+                $('#modalTitle').text('新增系統');
+                $('#sysId').prop('readonly', false);
+                $('#actionType').val('Add');
+                initSelect2();
+                $('#systemModal').modal('show');
+            });
+
+            // 修改按鈕事件
+            $('.btn-edit').off('click').on('click', function () {
+                var sysId = $(this).data('sysid');
+                var sysName = $(this).data('sysname');
+                editSystem(sysId, sysName);
+            });
+
+            // 儲存按鈕事件
+            $('#btnSave').off('click').on('click', function () {
+                saveSystem();
+            });
+
+            // 監聽系統ID輸入，載入對應的Controller清單
+            $('#sysId').on('blur', function () {
+                var sysId = $(this).val().trim();
+                if (sysId) {
+                    loadControllerList(sysId);
+                }
+            });
+        }
+
+        // 自訂 Select2 的顯示模板（表格形式）
+        function formatEmployee(employee) {
+            if (!employee.id) {
+                return employee.text;
+            }
+
+            var parts = employee.text.split(' - ');
+            var empNo = parts[0] || '';
+            var empName = parts[1] || '';
+
+            var $employee = $(
+                '<table class="employee-option-table">' +
+                    '<tr>' +
+                        '<td style="width: 40%; text-align: left;">' + empNo + '</td>' +
+                        '<td style="width: 60%; text-align: left;">' + empName + '</td>' +
+                    '</tr>' +
+                '</table>'
+            );
+
+            return $employee;
+        }
+
+        // 初始化 Select2
+        function initSelect2() {
+            // 資訊人員選擇
+            $('#notifyIt').select2({
+                ajax: {
+                    url: '@Url.Action("GetEmployeeList", "SYS")',
+                    dataType: 'json',
+                    delay: 300,
+                    data: function (params) {
+                        return {
+                            keyword: params.term || ''
+                        };
+                    },
+                    processResults: function (data) {
+                        if (data.success) {
+                            return {
+                                results: data.data
+                            };
+                        }
+                        return { results: [] };
+                    }
+                },
+                templateResult: formatEmployee,
+                templateSelection: function (employee) {
+                    return employee.text || employee.id;
+                },
+                placeholder: '請輸入員工編號或姓名搜尋',
+                allowClear: true,
+                minimumInputLength: 0,
+                width: '100%'
+            });
+
+            // 一般USER選擇
+            $('#notifyUsers').select2({
+                ajax: {
+                    url: '@Url.Action("GetEmployeeList", "SYS")',
+                    dataType: 'json',
+                    delay: 300,
+                    data: function (params) {
+                        return {
+                            keyword: params.term || ''
+                        };
+                    },
+                    processResults: function (data) {
+                        if (data.success) {
+                            return {
+                                results: data.data
+                            };
+                        }
+                        return { results: [] };
+                    }
+                },
+                templateResult: formatEmployee,
+                templateSelection: function (employee) {
+                    return employee.text || employee.id;
+                },
+                placeholder: '請輸入員工編號或姓名搜尋',
+                allowClear: true,
+                minimumInputLength: 0,
+                width: '100%'
+            });
+
+            // 監聽資訊人員選擇變化
+            $('#notifyIt').on('change', function () {
+                updateSelectedDisplay('It');
+            });
+
+            // 監聽一般USER選擇變化
+            $('#notifyUsers').on('change', function () {
+                updateSelectedDisplay('Users');
+            });
+
+            // 監聽Controller選擇變化
+            $('#controllerName').on('change', function () {
+                updateControllerDisplay();
+            });
+        }
+
+        // 更新已選擇人員的顯示
+        function updateSelectedDisplay(type) {
+            var selectId = type === 'It' ? '#notifyIt' : '#notifyUsers';
+            var listId = type === 'It' ? '#selectedItList' : '#selectedUsersList';
+            var contentId = type === 'It' ? '#selectedItContent' : '#selectedUsersContent';
+
+            var selectedData = $(selectId).select2('data');
+
+            if (selectedData.length > 0) {
+                var html = '';
+                selectedData.forEach(function (item) {
+                    html += `<span class="selected-tag">${item.text}</span>`;
+                });
+                $(contentId).html(html);
+                $(listId).show();
+            } else {
+                $(listId).hide();
+            }
+        }
+
+        // 更新已選擇Controller的顯示
+        function updateControllerDisplay() {
+            var selectedValue = $('#controllerName').val();
+            var selectedText = $('#controllerName option:selected').text();
+
+            if (selectedValue) {
+                $('#selectedControllerContent').html(`<span class="selected-tag">${selectedText}</span>`);
+                $('#selectedController').show();
+            } else {
+                $('#selectedController').hide();
+            }
+        }
+
+        // 載入Controller清單
+        function loadControllerList(sysId) {
+            $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (response) {
+                var options = '<option value="">-- 請選擇Controller --</option>';
+                if (response.success && response.data) {
+                    response.data.forEach(function (ctrl) {
+                        options += `<option value="${ctrl.CONTROLLER_NAME}">${ctrl.CONTROLLER_NAME}</option>`;
+                    });
+                }
+                $('#controllerName').html(options);
+            });
+        }
+
+        // 儲存系統
+        function saveSystem() {
+            var notifyIt = $('#notifyIt').val();
+            var notifyUsers = $('#notifyUsers').val();
+
+            var formData = {
+                SYS_ID: $('#sysId').val().trim(),
+                SYS_NAME: $('#sysName').val().trim(),
+                NOTIFY_AUTOS_IT: notifyIt ? notifyIt.join(',') : '',
+                NOTIFY_AUTOS_USERS: notifyUsers ? notifyUsers.join(',') : '',
+                AUTOS_CONTROLLER_NAME: $('#controllerName').val() || '',
+                Action: $('#actionType').val()
+            };
+
+            if (!formData.SYS_ID || !formData.SYS_NAME) {
+                alert('系統ID和系統名稱為必填');
+                return;
+            }
+
+            $.ajax({
+                url: '@Url.Action("ApplySystem", "SYS")',
+                type: 'POST',
+                data: formData,
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        alert(response.message);
+                        $('#systemModal').modal('hide');
+                        location.reload();
+                    } else {
+                        alert(response.message);
+                    }
+                },
+                error: function () {
+                    alert('儲存時發生錯誤');
+                }
+            });
+        }
+
+        // 編輯系統
+        function editSystem(sysId, sysName) {
+            resetForm();
+            $('#modalTitle').text('修改系統');
+            $('#sysId').val(sysId).prop('readonly', true);
+            $('#sysName').val(sysName);
+            $('#actionType').val('Edit');
+
+            initSelect2();
+            loadControllerList(sysId);
+
+            // 載入現有的資料
+            $.get('@Url.Action("GetSystemDetail", "SYS")', { sysId: sysId }, function (response) {
+                if (response.success) {
+                    var system = response.data;
+
+                    // 設定資訊人員
+                    if (system.NOTIFY_AUTOS_IT) {
+                        var itList = system.NOTIFY_AUTOS_IT.split(',');
+                        itList.forEach(function (empNo) {
+                            if (empNo.trim()) {
+                                var option = new Option(empNo, empNo, true, true);
+                                $('#notifyIt').append(option);
+                            }
+                        });
+                        $('#notifyIt').trigger('change');
+                    }
+
+                    // 設定一般USER
+                    if (system.NOTIFY_AUTOS_USERS) {
+                        var usersList = system.NOTIFY_AUTOS_USERS.split(',');
+                        usersList.forEach(function (empNo) {
+                            if (empNo.trim()) {
+                                var option = new Option(empNo, empNo, true, true);
+                                $('#notifyUsers').append(option);
+                            }
+                        });
+                        $('#notifyUsers').trigger('change');
+                    }
+
+                    // 設定Controller
+                    if (system.AUTOS_CONTROLLER_NAME) {
+                        setTimeout(function () {
+                            $('#controllerName').val(system.AUTOS_CONTROLLER_NAME);
+                            updateControllerDisplay();
+                        }, 500);
+                    }
+                }
+            });
+
+            $('#systemModal').modal('show');
+        }
+
+        // 重置表單
+        function resetForm() {
+            $('#systemForm')[0].reset();
+            $('#sysId').prop('readonly', false);
+            $('#selectedItList, #selectedUsersList, #selectedController').hide();
+
+            // 清除 Select2
+            if ($('#notifyIt').hasClass('select2-hidden-accessible')) {
+                $('#notifyIt').select2('destroy');
+            }
+            if ($('#notifyUsers').hasClass('select2-hidden-accessible')) {
+                $('#notifyUsers').select2('destroy');
+            }
+        }
+    </script>
+}
+
+
+總結
+需要修改的檔案：
+	1.	Models/M_SYS/M_SYS.cs - 新增 4 個類別
+	2.	Factory/F_SYS/F_SYS.cs - 新增 2 個方法，修改 2 個方法
+	3.	Controllers/SYSController.cs - 新增 3 個方法，修改 1 個方法
+	4.	Views/SYS/SYS_APPLY.cshtml - 加入 Select2、修改 Modal HTML、新增 CSS、完整替換 JavaScript
+這樣就完成了所有的修改！​​​​​​​​​​​​​​​​
