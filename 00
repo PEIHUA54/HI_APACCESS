@@ -1,27 +1,144 @@
+using HI_APACCESS_DLL.Models;
+using Microsoft.Data.SqlClient;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 
-                // 解析回應
-                var response = JsonConvert.DeserializeObject<GetEmpMastResponse>(responseJson);
+namespace HI_APACCESS_DLL.Factory
+{
+    internal class FGetEmpMast
+    {
+        internal GetEmpMastModel.GetEmpMastResponse Execute(
+            string type, List<string> empNoList, string environment)
+        {
+            var response = new GetEmpMastModel.GetEmpMastResponse();
 
-                if (response.Result_code == "0000" && response.EmpList != null)
+            try
+            {
+                // 1. 環境檢查
+                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
                 {
-                    var employees = response.EmpList.Select(emp => new EmployeeOption
-                    {
-                        EMP_NO = emp.EMP_NO,
-                        EMP_NAME = emp.EMP_NAME
-                    }).ToList();
+                    response.Result_code = Common.Codes.ENV_ERROR;
+                    response.Msg = "環境錯誤，只接受 TEST、PROD";
+                    return response;
+                }
 
-                    // 如果有關鍵字，進行過濾
-                    if (!string.IsNullOrWhiteSpace(keyword))
+                var resultList = new List<GetEmpMastModel.ResultData>();
+
+                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
+                {
+                    conn.Open();
+
+                    var sql = @"
+SELECT 
+    M.[EMP_NO]     AS EmpNo,
+    M.[EMP_NAME]   AS EmpName,
+    M.[ORGAN_NO]   AS OrganNo,
+    M.[ORGAN_CAP]  AS OrganName,
+    M.[POST_NO]    AS PostNo,
+    M.[POST_NAME]  AS PostName,
+    M.[ENTER_DT]   AS EnterDate,
+    M.[END_DT]     AS EndDate
+FROM [HI-AUTOS].[dbo].[M1EMP_MAST] M
+WHERE 1=1
+";
+
+                    var cmd = new SqlCommand();
+                    cmd.Connection = conn;
+
+                    switch (type)
                     {
-                        employees = employees.Where(e =>
-                            e.EMP_NO.Contains(keyword) ||
-                            e.EMP_NAME.Contains(keyword)
-                        ).ToList();
+                        case "1": // 全部（在職+離職）
+                            break;
+
+                        case "2": // 在職（EndDate無）
+                            sql += @"
+AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
+";
+                            break;
+
+                        case "3": // 指定名單
+                            if (empNoList == null || empNoList.Count == 0)
+                            {
+                                response.Result_code = Common.Codes.NO_EmpNoList;
+                                response.Msg = "Type=3 時 EmpNoList 不可為空";
+                                return response;
+                            }
+
+                            // 清理名單（去空白、轉大寫、去重複）
+                            var cleaned = empNoList
+                                .Where(s => !string.IsNullOrWhiteSpace(s))
+                                .Select(s => s.Trim().ToUpper())
+                                .Distinct()
+                                .ToList();
+
+                            if (cleaned.Count == 0)
+                            {
+                                response.Result_code = Common.Codes.NO_EmpNoList;
+                                response.Msg = "EmpNoList 內容為空";
+                                return response;
+                            }
+
+                            var inParams = new List<string>();
+                            for (int i = 0; i < cleaned.Count; i++)
+                            {
+                                string p = $"@EMP{i}";
+                                inParams.Add(p);
+                                cmd.Parameters.AddWithValue(p, cleaned[i]);
+                            }
+                            sql += $" AND M.[EMP_NO] IN ({string.Join(",", inParams)})";
+                            break;
+
+                        default:
+                            response.Result_code = Common.Codes.TYPE_ERROR;
+                            response.Msg = "Type 只接受 1/2/3";
+                            return response;
                     }
 
-                    return employees;
+                    sql += " ORDER BY M.[EMP_NO]";
+
+                    cmd.CommandText = sql;
+
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            resultList.Add(new GetEmpMastModel.ResultData
+                            {
+                                EmpNo = reader["EmpNo"]?.ToString(),
+                                EmpName = reader["EmpName"]?.ToString(),
+                                OrganNo = reader["OrganNo"]?.ToString(),
+                                OrganName = reader["OrganName"]?.ToString(),
+                                PostNo = reader["PostNo"]?.ToString(),
+                                PostName = reader["PostName"]?.ToString(),
+                                EnterDate = reader["EnterDate"]?.ToString(),
+                                EndDate = reader["EndDate"]?.ToString(),
+                            });
+                        }
+                    }
                 }
-respinse 成功拿到0000，但沒有進
-                    var employees = response.EmpList.Select(emp => new EmployeeOption
-然後有個疑問 權限CONTROLLER名稱 不是要根據sysid取得嗎所以如果我這個sysid是新的裡面無controller那就不會有選項是嗎?
-如果是現有sysid 才會有?
+
+                if (resultList.Count == 0)
+                {
+                    response.Result_code = Common.Codes.NO_DATA;
+                    response.Msg = "查無資料";
+                }
+                else
+                {
+                    response.Result_code = Common.Codes.SUCCESS;
+                    response.Msg = "成功";
+                    response.Result = resultList;
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Result_code = Common.Codes.SYSTEM_ERROR;
+                response.Msg = "系統錯誤：" + ex.Message;
+            }
+
+            return response;
+        }
+    }
+}
+
