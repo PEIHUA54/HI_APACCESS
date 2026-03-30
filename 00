@@ -1,144 +1,100 @@
-using HI_APACCESS_DLL.Models;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+了解！那就保持原本的邏輯，不允許手動輸入。
+所以 Controller 下拉選單的邏輯就是：
+	∙	新系統：下拉選單是空的（只有「– 請選擇Controller –」選項），不能選擇
+	∙	現有系統：從 AP_SYS_CTRL 資料表載入該系統的 Controller 清單
+那麼只需要修改 Model 和 Factory 就好，View 保持原樣不變。
+最終需要修改的部分：
+1. Model (Models/M_SYS/M_SYS.cs)
+找到之前新增的這兩個類別，完整替換成：
 
-namespace HI_APACCESS_DLL.Factory
+// 修改：員工主檔 Response Model
+public class GetEmpMastResponse
 {
-    internal class FGetEmpMast
+    public string Result_code { get; set; }
+    public string Msg { get; set; }
+    public List<EmpMastData> Result { get; set; }  // 改成 Result
+}
+
+// 修改：員工資料 - 欄位名稱要跟 DLL 一致
+public class EmpMastData
+{
+    public string EmpNo { get; set; }      // DLL 是 EmpNo
+    public string EmpName { get; set; }    // DLL 是 EmpName
+    public string OrganNo { get; set; }
+    public string OrganName { get; set; }
+    public string PostNo { get; set; }
+    public string PostName { get; set; }
+    public string EnterDate { get; set; }
+    public string EndDate { get; set; }
+}
+
+
+2. Factory (Factory/F_SYS/F_SYS.cs)
+找到 GetEmployeeList 方法，完整替換成：
+
+// 修改：取得員工清單 - 使用 HI_APACCESS_DLL
+public List<EmployeeOption> GetEmployeeList(string keyword = "")
+{
+    try
     {
-        internal GetEmpMastModel.GetEmpMastResponse Execute(
-            string type, List<string> empNoList, string environment)
+        // 準備請求參數
+        var request = new
         {
-            var response = new GetEmpMastModel.GetEmpMastResponse();
+            Type = "2",  // 2 = 在職人員
+            EmpNoList = (List<string>)null,  // 不指定名單
+            Environment = EnvHelper.EnvironmentForDll()
+        };
 
-            try
+        string requestJson = JsonConvert.SerializeObject(request);
+        
+        // 呼叫 DLL 取得員工資料
+        string responseJson = new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
+        
+        // 解析回應
+        var response = JsonConvert.DeserializeObject<GetEmpMastResponse>(responseJson);
+        
+        // 注意：DLL 回傳的是 Result 不是 EmpList
+        if (response.Result_code == "0000" && response.Result != null && response.Result.Count > 0)
+        {
+            var employees = response.Result.Select(emp => new EmployeeOption
             {
-                // 1. 環境檢查
-                if (environment != "TEST" && environment != "PROD" && environment != "DEV")
-                {
-                    response.Result_code = Common.Codes.ENV_ERROR;
-                    response.Msg = "環境錯誤，只接受 TEST、PROD";
-                    return response;
-                }
+                EMP_NO = emp.EmpNo,      // DLL 欄位是 EmpNo
+                EMP_NAME = emp.EmpName   // DLL 欄位是 EmpName
+            }).ToList();
 
-                var resultList = new List<GetEmpMastModel.ResultData>();
-
-                using (SqlConnection conn = new SqlConnection(FCommon.BuildConnectionString(environment)))
-                {
-                    conn.Open();
-
-                    var sql = @"
-SELECT 
-    M.[EMP_NO]     AS EmpNo,
-    M.[EMP_NAME]   AS EmpName,
-    M.[ORGAN_NO]   AS OrganNo,
-    M.[ORGAN_CAP]  AS OrganName,
-    M.[POST_NO]    AS PostNo,
-    M.[POST_NAME]  AS PostName,
-    M.[ENTER_DT]   AS EnterDate,
-    M.[END_DT]     AS EndDate
-FROM [HI-AUTOS].[dbo].[M1EMP_MAST] M
-WHERE 1=1
-";
-
-                    var cmd = new SqlCommand();
-                    cmd.Connection = conn;
-
-                    switch (type)
-                    {
-                        case "1": // 全部（在職+離職）
-                            break;
-
-                        case "2": // 在職（EndDate無）
-                            sql += @"
-AND (M.[END_DT] IS NULL OR LTRIM(RTRIM(M.[END_DT])) = '')
-";
-                            break;
-
-                        case "3": // 指定名單
-                            if (empNoList == null || empNoList.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.NO_EmpNoList;
-                                response.Msg = "Type=3 時 EmpNoList 不可為空";
-                                return response;
-                            }
-
-                            // 清理名單（去空白、轉大寫、去重複）
-                            var cleaned = empNoList
-                                .Where(s => !string.IsNullOrWhiteSpace(s))
-                                .Select(s => s.Trim().ToUpper())
-                                .Distinct()
-                                .ToList();
-
-                            if (cleaned.Count == 0)
-                            {
-                                response.Result_code = Common.Codes.NO_EmpNoList;
-                                response.Msg = "EmpNoList 內容為空";
-                                return response;
-                            }
-
-                            var inParams = new List<string>();
-                            for (int i = 0; i < cleaned.Count; i++)
-                            {
-                                string p = $"@EMP{i}";
-                                inParams.Add(p);
-                                cmd.Parameters.AddWithValue(p, cleaned[i]);
-                            }
-                            sql += $" AND M.[EMP_NO] IN ({string.Join(",", inParams)})";
-                            break;
-
-                        default:
-                            response.Result_code = Common.Codes.TYPE_ERROR;
-                            response.Msg = "Type 只接受 1/2/3";
-                            return response;
-                    }
-
-                    sql += " ORDER BY M.[EMP_NO]";
-
-                    cmd.CommandText = sql;
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            resultList.Add(new GetEmpMastModel.ResultData
-                            {
-                                EmpNo = reader["EmpNo"]?.ToString(),
-                                EmpName = reader["EmpName"]?.ToString(),
-                                OrganNo = reader["OrganNo"]?.ToString(),
-                                OrganName = reader["OrganName"]?.ToString(),
-                                PostNo = reader["PostNo"]?.ToString(),
-                                PostName = reader["PostName"]?.ToString(),
-                                EnterDate = reader["EnterDate"]?.ToString(),
-                                EndDate = reader["EndDate"]?.ToString(),
-                            });
-                        }
-                    }
-                }
-
-                if (resultList.Count == 0)
-                {
-                    response.Result_code = Common.Codes.NO_DATA;
-                    response.Msg = "查無資料";
-                }
-                else
-                {
-                    response.Result_code = Common.Codes.SUCCESS;
-                    response.Msg = "成功";
-                    response.Result = resultList;
-                }
-            }
-            catch (Exception ex)
+            // 如果有關鍵字，進行過濾
+            if (!string.IsNullOrWhiteSpace(keyword))
             {
-                response.Result_code = Common.Codes.SYSTEM_ERROR;
-                response.Msg = "系統錯誤：" + ex.Message;
+                employees = employees.Where(e => 
+                    e.EMP_NO.Contains(keyword) || 
+                    e.EMP_NAME.Contains(keyword)
+                ).ToList();
             }
 
-            return response;
+            return employees;
         }
+        else
+        {
+            return new List<EmployeeOption>();
+        }
+    }
+    catch (Exception ex)
+    {
+        return new List<EmployeeOption>();
     }
 }
 
+
+Controller、View 都不需要改
+其他的 Controller 和 View 程式碼保持不變，就是之前給你的完整版本。
+
+總結
+需要修改的地方：
+	1.	✅ Model - 修改兩個類別（GetEmpMastResponse 和 EmpMastData）
+	2.	✅ Factory - 修改 GetEmployeeList 方法
+	3.	❌ Controller - 不需要改
+	4.	❌ View - 不需要改
+Controller 下拉選單邏輯：
+	∙	新系統申請時：沒有 Controller 可選（下拉選單空白）
+	∙	編輯現有系統時：可以從下拉選單選擇該系統已有的 Controller
+	∙	要新增 Controller：需要先在 AP_SYS_CTRL 資料表中新增記錄後，才能在系統申請中選擇​​​​​​​​​​​​​​​​
