@@ -1,3 +1,5 @@
+根據你的需求，需要新增以下 Model：
+
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -52,10 +54,13 @@ namespace HI_APACCESS.Models.M_SYS
 
         public string Action { get; set; } // "Add" or "Edit"
 
+        [Display(Name = "權限通知對象_資訊人員")]
         public string NOTIFY_AUTOS_IT { get; set; }
 
+        [Display(Name = "權限通知對象_一般USER")]
         public string NOTIFY_AUTOS_USERS { get; set; }
 
+        [Display(Name = "權限CONTROLLER名稱")]
         public string AUTOS_CONTROLLER_NAME { get; set; }
     }
 
@@ -79,6 +84,25 @@ namespace HI_APACCESS.Models.M_SYS
         public int Scenario { get; set; } // 1, 2, or 3 (對應三種新增情況)
     }
 
+    // 新增：員工選項Model（用於下拉選單）
+    public class EmployeeOption
+    {
+        [Display(Name = "員工編號")]
+        public string EMP_NO { get; set; }
+
+        [Display(Name = "員工姓名")]
+        public string EMP_NAME { get; set; }
+
+        public string DisplayText => $"{EMP_NO} - {EMP_NAME}";
+    }
+
+    // 新增：Controller選項Model（用於下拉選單）
+    public class ControllerOption
+    {
+        [Display(Name = "Controller名稱")]
+        public string CONTROLLER_NAME { get; set; }
+    }
+
     //REQUEST
     public class GetUrlRequsetModel
     {
@@ -95,3 +119,13 @@ namespace HI_APACCESS.Models.M_SYS
         public string Url { get; set; }
     }
 }
+
+
+新增的 Model：
+	1.	EmployeeOption - 用於資訊人員和一般USER的下拉選單
+	∙	EMP_NO：員工編號
+	∙	EMP_NAME：員工姓名
+	∙	DisplayText：組合顯示文字（員工編號 - 員工姓名）
+	2.	ControllerOption - 用於Controller的下拉選單
+	∙	CONTROLLER_NAME：Controller名稱
+這兩個 Model 會在 AJAX 調用 GetEmployeeList 和 GetControllerList 時使用，方便 Select2 下拉選單顯示和選擇。​​​​​​​​​​​​​​​​
