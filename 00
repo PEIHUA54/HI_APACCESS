@@ -1,5 +1,5 @@
   員工下拉選向應該要從這裡取 環境的話EnvHelper.EnvironmentForDll()、 type =2(在職)、 不用指定名單
-   // ⭐ 使用 Type=3 指定查詢特定員工
+   // 範例
    var request = new
    {
        Type = "3",  // 指定名單
@@ -10,8 +10,10 @@
 
 new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
 
+我是不是要給你看哪裡有這段？  
 
-這是 HI_APACCESS_DLL 
+
+這是 HI_APACCESS_DLL 是呼叫這個
   // 取得員工主檔
  public string GetEmpMast(string requestJson)
  {
