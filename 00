@@ -1,15 +1,166 @@
-我要怎麼修改才能讓頁面的資訊人員跟一般使用者顯示出姓名不是員工編號?
+你說得對，兩個問題都對：
 
-                case QueryKey.GetAvailableSystems:
-                    return @"
-                SELECT DISTINCT 
-                s.[SYS_ID], s.[SYS_NAME], s.[CREATOR], s.[CREATE_TIME], s.[EDITOR], s.[EDIT_TIME],
-                s.[NOTIFY_AUTOS_IT],s.[NOTIFY_AUTOS_USERS],s.[AUTOS_CONTROLLER_NAME]
-                FROM [HI-APLOG].[dbo].[AP_SYS] s
-                INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
-                INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
-                WHERE u.[U_ID] = @EMP_NO 
-                  AND u.[APG_NO] = '001' 
-                  AND g.[APG_NO] = '001'
-                ORDER BY s.[SYS_ID]
-";
+1. GetSystemDetail 的問題
+GetAvailableSystems 回傳的是這個人可維護的所有系統，FirstOrDefault 再從裡面找一筆。
+這樣做有兩個浪費：
+	∙	多查了整個清單只為了找一筆
+	∙	如果這個人沒有維護權限，就找不到那筆資料
+最乾淨的做法是直接寫一個 by SYS_ID 的 SQL，加到 QueryKey 裡：
+
+// SVS_DBmanager QueryKey 新增
+case QueryKey.GetSystemById:
+    return @"
+        SELECT [SYS_ID], [SYS_NAME], [CREATOR], [CREATE_TIME], 
+               [EDITOR], [EDIT_TIME], [NOTIFY_AUTOS_IT], 
+               [NOTIFY_AUTOS_USERS], [AUTOS_CONTROLLER_NAME]
+        FROM [HI-APLOG].[dbo].[AP_SYS]
+        WHERE [SYS_ID] = @SYS_ID
+    ";
+
+
+// F_SYS 新增
+public M_SYS GetSystemById(string sysId)
+{
+    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetSystemById);
+    var parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", sysId)
+    };
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    var list = SVS_DBmanager.ConvertToList<M_SYS>(dt);
+    return list.FirstOrDefault();
+}
+
+
+// Controller 改成
+public JsonResult GetSystemDetail(string sysId)
+{
+    try
+    {
+        var system = F_SYS.GetSystemById(sysId);
+        if (system != null)
+            return Json(new { success = true, data = system }, JsonRequestBehavior.AllowGet);
+        else
+            return Json(new { success = false, message = "找不到系統資料" }, JsonRequestBehavior.AllowGet);
+    }
+    catch (Exception ex)
+    {
+        return Json(new { success = false, message = ex.Message }, JsonRequestBehavior.AllowGet);
+    }
+}
+
+
+2. DataTable 顯示姓名
+你說的是這裡對吧：
+
+<td>@item.NOTIFY_AUTOS_IT</td>      ← 現在顯示 3B750;3A717
+<td>@item.NOTIFY_AUTOS_USERS</td>   ← 現在顯示 A1234;B5678
+
+
+不改 SQL 的話，Razor 後端沒有員工姓名資料，只能靠前端 JS 在頁面載入後替換，就是我剛剛給的那段 replaceEmpCell。
+如果想在後端直接輸出姓名，SQL 就需要改，但 NOTIFY_AUTOS_IT 是 3B750;3A717 這種字串，SQL 裡要拆分再 JOIN 員工表，寫起來很麻煩（要用 STRING_SPLIT 或自訂函數）。
+
+建議方向
+
+
+
+|方式                      |難度|說明                                                        |
+|------------------------|--|----------------------------------------------------------|
+|前端 JS 替換（不動 SQL）        |簡單|頁面載入後呼叫一次 GetEmployeeList，建 map 後替換 td 文字                 |
+|後端 SQL STRING_SPLIT JOIN|複雜|SQL Server 2016+ 才有 STRING_SPLIT，且需要重寫 GetAvailableSystems|
+|改存姓名（存 `編號-姓名` 格式）      |中等|改存的格式，顯示時直接取名字部分                                          |
+
+最快的是前端 JS 替換，你已經有 GetEmployeeList 這個 API 可以用，加幾行 JS 就解決，不用動後端。要加嗎？​​​​​​​​​​​​​​​​
+
+支援！以下是修改方案：
+
+修改 QueryKey.GetAvailableSystems 的 SQL
+
+SELECT DISTINCT 
+    s.[SYS_ID], 
+    s.[SYS_NAME], 
+    s.[CREATOR], 
+    s.[CREATE_TIME], 
+    s.[EDITOR], 
+    s.[EDIT_TIME],
+    s.[NOTIFY_AUTOS_IT],
+    s.[NOTIFY_AUTOS_USERS],
+    s.[AUTOS_CONTROLLER_NAME],
+    -- 資訊人員：編號轉姓名
+    STUFF((
+        SELECT '；' + ISNULL(m.EMP_NAME, t.value)
+        FROM STRING_SPLIT(s.[NOTIFY_AUTOS_IT], ';') t
+        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m ON m.[EMP_NO] = t.[value]
+        FOR XML PATH(''), TYPE
+    ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') AS NOTIFY_AUTOS_IT_NAME,
+    -- 一般USER：編號轉姓名
+    STUFF((
+        SELECT '；' + ISNULL(m.EMP_NAME, t.value)
+        FROM STRING_SPLIT(s.[NOTIFY_AUTOS_USERS], ';') t
+        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m ON m.[EMP_NO] = t.[value]
+        FOR XML PATH(''), TYPE
+    ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') AS NOTIFY_AUTOS_USERS_NAME
+FROM [HI-APLOG].[dbo].[AP_SYS] s
+INNER JOIN [HI-AUTOS].[dbo].[AP_USER] u ON s.[SYS_ID] = u.[SYS_ID]
+INNER JOIN [HI-AUTOS].[dbo].[AP_GROUP] g ON s.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+WHERE u.[U_ID] = @EMP_NO 
+  AND u.[APG_NO] = '001' 
+  AND g.[APG_NO] = '001'
+ORDER BY s.[SYS_ID]
+
+
+Model 新增兩個欄位 (M_SYS.cs)
+
+public class M_SYS
+{
+    [Display(Name = "系統ID")]
+    public string SYS_ID { get; set; }
+
+    [Display(Name = "系統名稱")]
+    public string SYS_NAME { get; set; }
+
+    [Display(Name = "建立人員")]
+    public string CREATOR { get; set; }
+
+    [Display(Name = "建立日期")]
+    public string CREATE_TIME { get; set; }
+
+    [Display(Name = "修改人員")]
+    public string EDITOR { get; set; }
+
+    [Display(Name = "修改日期")]
+    public string EDIT_TIME { get; set; }
+
+    [Display(Name = "權限通知對象_資訊人員")]
+    public string NOTIFY_AUTOS_IT { get; set; }
+
+    [Display(Name = "權限通知對象_一般USER")]
+    public string NOTIFY_AUTOS_USERS { get; set; }
+
+    [Display(Name = "權限CONTROLLER名稱")]
+    public string AUTOS_CONTROLLER_NAME { get; set; }
+
+    // 新增：顯示用姓名欄位
+    public string NOTIFY_AUTOS_IT_NAME { get; set; }
+    public string NOTIFY_AUTOS_USERS_NAME { get; set; }
+}
+
+
+View 表格改用新欄位顯示
+只改這兩個 <td>，其他不動：
+
+<td>@item.NOTIFY_AUTOS_IT_NAME</td>
+<td>@item.NOTIFY_AUTOS_USERS_NAME</td>
+
+
+邏輯說明
+
+
+
+|情況                 |顯示結果                                   |
+|-------------------|---------------------------------------|
+|`3B750;3A717` 都在員工表|`王小明；李大華`                              |
+|某筆編號找不到姓名          |`ISNULL` fallback 顯示原始編號               |
+|欄位是 null           |`STRING_SPLIT` 不執行，`STUFF` 回傳 null，顯示空白|
+
+NOTIFY_AUTOS_IT 原始編號欄位保留不動，編輯 Modal 帶回時還是用原始編號，不受影響。​​​​​​​​​​​​​​​​
