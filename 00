@@ -1,13 +1,620 @@
-1.
-SELECT [EMP_ID]
-      ,[EMP_EMAIL]
-  FROM [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] where [EMP_ID]=ad
-從這裡取信箱
-2.
-controller目前應該只會只有一個
-3.
-把controller下拉選項改成單選只能填一個，多選的先註解掉
-4.
-登入次數 取半年的
-5.
-寄件者信箱 先暫定
+好，確認全部了，開始生程式碼。
+
+1. SYS_APPLY.cshtml — Controller 改單選
+只改 Modal 裡 Controller 的部分，其他不動。
+找到這段：
+
+<!-- Controller（多選） -->
+<div class="form-group">
+    <label>權限CONTROLLER名稱</label>
+    <select id="controllerName" multiple="multiple" style="width:100%;"></select>
+    <small class="form-text text-muted">請先輸入系統ID，失焦後自動載入Controller清單</small>
+</div>
+<div id="selectedController" class="selected-list mb-3" style="display:none;">
+    <label>已選擇的Controller：</label>
+    <div id="selectedControllerContent" class="selected-content"></div>
+</div>
+
+
+替換成：
+
+<!-- Controller（單選） -->
+<div class="form-group">
+    <label>權限CONTROLLER名稱</label>
+    <select id="controllerName" style="width:100%;"></select>
+    <small class="form-text text-muted">請先輸入系統ID，失焦後自動載入Controller清單</small>
+</div>
+{{/*
+多選邏輯暫時註解
+<div id="selectedController" class="selected-list mb-3" style="display:none;">
+    <label>已選擇的Controller：</label>
+    <div id="selectedControllerContent" class="selected-content"></div>
+</div>
+*/}}
+
+
+@section Scripts 裡找到 loadControllerSelect2 函數，替換成：
+
+// Controller Select2 載入（單選）
+function loadControllerSelect2(sysId, preSelected) {
+    $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (res) {
+        if ($('#controllerName').hasClass('select2-hidden-accessible')) {
+            $('#controllerName').select2('destroy');
+        }
+        $('#controllerName').empty();
+
+        var data = [];
+        if (res.success && res.data && res.data.length > 0) {
+            data = res.data.map(function (c) {
+                return { id: c.CONTROLLER_NAME, text: c.CONTROLLER_NAME };
+            });
+        }
+
+        $('#controllerName').select2({
+            placeholder: data.length > 0 ? '-- 請選擇Controller --' : '-- 此系統無Controller --',
+            allowClear:  true,
+            width:       '100%',
+            data:        data
+        });
+
+        // 帶入已選值（單選，取第一個）
+        if (preSelected && preSelected.length > 0) {
+            $('#controllerName').val(preSelected[0]).trigger('change');
+        }
+
+        // 註解：多選 tag 顯示邏輯
+        // $('#controllerName').on('change', function () { updateCtrlTags(); });
+    });
+}
+
+
+saveSystem 裡找到 Controller 那行，替換成：
+
+// 單選，直接取 val()
+AUTOS_CONTROLLER_NAME: $('#controllerName').val() || '',
+
+
+editSystem 裡找到 Controller 帶回那段，替換成：
+
+// Controller 單選帶回（取第一個）
+var preSelected = sys.AUTOS_CONTROLLER_NAME
+    ? sys.AUTOS_CONTROLLER_NAME.split(';').map(function (s) { return s.trim(); }).filter(Boolean)
+    : [];
+loadControllerSelect2(sysId, preSelected);
+
+
+2. M_AUTOS.cs
+
+namespace HI_APACCESS.Models.M_AUTOS
+{
+    // 系統資料
+    public class M_AUTOS_SYS
+    {
+        public string SYS_ID { get; set; }
+        public string SYS_NAME { get; set; }
+        public string NOTIFY_AUTOS_IT { get; set; }
+        public string NOTIFY_AUTOS_USERS { get; set; }
+        public string AUTOS_CONTROLLER_NAME { get; set; }
+    }
+
+    // 帳號清單（全欄位）
+    public class M_AUTOS_UserExport
+    {
+        public string SYS_NAME { get; set; }
+        public string U_ID { get; set; }
+        public string U_NAME { get; set; }
+        public string APG_NO { get; set; }
+        public string APG_NAME { get; set; }
+        public string ORGAN_NO { get; set; }
+        public string ORGAN_CAP { get; set; }
+        public string CREATOR { get; set; }
+        public string CREATE_TIME { get; set; }
+        public string EDITOR { get; set; }
+        public string EDIT_TIME { get; set; }
+    }
+
+    // 登入次數清單
+    public class M_AUTOS_LoginCount
+    {
+        public string SYS_NAME { get; set; }
+        public string U_ID { get; set; }
+        public string U_NAME { get; set; }
+        public int LOGIN_COUNT { get; set; }
+    }
+
+    // 批次執行結果
+    public class M_AUTOS_BatchResult
+    {
+        public string SYS_ID { get; set; }
+        public string SYS_NAME { get; set; }
+        public bool Success { get; set; }
+        public string Message { get; set; }
+    }
+}
+
+
+3. SQL — 加到 SVS_DBmanager QueryKey
+
+// 取得所有系統
+case QueryKey.GetAllSystemsForBatch:
+    return @"
+        SELECT [SYS_ID], [SYS_NAME],
+               [NOTIFY_AUTOS_IT], [NOTIFY_AUTOS_USERS],
+               [AUTOS_CONTROLLER_NAME]
+        FROM [HI-APLOG].[dbo].[AP_SYS]
+        ORDER BY [SYS_ID]
+    ";
+
+// 帳號清單（全欄位）
+case QueryKey.GetUserListForMail:
+    return @"
+        SELECT
+            u.[U_ID],
+            u.[U_NAME],
+            u.[APG_NO],
+            g.[APG_NAME],
+            m.[ORGAN_NO],
+            m.[ORGAN_CAP],
+            u.[CREATOR],
+            CONVERT(varchar, u.[CREATE_TIME], 120) AS CREATE_TIME,
+            u.[EDITOR],
+            CONVERT(varchar, u.[EDIT_TIME], 120) AS EDIT_TIME
+        FROM [HI-AUTOS].[dbo].[AP_USER] u
+        LEFT JOIN [HI-AUTOS].[dbo].[AP_GROUP] g
+            ON u.[SYS_ID] = g.[SYS_ID] AND u.[APG_NO] = g.[APG_NO]
+        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] m
+            ON u.[U_ID] = m.[EMP_NO]
+        WHERE u.[SYS_ID] = @SYS_ID
+        ORDER BY u.[APG_NO], u.[U_ID]
+    ";
+
+// 登入次數（最近半年）
+case QueryKey.GetLoginCountList:
+    return @"
+        DECLARE @CONTROLLER_NAME VARCHAR(100)
+        SELECT @CONTROLLER_NAME = [AUTOS_CONTROLLER_NAME]
+        FROM [HI-APLOG].[dbo].[AP_SYS]
+        WHERE [SYS_ID] = @SYS_ID
+
+        SELECT
+            A.[U_ID],
+            A.[U_NAME],
+            COUNT(B.[LOG_ID]) AS LOGIN_COUNT
+        FROM [HI-AUTOS].[dbo].[AP_USER] AS A
+        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
+            ON A.[U_ID] = NT.[EMP_NO]
+        LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
+            ON A.[SYS_ID] = B.[SYS_ID]
+            AND NT.[EMP_DOM_ID] = B.[ACTION_USER]
+            AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
+            AND B.[LOG_TIME] >= DATEADD(MONTH, -6, GETDATE())
+        WHERE A.[SYS_ID] = @SYS_ID
+        GROUP BY A.[U_ID], A.[U_NAME]
+        ORDER BY A.[U_ID]
+    ";
+
+// 員工信箱
+case QueryKey.GetEmpEmail:
+    return @"
+        SELECT [EMP_EMAIL]
+        FROM [HI-AUTOS].[dbo].[EMPLOYEE_MAIL]
+        WHERE [EMP_ID] = @EMP_NO
+    ";
+
+
+4. F_AUTOS.cs
+
+using HI_APACCESS.Models.M_AUTOS;
+using HI_APACCESS.Service;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Linq;
+
+namespace HI_APACCESS.Factory.F_AUTOS
+{
+    public class F_AUTOS
+    {
+        SVS_DBmanager SVS_DBmanager = new SVS_DBmanager();
+
+        // 取得所有系統
+        public List<M_AUTOS_SYS> GetAllSystemsForBatch()
+        {
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAllSystemsForBatch);
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, new List<SqlParameter>());
+            return SVS_DBmanager.ConvertToList<M_AUTOS_SYS>(dt);
+        }
+
+        // 帳號清單
+        public List<M_AUTOS_UserExport> GetUserListForMail(string sysId, string sysName)
+        {
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetUserListForMail);
+            var parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId)
+            };
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            var list = SVS_DBmanager.ConvertToList<M_AUTOS_UserExport>(dt);
+            list.ForEach(x => x.SYS_NAME = sysName);
+            return list;
+        }
+
+        // 登入次數清單
+        public List<M_AUTOS_LoginCount> GetLoginCountList(string sysId, string sysName)
+        {
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetLoginCountList);
+            var parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@SYS_ID", sysId)
+            };
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            var list = SVS_DBmanager.ConvertToList<M_AUTOS_LoginCount>(dt);
+            list.ForEach(x => x.SYS_NAME = sysName);
+            return list;
+        }
+
+        // 取得單一員工信箱
+        public string GetEmpEmail(string empNo)
+        {
+            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmpEmail);
+            var parameters = new List<SqlParameter>
+            {
+                new SqlParameter("@EMP_NO", empNo)
+            };
+            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+            if (dt.Rows.Count > 0)
+                return dt.Rows[0]["EMP_EMAIL"]?.ToString();
+            return null;
+        }
+
+        // 批次取得信箱清單（; 分隔的員工編號字串）
+        public List<string> GetEmpEmailList(string empNosStr)
+        {
+            if (string.IsNullOrWhiteSpace(empNosStr))
+                return new List<string>();
+
+            return empNosStr.Split(';')
+                            .Select(s => s.Trim())
+                            .Where(s => !string.IsNullOrEmpty(s))
+                            .Select(empNo => GetEmpEmail(empNo))
+                            .Where(email => !string.IsNullOrEmpty(email))
+                            .ToList();
+        }
+    }
+}
+
+
+5. AUTOSController.cs
+
+using HI_APACCESS.Factory.F_AUTOS;
+using HI_APACCESS.Models.M_AUTOS;
+using OfficeOpenXml;
+using OfficeOpenXml.Style;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Net.Mail;
+using System.Web.Mvc;
+
+namespace HI_APACCESS.Controllers
+{
+    public class AUTOSController : HI_APACCESSBaseController
+    {
+        private readonly F_AUTOS F_AUTOS = new F_AUTOS();
+
+        // TODO: 確認寄件者信箱後替換
+        private const string MAIL_SENDER      = "hi_apaccess@EXC1.hilife.com";
+        private const string MAIL_SENDER_NAME = "帳號盤點通知系統";
+        private const string SMTP_HOST        = "10.8.254.33";
+        private const int    SMTP_PORT        = 25;
+
+        #region 頁面（空白）
+
+        public ActionResult BatchAutos()
+        {
+            return View();
+        }
+
+        #endregion
+
+        #region 批次寄信（工作排程呼叫）
+
+        [HttpGet]
+        public ActionResult AutosBatch()
+        {
+            var resultList = new List<M_AUTOS_BatchResult>();
+
+            try
+            {
+                var systems = F_AUTOS.GetAllSystemsForBatch();
+
+                foreach (var sys in systems)
+                {
+                    var result = new M_AUTOS_BatchResult
+                    {
+                        SYS_ID   = sys.SYS_ID,
+                        SYS_NAME = sys.SYS_NAME
+                    };
+
+                    try
+                    {
+                        // 沒設定收件者 → 略過
+                        if (string.IsNullOrWhiteSpace(sys.NOTIFY_AUTOS_USERS))
+                        {
+                            result.Success = false;
+                            result.Message = "未設定通知對象，略過";
+                            resultList.Add(result);
+                            continue;
+                        }
+
+                        // 取得收件者信箱
+                        var toEmails = F_AUTOS.GetEmpEmailList(sys.NOTIFY_AUTOS_USERS);
+                        var ccEmails = F_AUTOS.GetEmpEmailList(sys.NOTIFY_AUTOS_IT);
+
+                        if (toEmails.Count == 0)
+                        {
+                            result.Success = false;
+                            result.Message = "收件者查無信箱，略過";
+                            resultList.Add(result);
+                            continue;
+                        }
+
+                        // 產生 Excel
+                        string ts         = DateTime.Now.ToString("yyyyMMddHHmmss");
+                        string userFile   = $"{ts}_帳號清單";
+                        string loginFile  = $"{ts}_登入使用次數清單";
+                        var userList      = F_AUTOS.GetUserListForMail(sys.SYS_ID, sys.SYS_NAME);
+                        var loginList     = F_AUTOS.GetLoginCountList(sys.SYS_ID, sys.SYS_NAME);
+                        byte[] userExcel  = CreateUserExcel(userList,  sys.SYS_NAME);
+                        byte[] loginExcel = CreateLoginExcel(loginList, sys.SYS_NAME);
+
+                        // 寄信
+                        SendInventoryMail(
+                            sysName:       sys.SYS_NAME,
+                            toEmails:      toEmails,
+                            ccEmails:      ccEmails,
+                            userExcel:     userExcel,
+                            userFileName:  userFile,
+                            loginExcel:    loginExcel,
+                            loginFileName: loginFile
+                        );
+
+                        result.Success = true;
+                        result.Message = $"寄信成功，收件者 {toEmails.Count} 人，CC {ccEmails.Count} 人";
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Success = false;
+                        result.Message = "失敗：" + ex.Message;
+                    }
+
+                    resultList.Add(result);
+                }
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "批次執行錯誤：" + ex.Message },
+                            JsonRequestBehavior.AllowGet);
+            }
+
+            return Json(new { success = true, data = resultList },
+                        JsonRequestBehavior.AllowGet);
+        }
+
+        #endregion
+
+        #region 寄信
+
+        private void SendInventoryMail(
+            string sysName,
+            List<string> toEmails,
+            List<string> ccEmails,
+            byte[] userExcel,  string userFileName,
+            byte[] loginExcel, string loginFileName)
+        {
+            using (var mail = new MailMessage())
+            {
+                mail.From       = new MailAddress(MAIL_SENDER, MAIL_SENDER_NAME);
+                mail.IsBodyHtml = true;
+                mail.Priority   = MailPriority.Normal;
+
+                // 收件者（正本）
+                foreach (var email in toEmails)
+                    mail.To.Add(new MailAddress(email));
+
+                // CC（副本）
+                foreach (var email in ccEmails)
+                    mail.CC.Add(new MailAddress(email));
+
+                // 主旨
+                string period  = GetHalfYearPeriod();
+                mail.Subject   = $"【帳號盤點通知】{sysName} - {period}";
+
+                // 內文
+                mail.Body = BuildMailBody(sysName, period);
+
+                // 附件：帳號清單
+                var s1 = new MemoryStream(userExcel);
+                mail.Attachments.Add(new Attachment(s1,
+                    userFileName + ".xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+                // 附件：登入使用次數清單
+                var s2 = new MemoryStream(loginExcel);
+                mail.Attachments.Add(new Attachment(s2,
+                    loginFileName + ".xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+                using (var smtp = new SmtpClient(SMTP_HOST))
+                {
+                    smtp.Port      = SMTP_PORT;
+                    smtp.EnableSsl = false;
+                    smtp.Send(mail);
+                }
+            }
+        }
+
+        private string BuildMailBody(string sysName, string period)
+        {
+            var b = "<html><body style='font-family:微軟正黑體; font-size:14px; line-height:2;'>";
+            b += "<p>敬啟者，</p>";
+            b += "<p>本信為系統自動發送之帳號盤點通知，請惠予查閱。</p>";
+            b += "<br>";
+            b += $"<p>系統名稱：<strong>{sysName}</strong></p>";
+            b += $"<p>盤點期間：<strong>{period}</strong></p>";
+            b += "<br>";
+            b += "<p>隨信附上下列兩份清單，請確認清單內人員是否仍有系統使用需求：</p>";
+            b += "<ol>";
+            b += "  <li>帳號清單（系統名稱、帳號、姓名、群組、部門等）</li>";
+            b += "  <li>登入使用次數清單（系統名稱、帳號、姓名、近半年登入次數）</li>";
+            b += "</ol>";
+            b += "<p>若有人員已離職或不再需要系統使用權限，<strong>請通知資訊人員進行帳號移除作業</strong>，以確保系統資安安全。</p>";
+            b += "<br>";
+            b += "<p>如有任何疑問，請洽資訊人員。</p>";
+            b += "<br>";
+            b += "<p style='color:#888; font-size:12px;'>※ 本信為系統自動發送，請勿直接回覆。</p>";
+            b += "</body></html>";
+            return b;
+        }
+
+        private string GetHalfYearPeriod()
+        {
+            var now = DateTime.Now;
+            return now.Month <= 6
+                ? $"{now.Year}年上半年（1月～6月）"
+                : $"{now.Year}年下半年（7月～12月）";
+        }
+
+        #endregion
+
+        #region 產生 Excel（不加密）
+
+        private byte[] CreateUserExcel(List<M_AUTOS_UserExport> list, string sysName)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using (var package = new ExcelPackage())
+            {
+                var ws      = package.Workbook.Worksheets.Add("帳號清單");
+                var headers = new[] { "系統名稱", "帳號", "姓名", "群組代號", "群組名稱",
+                                      "部門代號", "部門名稱", "建立人員", "建立日期",
+                                      "修改人員", "修改日期" };
+                SetHeaders(ws, headers);
+
+                int row = 2;
+                foreach (var item in list)
+                {
+                    ws.Cells[row, 1].Value  = sysName;
+                    ws.Cells[row, 2].Value  = item.U_ID;
+                    ws.Cells[row, 3].Value  = item.U_NAME;
+                    ws.Cells[row, 4].Value  = item.APG_NO;
+                    ws.Cells[row, 5].Value  = item.APG_NAME;
+                    ws.Cells[row, 6].Value  = item.ORGAN_NO;
+                    ws.Cells[row, 7].Value  = item.ORGAN_CAP;
+                    ws.Cells[row, 8].Value  = item.CREATOR;
+                    ws.Cells[row, 9].Value  = item.CREATE_TIME;
+                    ws.Cells[row, 10].Value = item.EDITOR;
+                    ws.Cells[row, 11].Value = item.EDIT_TIME;
+                    SetDataRowStyle(ws, row, headers.Length);
+                    row++;
+                }
+
+                AutoFitColumns(ws, headers.Length);
+                ws.View.FreezePanes(2, 1);
+                return package.GetAsByteArray();
+            }
+        }
+
+        private byte[] CreateLoginExcel(List<M_AUTOS_LoginCount> list, string sysName)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using (var package = new ExcelPackage())
+            {
+                var ws      = package.Workbook.Worksheets.Add("登入使用次數");
+                var headers = new[] { "系統名稱", "帳號", "姓名", "登入次數" };
+                SetHeaders(ws, headers);
+
+                int row = 2;
+                foreach (var item in list)
+                {
+                    ws.Cells[row, 1].Value = sysName;
+                    ws.Cells[row, 2].Value = item.U_ID;
+                    ws.Cells[row, 3].Value = item.U_NAME;
+                    ws.Cells[row, 4].Value = item.LOGIN_COUNT;
+                    SetDataRowStyle(ws, row, headers.Length);
+                    row++;
+                }
+
+                AutoFitColumns(ws, headers.Length);
+                ws.View.FreezePanes(2, 1);
+                return package.GetAsByteArray();
+            }
+        }
+
+        private void SetHeaders(ExcelWorksheet ws, string[] headers)
+        {
+            for (int i = 0; i < headers.Length; i++)
+                ws.Cells[1, i + 1].Value = headers[i];
+
+            using (var range = ws.Cells[1, 1, 1, headers.Length])
+            {
+                range.Style.Font.Bold      = true;
+                range.Style.Font.Size      = 11;
+                range.Style.Font.Name      = "微軟正黑體";
+                range.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                range.Style.Fill.BackgroundColor.SetColor(Color.LightGray);
+                range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+                range.Style.VerticalAlignment   = ExcelVerticalAlignment.Center;
+                SetBorder(range);
+            }
+        }
+
+        private void SetDataRowStyle(ExcelWorksheet ws, int row, int colCount)
+        {
+            using (var range = ws.Cells[row, 1, row, colCount])
+            {
+                range.Style.Font.Name         = "微軟正黑體";
+                range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+                SetBorder(range);
+            }
+        }
+
+        private void SetBorder(ExcelRange range)
+        {
+            range.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
+            range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+            range.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
+            range.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
+        }
+
+        private void AutoFitColumns(ExcelWorksheet ws, int colCount)
+        {
+            if (ws.Dimension == null) return;
+            ws.Cells[ws.Dimension.Address].AutoFitColumns();
+            for (int i = 1; i <= colCount; i++)
+                ws.Column(i).Width += 2;
+        }
+
+        #endregion
+    }
+}
+
+
+6. BatchAutos.cshtml（空白頁面）
+
+@{
+    ViewBag.Title = "BatchAutos";
+}
+
+
+注意事項
+
+
+
+|項目                     |說明                                   |
+|-----------------------|-------------------------------------|
+|`GetLoginCountList` SQL|含 `DECLARE` 多段，確認 `QueryBySQL` 支援批次執行|
+|`MAIL_SENDER`          |目前寫死，確認後替換                           |
+|`AP_EVENT_LOG.LOG_TIME`|確認欄位名稱是否正確，登入次數用這個欄位過濾半年             |
+|`EMPLOYEE_MAIL.EMP_ID` |確認是員工編號格式（如 `3B750`）還是 AD 帳號格式       |
