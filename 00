@@ -1,360 +1,221 @@
-收到，整理需求：
-員工清單
-	∙	點擊輸入框 → 立即顯示下拉清單（不用按搜尋）
-	∙	邊輸入邊篩選（不用按搜尋鍵）
-	∙	點選員工後按「新增」加入 tag，不預留清單空間
-	∙	員工編號／姓名要對齊表頭欄位
-Controller
-	∙	同樣改成點選後按「新增」加入 tag
-	∙	不用 Ctrl+ 多選
-只需要改 View，Factory / Controller / Model 不動。以下是完整 View：
-
 @model IEnumerable<HI_APACCESS.Models.M_SYS.M_SYS>
+
 @using HI_APACCESS.Service;
+
 @{
     ViewBag.Title = "系統申請管理";
     HI_APACCESS.Controllers.HI_APACCESSBaseController controller = ViewContext.Controller as HI_APACCESS.Controllers.HI_APACCESSBaseController;
     var emp_APG_NO = controller.APG_NO;
-    var emp_no     = controller.Emp_NO;
-    var ctrlName   = ViewContext.RouteData.Values["controller"].ToString();
+    var emp_no = controller.Emp_NO;
+    var ctrlName = ViewContext.RouteData.Values["controller"].ToString();
 }
 
 <link rel="stylesheet" href="@Url.Version("Form.css","CSS")" />
 <link rel="stylesheet" href="@Url.Version("FieldNameSwitch.css","CSS")" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" />
 
 <style>
-    /* ── 表格 ── */
-    .tb-workonroad a { text-decoration: none; color: #ffffff; display: block; }
-    .tb-workonroad thead tr { background-color: #E6CCB2; }
-    #systemTable { width: 100%; }
-    #systemTable th, #systemTable td { text-align: center; vertical-align: middle; }
+    .tb-workonroad a {
+        text-decoration: none;
+        color: #ffffff;
+        display: block;
+    }
 
-    /* ── Modal 欄位對齊 ── */
-    .modal-body .form-group {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 14px;
+    .tb-workonroad thead tr {
+        background-color: #E6CCB2;
     }
-    .modal-body .field-label {
-        width: 150px;
-        min-width: 150px;
-        font-weight: 600;
-        padding-top: 7px;
-        text-align: right;
-        padding-right: 14px;
-        color: #333;
-        line-height: 1.5;
-    }
-    .modal-body .field-label .text-danger { font-weight: bold; }
-    .modal-body .field-control { flex: 1; min-width: 0; }
-    .modal-body .field-hint { font-size: 12px; color: #888; margin-top: 3px; }
 
-    /* ── 員工搜尋下拉 ── */
-    .emp-dropdown-wrap {
-        position: relative;
-    }
-    .emp-dropdown-wrap input {
+    #systemTable {
         width: 100%;
     }
-    .emp-dropdown-panel {
-        display: none;
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        z-index: 9999;
-        background: #fff;
-        border: 1px solid #ced4da;
-        border-radius: 0 0 4px 4px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
-        max-height: 220px;
-        overflow: hidden;
-        flex-direction: column;
-    }
-    .emp-dropdown-panel.open {
-        display: flex;
-    }
-    /* 表頭 */
-    .emp-dropdown-header {
-        display: flex;
-        background: #343a40;
-        color: #fff;
-        font-size: 12px;
-        font-weight: 600;
-        padding: 5px 0;
-        flex-shrink: 0;
-    }
-    .emp-dropdown-header .col-no  { width: 38%; padding-left: 10px; }
-    .emp-dropdown-header .col-name { width: 62%; padding-left: 6px; }
-    /* 選項清單 */
-    .emp-dropdown-list {
-        overflow-y: auto;
-        flex: 1;
-    }
-    .emp-dropdown-item {
-        display: flex;
-        align-items: center;
-        padding: 6px 0;
-        cursor: pointer;
-        font-size: 13px;
-        border-bottom: 1px solid #f0f0f0;
-    }
-    .emp-dropdown-item:hover,
-    .emp-dropdown-item.selected {
-        background: #4a90d9;
-        color: #fff;
-    }
-    .emp-dropdown-item .col-no  { width: 38%; padding-left: 10px; }
-    .emp-dropdown-item .col-name { width: 62%; padding-left: 6px; }
-    .emp-dropdown-empty {
-        padding: 10px;
-        color: #888;
-        font-size: 13px;
-        text-align: center;
-    }
 
-    /* ── 新增按鈕列 ── */
-    .emp-add-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 6px;
-    }
-    .emp-add-row .selected-preview {
-        flex: 1;
-        font-size: 13px;
-        color: #555;
-        background: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 4px;
-        padding: 4px 8px;
-        min-height: 30px;
-        line-height: 22px;
-    }
-    .emp-add-row .selected-preview.placeholder { color: #aaa; }
+        #systemTable th, #systemTable td {
+            text-align: center;
+            vertical-align: middle;
+        }
 
-    /* ── 已選 tag ── */
+    /* 新增：已選擇項目的顯示樣式 */
     .selected-list {
         background: #f8f9fa;
-        padding: 8px 10px;
+        padding: 10px;
         border-radius: 4px;
         border: 1px solid #dee2e6;
-        margin-top: 6px;
     }
-    .selected-content { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+    .selected-content {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
     .selected-tag {
-        background: #4a90d9;
-        color: #fff;
-        padding: 4px 10px;
+        background: #007bff;
+        color: white;
+        padding: 5px 10px;
         border-radius: 4px;
-        font-size: 13px;
+        font-size: 14px;
         display: inline-flex;
         align-items: center;
         gap: 5px;
     }
-    .selected-tag .tag-remove { cursor: pointer; font-weight: bold; }
-    .selected-tag .tag-remove:hover { color: #ffd; }
 
-    /* ── Controller 下拉 ── */
-    .ctrl-dropdown-wrap { position: relative; }
-    .ctrl-dropdown-panel {
-        display: none;
-        position: absolute;
-        top: 100%;
-        left: 0; right: 0;
-        z-index: 9999;
-        background: #fff;
-        border: 1px solid #ced4da;
-        border-radius: 0 0 4px 4px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
-        max-height: 180px;
-        overflow-y: auto;
+    /* Select2 下拉選單樣式調整 */
+    .select2-results__option {
+        padding: 0 !important;
     }
-    .ctrl-dropdown-panel.open { display: block; }
-    .ctrl-dropdown-item {
-        padding: 7px 12px;
-        cursor: pointer;
-        font-size: 13px;
-        border-bottom: 1px solid #f0f0f0;
+
+    .select2-container--default .select2-results__option--highlighted[aria-selected] {
+        background-color: #e9ecef !important;
     }
-    .ctrl-dropdown-item:hover,
-    .ctrl-dropdown-item.selected { background: #4a90d9; color: #fff; }
-    .ctrl-dropdown-empty {
-        padding: 10px;
-        color: #888;
-        font-size: 13px;
-        text-align: center;
+
+    /* Select2 選項內的表格樣式 */
+    .employee-option-table {
+        width: 100%;
+        border-collapse: collapse;
     }
+
+        .employee-option-table td {
+            padding: 8px;
+            border-right: 1px solid #ddd;
+        }
+
+            .employee-option-table td:last-child {
+                border-right: none;
+            }
 </style>
 
-<!-- ── 頁面標題 ── -->
 <section class="page-title">
     <div class="triangle"></div>
     <div class="title-text">系統申請管理</div>
 </section>
 
-<!-- ── 主表格 ── -->
 <div>
-    <div style="overflow-y:auto; height:835px; overflow-x:auto;">
-        <section class="form-data" id="table-border">
-            <table id="systemTable" class="table table-bordered">
-                <thead style="position:sticky; top:-0.1px; z-index:2;">
-                    <tr>
-                        <th style="width:100px;">
-                            <button type="button" class="btn btn-green" id="btnAdd">新增</button>
-                        </th>
-                        <th style="width:150px;">@Html.DisplayNameFor(x => x.SYS_ID)</th>
-                        <th style="width:200px;">@Html.DisplayNameFor(x => x.SYS_NAME)</th>
-                        <th style="width:200px;">@Html.DisplayNameFor(x => x.NOTIFY_AUTOS_IT)</th>
-                        <th style="width:200px;">@Html.DisplayNameFor(x => x.NOTIFY_AUTOS_USERS)</th>
-                        <th style="width:200px;">@Html.DisplayNameFor(x => x.AUTOS_CONTROLLER_NAME)</th>
-                        <th style="width:100px;">@Html.DisplayNameFor(x => x.CREATOR)</th>
-                        <th style="width:150px;">@Html.DisplayNameFor(x => x.CREATE_TIME)</th>
-                        <th style="width:100px;">@Html.DisplayNameFor(x => x.EDITOR)</th>
-                        <th style="width:150px;">@Html.DisplayNameFor(x => x.EDIT_TIME)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if (Model != null && Model.Any())
-                    {
-                        foreach (var item in Model)
+    <div>
+        <div style="overflow-y: auto; height: 835px; overflow-x: auto;">
+            <section class="form-data" id="table-border">
+                <table id="systemTable" class="table table-bordered">
+                    <thead style="position:sticky; top:-0.1px; z-index:2;">
+                        <tr>
+                            <th style="width:100px;">
+                                <button type="button" class="btn btn-green" id="btnAdd"> 新增 </button>
+                            </th>
+                            <th style="width:150px;">@Html.DisplayNameFor(x => x.SYS_ID)</th>
+                            <th style="width:200px;">@Html.DisplayNameFor(x => x.SYS_NAME)</th>
+
+                            <th style="width:200px;">@Html.DisplayNameFor(x => x.NOTIFY_AUTOS_IT)</th>
+                            <th style="width:200px;">@Html.DisplayNameFor(x => x.NOTIFY_AUTOS_USERS)</th>
+                            <th style="width:200px;">@Html.DisplayNameFor(x => x.AUTOS_CONTROLLER_NAME)</th>
+
+                            <th style="width:100px;">@Html.DisplayNameFor(x => x.CREATOR)</th>
+                            <th style="width:150px;">@Html.DisplayNameFor(x => x.CREATE_TIME)</th>
+                            <th style="width:100px;">@Html.DisplayNameFor(x => x.EDITOR)</th>
+                            <th style="width:150px;">@Html.DisplayNameFor(x => x.EDIT_TIME)</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @if (Model != null && Model.Any())
+                        {
+                            foreach (var item in Model)
+                            {
+                                <tr>
+                                    <td>
+                                        <button type="button" class="btn btn-blue btn-edit" data-sysid="@item.SYS_ID" data-sysname="@item.SYS_NAME"> 修改 </button>
+                                    </td>
+                                    <td>@item.SYS_ID</td>
+                                    <td>@item.SYS_NAME</td>
+                                    <td>@item.NOTIFY_AUTOS_IT</td>
+                                    <td>@item.NOTIFY_AUTOS_USERS</td>
+                                    <td>@item.AUTOS_CONTROLLER_NAME</td>
+                                    <td>@item.CREATOR</td>
+                                    <td>@item.CREATE_TIME</td>
+                                    <td>@item.EDITOR</td>
+                                    <td>@item.EDIT_TIME</td>
+                                </tr>
+                            }
+                        }
+                        else
                         {
                             <tr>
-                                <td>
-                                    <button type="button" class="btn btn-blue btn-edit"
-                                            data-sysid="@item.SYS_ID"
-                                            data-sysname="@item.SYS_NAME">修改</button>
-                                </td>
-                                <td>@item.SYS_ID</td>
-                                <td>@item.SYS_NAME</td>
-                                <td>@item.NOTIFY_AUTOS_IT</td>
-                                <td>@item.NOTIFY_AUTOS_USERS</td>
-                                <td>@item.AUTOS_CONTROLLER_NAME</td>
-                                <td>@item.CREATOR</td>
-                                <td>@item.CREATE_TIME</td>
-                                <td>@item.EDITOR</td>
-                                <td>@item.EDIT_TIME</td>
+                                <td colspan="10" style="text-align:center; font-weight:600;">查無資料</td>
                             </tr>
                         }
-                    }
-                    else
-                    {
-                        <tr><td colspan="10" style="text-align:center;font-weight:600;">查無資料</td></tr>
-                    }
-                </tbody>
-            </table>
-        </section>
+                    </tbody>
+                </table>
+            </section>
+        </div>
     </div>
 </div>
 
-<!-- ── Modal ── -->
+<!-- 新增/修改 Modal -->
 <div class="modal fade" id="systemModal" tabindex="-1" role="dialog">
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="modalTitle">新增系統</h5>
-                <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
             </div>
             <div class="modal-body">
-                <form id="systemForm" autocomplete="off">
-
-                    <!-- 系統ID -->
-                    <div class="form-group">
-                        <div class="field-label">系統ID <span class="text-danger">*</span></div>
-                        <div class="field-control">
-                            <input type="text" class="form-control" id="sysId" name="SYS_ID"
-                                   required maxlength="100">
-                        </div>
-                    </div>
-
-                    <!-- 系統名稱 -->
-                    <div class="form-group">
-                        <div class="field-label">系統名稱 <span class="text-danger">*</span></div>
-                        <div class="field-control">
-                            <input type="text" class="form-control" id="sysName" name="SYS_NAME"
-                                   required maxlength="100">
-                        </div>
-                    </div>
-
-                    <!-- 資訊人員 -->
-                    <div class="form-group">
-                        <div class="field-label">權限通知對象<br />資訊人員</div>
-                        <div class="field-control">
-                            <div class="emp-dropdown-wrap" id="wrapIt">
-                                <input type="text" class="form-control" id="searchIt"
-                                       placeholder="點擊或輸入員工編號／姓名篩選">
-                                <div class="emp-dropdown-panel" id="panelIt">
-                                    <div class="emp-dropdown-header">
-                                        <span class="col-no">員工編號</span>
-                                        <span class="col-name">員工名稱</span>
-                                    </div>
-                                    <div class="emp-dropdown-list" id="listIt"></div>
-                                </div>
+                <form id="systemForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sysId">系統ID <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="sysId" name="SYS_ID" required maxlength="100" autocomplete="off">
                             </div>
-                            <!-- 新增列：預覽 + 按鈕 -->
-                            <div class="emp-add-row">
-                                <div class="selected-preview placeholder" id="previewIt">尚未選取</div>
-                                <button type="button" class="btn btn-sm btn-green"
-                                        onclick="addSelectedEmp('It')">＋ 新增</button>
-                            </div>
-                            <div id="selectedItList" class="selected-list" style="display:none;">
-                                <strong>已選擇：</strong>
-                                <div id="selectedItContent" class="selected-content"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="sysName">系統名稱 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="sysName" name="SYS_NAME" required maxlength="100" autocomplete="off">
                             </div>
                         </div>
                     </div>
 
-                    <!-- 一般USER -->
+                    <!-- 新增：權限通知對象_資訊人員 -->
                     <div class="form-group">
-                        <div class="field-label">權限通知對象<br />一般USER</div>
-                        <div class="field-control">
-                            <div class="emp-dropdown-wrap" id="wrapUsers">
-                                <input type="text" class="form-control" id="searchUsers"
-                                       placeholder="點擊或輸入員工編號／姓名篩選">
-                                <div class="emp-dropdown-panel" id="panelUsers">
-                                    <div class="emp-dropdown-header">
-                                        <span class="col-no">員工編號</span>
-                                        <span class="col-name">員工名稱</span>
-                                    </div>
-                                    <div class="emp-dropdown-list" id="listUsers"></div>
-                                </div>
-                            </div>
-                            <div class="emp-add-row">
-                                <div class="selected-preview placeholder" id="previewUsers">尚未選取</div>
-                                <button type="button" class="btn btn-sm btn-green"
-                                        onclick="addSelectedEmp('Users')">＋ 新增</button>
-                            </div>
-                            <div id="selectedUsersList" class="selected-list" style="display:none;">
-                                <strong>已選擇：</strong>
-                                <div id="selectedUsersContent" class="selected-content"></div>
-                            </div>
-                        </div>
+                        <label for="notifyIt">權限通知對象_資訊人員</label>
+                        <select class="form-control select2-multiple" id="notifyIt" name="NOTIFY_AUTOS_IT" multiple="multiple" style="width: 100%;">
+                        </select>
+                        <small class="form-text text-muted">可複選多位資訊人員，輸入員工編號或姓名搜尋</small>
                     </div>
 
-                    <!-- Controller -->
+                    <!-- 顯示已選擇的資訊人員 -->
+                    <div id="selectedItList" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的資訊人員：</label>
+                        <div id="selectedItContent" class="selected-content"></div>
+                    </div>
+
+                    <!-- 新增：權限通知對象_一般USER -->
                     <div class="form-group">
-                        <div class="field-label">權限CONTROLLER<br />名稱</div>
-                        <div class="field-control">
-                            <div class="ctrl-dropdown-wrap" id="wrapCtrl">
-                                <input type="text" class="form-control" id="searchCtrl"
-                                       placeholder="請先輸入系統ID，點擊載入Controller清單"
-                                       readonly>
-                                <div class="ctrl-dropdown-panel" id="panelCtrl">
-                                    <div class="ctrl-dropdown-empty">請先載入Controller清單</div>
-                                </div>
-                            </div>
-                            <div class="emp-add-row">
-                                <div class="selected-preview placeholder" id="previewCtrl">尚未選取</div>
-                                <button type="button" class="btn btn-sm btn-blue"
-                                        onclick="loadAndOpenCtrl()">載入</button>
-                                <button type="button" class="btn btn-sm btn-green"
-                                        onclick="addSelectedCtrl()">＋ 新增</button>
-                            </div>
-                            <div id="selectedController" class="selected-list" style="display:none;">
-                                <strong>已選擇：</strong>
-                                <div id="selectedControllerContent" class="selected-content"></div>
-                            </div>
-                        </div>
+                        <label for="notifyUsers">權限通知對象_一般USER</label>
+                        <select class="form-control select2-multiple" id="notifyUsers" name="NOTIFY_AUTOS_USERS" multiple="multiple" style="width: 100%;">
+                        </select>
+                        <small class="form-text text-muted">可複選多位使用者，輸入員工編號或姓名搜尋</small>
+                    </div>
+
+                    <!-- 顯示已選擇的一般USER -->
+                    <div id="selectedUsersList" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的一般USER：</label>
+                        <div id="selectedUsersContent" class="selected-content"></div>
+                    </div>
+
+                    <!-- 新增：權限CONTROLLER名稱 -->
+                    <div class="form-group">
+                        <label for="controllerName">權限CONTROLLER名稱</label>
+                        <select class="form-control" id="controllerName" name="AUTOS_CONTROLLER_NAME" style="width: 100%;">
+                            <option value="">-- 請先輸入系統ID --</option>
+                        </select>
+                        <small class="form-text text-muted">請先輸入系統ID後再選擇Controller</small>
+                    </div>
+
+                    <!-- 顯示已選擇的Controller -->
+                    <div id="selectedController" class="selected-list mb-3" style="display: none;">
+                        <label>已選擇的Controller：</label>
+                        <div id="selectedControllerContent" class="selected-content"></div>
                     </div>
 
                     <input type="hidden" id="actionType" name="Action" value="Add">
@@ -368,398 +229,329 @@ Controller
     </div>
 </div>
 
+
+<!-- 新增/修改 Modal -->
+<!--<div class="modal fade" id="systemModal" tabindex="-1" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">新增系統</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="systemForm">
+                    <div class="form-group">
+                        <label for="sysId">系統ID <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sysId" name="SYS_ID" required maxlength="100" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="sysName">系統名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sysName" name="SYS_NAME" required maxlength="100" autocomplete="off">
+                        <small class="form-text text-muted">系統名稱不可超過100字元</small>
+                    </div>
+                    <input type="hidden" id="actionType" name="Action" value="Add">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-green" id="btnSave">儲存</button>
+                <button type="button" class="btn btn-gray" data-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>-->
+
 @section Scripts{
-<script>
-    // ── 全域狀態 ────────────────────────────────────────────────
-    var selectedIt      = [];   // { empNo, empName }
-    var selectedUsers   = [];
-    var selectedCtrlArr = [];   // string[]
-
-    var allEmployees    = [];   // 全員工快取
-    var empLoaded       = false;
-
-    var pendingEmpIt    = null; // 目前在下拉中點選的員工（It）
-    var pendingEmpUsers = null;
-    var pendingCtrl     = null; // 目前在下拉中點選的 Controller
-
-    var ctrlList        = [];   // Controller 快取
-
-    // ── 初始化 ──────────────────────────────────────────────────
-    $(document).ready(function () {
-        initPage();
-    });
-
-    function initPage() {
-        $('#btnAdd').off('click').on('click', function () {
-            resetForm();
-            $('#modalTitle').text('新增系統');
-            $('#sysId').prop('readonly', false);
-            $('#actionType').val('Add');
-            $('#systemModal').modal('show');
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script>
+        $(document).ready(function () {
+            initPage();
         });
 
-        $('.btn-edit').off('click').on('click', function () {
-            editSystem($(this).data('sysid'), $(this).data('sysname'));
-        });
-
-        $('#btnSave').off('click').on('click', saveSystem);
-
-        // 點擊輸入框 → 載入員工並開啟下拉
-        $('#searchIt').on('focus click', function () {
-            loadEmployeesAndOpen('It');
-        });
-        $('#searchUsers').on('focus click', function () {
-            loadEmployeesAndOpen('Users');
-        });
-
-        // 邊輸入邊篩選
-        $('#searchIt').on('input', function () {
-            filterEmpList('It', $(this).val());
-        });
-        $('#searchUsers').on('input', function () {
-            filterEmpList('Users', $(this).val());
-        });
-
-        // Controller 輸入框點擊 → 開啟已載入的清單
-        $('#searchCtrl').on('focus click', function () {
-            if (ctrlList.length > 0) openCtrlPanel();
-        });
-
-        // 點擊 Modal 外部關閉下拉
-        $(document).on('click', function (e) {
-            if (!$(e.target).closest('#wrapIt').length)    closeEmpPanel('It');
-            if (!$(e.target).closest('#wrapUsers').length) closeEmpPanel('Users');
-            if (!$(e.target).closest('#wrapCtrl').length)  closeCtrlPanel();
-        });
-    }
-
-    // ── 員工清單載入（只呼叫一次，之後用快取） ─────────────────
-    function loadEmployeesAndOpen(type) {
-        if (!empLoaded) {
-            $.get('@Url.Action("GetEmployeeList", "SYS")', { keyword: '' }, function (res) {
-                if (res.success && res.data) {
-                    allEmployees = res.data; // [{ id, text }]
-                    empLoaded = true;
-                }
-                renderEmpList(type, allEmployees);
-                openEmpPanel(type);
+        function initPage() {
+            // 新增按鈕事件
+            $('#btnAdd').off('click').on('click', function () {
+                resetForm();
+                $('#modalTitle').text('新增系統');
+                $('#sysId').prop('readonly', false);
+                $('#actionType').val('Add');
+                initSelect2();
+                $('#systemModal').modal('show');
             });
-        } else {
-            var keyword = type === 'It' ? $('#searchIt').val() : $('#searchUsers').val();
-            filterEmpList(type, keyword);
-            openEmpPanel(type);
-        }
-    }
 
-    // ── 員工篩選 ────────────────────────────────────────────────
-    function filterEmpList(type, keyword) {
-        var kw = (keyword || '').trim().toUpperCase();
-        var filtered = kw
-            ? allEmployees.filter(function (e) {
-                return e.id.toUpperCase().indexOf(kw) >= 0 ||
-                       e.text.split(' - ')[1].toUpperCase().indexOf(kw) >= 0;
-              })
-            : allEmployees;
-        renderEmpList(type, filtered);
-        openEmpPanel(type);
-    }
+            // 修改按鈕事件
+            $('.btn-edit').off('click').on('click', function () {
+                var sysId = $(this).data('sysid');
+                var sysName = $(this).data('sysname');
+                editSystem(sysId, sysName);
+            });
 
-    // ── 渲染員工下拉清單 ─────────────────────────────────────────
-    function renderEmpList(type, list) {
-        var listId = type === 'It' ? '#listIt' : '#listUsers';
-        var $list  = $(listId).empty();
+            // 儲存按鈕事件
+            $('#btnSave').off('click').on('click', function () {
+                saveSystem();
+            });
 
-        if (!list || list.length === 0) {
-            $list.append('<div class="emp-dropdown-empty">查無符合員工</div>');
-            return;
+            // 監聽系統ID輸入，載入對應的Controller清單
+            $('#sysId').on('blur', function () {
+                var sysId = $(this).val().trim();
+                if (sysId) {
+                    loadControllerList(sysId);
+                }
+            });
         }
 
-        list.forEach(function (emp) {
-            var parts   = emp.text.split(' - ');
-            var empNo   = emp.id;
+        // 自訂 Select2 的顯示模板（表格形式）
+        function formatEmployee(employee) {
+            if (!employee.id) {
+                return employee.text;
+            }
+
+            var parts = employee.text.split(' - ');
+            var empNo = parts[0] || '';
             var empName = parts[1] || '';
 
-            var $item = $('<div class="emp-dropdown-item">')
-                .append($('<span class="col-no">').text(empNo))
-                .append($('<span class="col-name">').text(empName))
-                .on('click', function () {
-                    selectEmpItem(type, empNo, empName, $item);
-                });
+            var $employee = $(
+                '<table class="employee-option-table">' +
+                '<tr>' +
+                '<td style="width: 40%; text-align: left;">' + empNo + '</td>' +
+                '<td style="width: 60%; text-align: left;">' + empName + '</td>' +
+                '</tr>' +
+                '</table>'
+            );
 
-            $list.append($item);
-        });
-    }
-
-    // ── 員工選取（點選下拉項目） ─────────────────────────────────
-    function selectEmpItem(type, empNo, empName, $item) {
-        var panelId  = type === 'It' ? '#panelIt'      : '#panelUsers';
-        var previewId = type === 'It' ? '#previewIt'   : '#previewUsers';
-
-        // 清除舊 highlight
-        $(panelId).find('.emp-dropdown-item').removeClass('selected');
-        $item.addClass('selected');
-
-        // 更新 pending 與預覽
-        if (type === 'It') pendingEmpIt    = { empNo: empNo, empName: empName };
-        else               pendingEmpUsers = { empNo: empNo, empName: empName };
-
-        $(previewId)
-            .text(empNo + '　' + empName)
-            .removeClass('placeholder');
-    }
-
-    // ── 新增員工到 tag 區 ────────────────────────────────────────
-    function addSelectedEmp(type) {
-        var pending = type === 'It' ? pendingEmpIt : pendingEmpUsers;
-        var arr     = type === 'It' ? selectedIt   : selectedUsers;
-
-        if (!pending) return;
-
-        if (!arr.some(function (e) { return e.empNo === pending.empNo; })) {
-            arr.push({ empNo: pending.empNo, empName: pending.empName });
-            renderSelectedTags(type);
+            return $employee;
         }
 
-        // 清除 pending 與預覽
-        if (type === 'It') pendingEmpIt    = null;
-        else               pendingEmpUsers = null;
-
-        var previewId = type === 'It' ? '#previewIt' : '#previewUsers';
-        $(previewId).text('尚未選取').addClass('placeholder');
-        closeEmpPanel(type);
-    }
-
-    // ── 員工下拉開關 ─────────────────────────────────────────────
-    function openEmpPanel(type) {
-        var panelId = type === 'It' ? '#panelIt' : '#panelUsers';
-        $(panelId).addClass('open');
-    }
-    function closeEmpPanel(type) {
-        var panelId = type === 'It' ? '#panelIt' : '#panelUsers';
-        $(panelId).removeClass('open');
-    }
-
-    // ── 移除已選員工 ─────────────────────────────────────────────
-    function removeEmp(type, empNo) {
-        if (type === 'It') selectedIt    = selectedIt.filter(function (e) { return e.empNo !== empNo; });
-        else               selectedUsers = selectedUsers.filter(function (e) { return e.empNo !== empNo; });
-        renderSelectedTags(type);
-    }
-
-    // ── 渲染員工 tag ─────────────────────────────────────────────
-    function renderSelectedTags(type) {
-        var listId    = type === 'It' ? '#selectedItList'    : '#selectedUsersList';
-        var contentId = type === 'It' ? '#selectedItContent' : '#selectedUsersContent';
-        var arr       = type === 'It' ? selectedIt           : selectedUsers;
-
-        if (arr.length > 0) {
-            var html = arr.map(function (e) {
-                var label = e.empName ? e.empNo + '　' + e.empName : e.empNo;
-                return '<span class="selected-tag">' + label +
-                    ' <span class="tag-remove" onclick="removeEmp(\'' + type + '\',\'' + e.empNo + '\')">&times;</span></span>';
-            }).join('');
-            $(contentId).html(html);
-            $(listId).show();
-        } else {
-            $(listId).hide();
-        }
-    }
-
-    // ── Controller 載入並開啟 ────────────────────────────────────
-    function loadAndOpenCtrl() {
-        var sysId = $('#sysId').val().trim();
-        if (!sysId) { alert('請先輸入系統ID'); return; }
-
-        $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (res) {
-            ctrlList = (res.success && res.data && res.data.length > 0)
-                ? res.data.map(function (c) { return c.CONTROLLER_NAME; })
-                : [];
-            renderCtrlList(ctrlList);
-            openCtrlPanel();
-        });
-    }
-
-    function renderCtrlList(list) {
-        var $panel = $('#panelCtrl').empty();
-        if (!list || list.length === 0) {
-            $panel.append('<div class="ctrl-dropdown-empty">此系統無Controller</div>');
-            return;
-        }
-        list.forEach(function (name) {
-            var $item = $('<div class="ctrl-dropdown-item">').text(name)
-                .on('click', function () {
-                    selectCtrlItem(name, $item);
-                });
-            $panel.append($item);
-        });
-    }
-
-    function selectCtrlItem(name, $item) {
-        $('#panelCtrl .ctrl-dropdown-item').removeClass('selected');
-        $item.addClass('selected');
-        pendingCtrl = name;
-        $('#previewCtrl').text(name).removeClass('placeholder');
-    }
-
-    function addSelectedCtrl() {
-        if (!pendingCtrl) return;
-        if (!selectedCtrlArr.some(function (c) { return c === pendingCtrl; })) {
-            selectedCtrlArr.push(pendingCtrl);
-            renderCtrlTags();
-        }
-        pendingCtrl = null;
-        $('#previewCtrl').text('尚未選取').addClass('placeholder');
-        closeCtrlPanel();
-    }
-
-    function removeCtrl(name) {
-        selectedCtrlArr = selectedCtrlArr.filter(function (c) { return c !== name; });
-        renderCtrlTags();
-    }
-
-    function renderCtrlTags() {
-        if (selectedCtrlArr.length > 0) {
-            var html = selectedCtrlArr.map(function (c) {
-                return '<span class="selected-tag">' + c +
-                    ' <span class="tag-remove" onclick="removeCtrl(\'' + c + '\')">&times;</span></span>';
-            }).join('');
-            $('#selectedControllerContent').html(html);
-            $('#selectedController').show();
-        } else {
-            $('#selectedController').hide();
-        }
-    }
-
-    function openCtrlPanel()  { $('#panelCtrl').addClass('open'); }
-    function closeCtrlPanel() { $('#panelCtrl').removeClass('open'); }
-
-    // ── 儲存 ────────────────────────────────────────────────────
-    function saveSystem() {
-        var sysId   = $('#sysId').val().trim().toUpperCase();
-        var sysName = $('#sysName').val().trim();
-        if (!sysId || !sysName) { alert('系統ID和系統名稱為必填'); return; }
-
-        var formData = {
-            SYS_ID:                sysId,
-            SYS_NAME:              sysName,
-            NOTIFY_AUTOS_IT:       selectedIt.map(function (e) { return e.empNo; }).join(';'),
-            NOTIFY_AUTOS_USERS:    selectedUsers.map(function (e) { return e.empNo; }).join(';'),
-            AUTOS_CONTROLLER_NAME: selectedCtrlArr.join(';'),
-            Action:                $('#actionType').val()
-        };
-
-        $.ajax({
-            url:      '@Url.Action("ApplySystem", "SYS")',
-            type:     'POST',
-            data:     formData,
-            dataType: 'json',
-            success: function (res) {
-                if (res.success) {
-                    alert(res.message);
-                    $('#systemModal').modal('hide');
-                    location.reload();
-                } else {
-                    alert(res.message);
-                }
-            },
-            error: function () { alert('儲存時發生錯誤'); }
-        });
-    }
-
-    // ── 編輯 ────────────────────────────────────────────────────
-    function editSystem(sysId, sysName) {
-        resetForm();
-        $('#modalTitle').text('修改系統');
-        $('#sysId').val(sysId).prop('readonly', true);
-        $('#sysName').val(sysName);
-        $('#actionType').val('Edit');
-
-        $.get('@Url.Action("GetSystemDetail", "SYS")', { sysId: sysId }, function (res) {
-            if (!res.success) return;
-            var system = res.data;
-
-            // 補回員工姓名
-            function loadEmpTags(empNosStr, type) {
-                if (!empNosStr) return;
-                $.get('@Url.Action("GetEmployeesByNos", "SYS")', { empNos: empNosStr }, function (r) {
-                    var arr = type === 'It' ? selectedIt : selectedUsers;
-                    if (r.success && r.data && r.data.length > 0) {
-                        r.data.forEach(function (emp) {
-                            var empNo   = emp.id;
-                            var empName = emp.text.split(' - ')[1] || '';
-                            if (!arr.some(function (e) { return e.empNo === empNo; })) {
-                                arr.push({ empNo: empNo, empName: empName });
-                            }
-                        });
-                    } else {
-                        empNosStr.split(';').forEach(function (no) {
-                            no = no.trim();
-                            if (no && !arr.some(function (e) { return e.empNo === no; })) {
-                                arr.push({ empNo: no, empName: '' });
-                            }
-                        });
+         // 初始化 Select2
+        function initSelect2() {
+            // 資訊人員選擇
+            $('#notifyIt').select2({
+                ajax: {
+                    url: '@Url.Action("GetEmployeeList", "SYS")',
+                    dataType: 'json',
+                    delay: 300,
+                    data: function (params) {
+                        return {
+                            keyword: params.term || ''
+                        };
+                    },
+                    processResults: function (data) {
+                        if (data.success) {
+                            return {
+                                results: data.data
+                            };
+                        }
+                        return { results: [] };
                     }
-                    renderSelectedTags(type);
-                });
-            }
-
-            loadEmpTags(system.NOTIFY_AUTOS_IT,   'It');
-            loadEmpTags(system.NOTIFY_AUTOS_USERS, 'Users');
-
-            // Controller 帶入已選
-            if (system.AUTOS_CONTROLLER_NAME) {
-                selectedCtrlArr = system.AUTOS_CONTROLLER_NAME
-                    .split(';').map(function (s) { return s.trim(); })
-                    .filter(function (s) { return s; });
-                renderCtrlTags();
-            }
-
-            // 同時載入 Controller 清單（方便再新增）
-            $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (r) {
-                ctrlList = (r.success && r.data && r.data.length > 0)
-                    ? r.data.map(function (c) { return c.CONTROLLER_NAME; })
-                    : [];
-                renderCtrlList(ctrlList);
+                },
+                templateResult: formatEmployee,
+                templateSelection: function (employee) {
+                    return employee.text || employee.id;
+                },
+                placeholder: '請輸入員工編號或姓名搜尋',
+                allowClear: true,
+                minimumInputLength: 0,
+                width: '100%'
             });
-        });
 
-        $('#systemModal').modal('show');
-    }
+            // 一般USER選擇
+            $('#notifyUsers').select2({
+                ajax: {
+                    url: '@Url.Action("GetEmployeeList", "SYS")',
+                    dataType: 'json',
+                    delay: 300,
+                    data: function (params) {
+                        return {
+                            keyword: params.term || ''
+                        };
+                    },
+                    processResults: function (data) {
+                        if (data.success) {
+                            return {
+                                results: data.data
+                            };
+                        }
+                        return { results: [] };
+                    }
+                },
+                templateResult: formatEmployee,
+                templateSelection: function (employee) {
+                    return employee.text || employee.id;
+                },
+                placeholder: '請輸入員工編號或姓名搜尋',
+                allowClear: true,
+                minimumInputLength: 0,
+                width: '100%'
+            });
 
-    // ── 重置 ────────────────────────────────────────────────────
-    function resetForm() {
-        $('#systemForm')[0].reset();
-        $('#sysId').prop('readonly', false);
+            // 監聽資訊人員選擇變化
+            $('#notifyIt').on('change', function () {
+                updateSelectedDisplay('It');
+            });
 
-        selectedIt      = [];
-        selectedUsers   = [];
-        selectedCtrlArr = [];
-        pendingEmpIt    = null;
-        pendingEmpUsers = null;
-        pendingCtrl     = null;
-        ctrlList        = [];
-        // 不重置 empLoaded / allEmployees（員工資料快取保留）
+            // 監聽一般USER選擇變化
+            $('#notifyUsers').on('change', function () {
+                updateSelectedDisplay('Users');
+            });
 
-        $('#previewIt, #previewUsers, #previewCtrl')
-            .text('尚未選取').addClass('placeholder');
-        $('#selectedItList, #selectedUsersList, #selectedController').hide();
-        $('#panelIt, #panelUsers, #panelCtrl').removeClass('open');
-        $('#panelCtrl').html('<div class="ctrl-dropdown-empty">請先載入Controller清單</div>');
-    }
-</script>
+            // 監聽Controller選擇變化
+            $('#controllerName').on('change', function () {
+                updateControllerDisplay();
+            });
+        }
+
+        // 更新已選擇人員的顯示
+        function updateSelectedDisplay(type) {
+            var selectId = type === 'It' ? '#notifyIt' : '#notifyUsers';
+            var listId = type === 'It' ? '#selectedItList' : '#selectedUsersList';
+            var contentId = type === 'It' ? '#selectedItContent' : '#selectedUsersContent';
+
+            var selectedData = $(selectId).select2('data');
+
+            if (selectedData.length > 0) {
+                var html = '';
+                selectedData.forEach(function (item) {
+                    html += `<span class="selected-tag">${item.text}</span>`;
+                });
+                $(contentId).html(html);
+                $(listId).show();
+            } else {
+                $(listId).hide();
+            }
+        }
+
+        // 更新已選擇Controller的顯示
+        function updateControllerDisplay() {
+            var selectedValue = $('#controllerName').val();
+            var selectedText = $('#controllerName option:selected').text();
+
+            if (selectedValue) {
+                $('#selectedControllerContent').html(`<span class="selected-tag">${selectedText}</span>`);
+                $('#selectedController').show();
+            } else {
+                $('#selectedController').hide();
+            }
+        }
+
+        // 載入Controller清單
+        function loadControllerList(sysId) {
+            $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (response) {
+                var options = '<option value="">-- 請選擇Controller --</option>';
+                if (response.success && response.data) {
+                    response.data.forEach(function (ctrl) {
+                        options += `<option value="${ctrl.CONTROLLER_NAME}">${ctrl.CONTROLLER_NAME}</option>`;
+                    });
+                }
+                $('#controllerName').html(options);
+            });
+        }
+
+      // 儲存系統
+        function saveSystem() {
+            var notifyIt = $('#notifyIt').val();
+            var notifyUsers = $('#notifyUsers').val();
+
+            var formData = {
+                SYS_ID: $('#sysId').val().trim(),
+                SYS_NAME: $('#sysName').val().trim(),
+                NOTIFY_AUTOS_IT: notifyIt ? notifyIt.join(',') : '',
+                NOTIFY_AUTOS_USERS: notifyUsers ? notifyUsers.join(',') : '',
+                AUTOS_CONTROLLER_NAME: $('#controllerName').val() || '',
+                Action: $('#actionType').val()
+            };
+
+            if (!formData.SYS_ID || !formData.SYS_NAME) {
+                alert('系統ID和系統名稱為必填');
+                return;
+            }
+
+            $.ajax({
+                url: '@Url.Action("ApplySystem", "SYS")',
+                type: 'POST',
+                data: formData,
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        alert(response.message);
+                        $('#systemModal').modal('hide');
+                        location.reload();
+                    } else {
+                        alert(response.message);
+                    }
+                },
+                error: function () {
+                    alert('儲存時發生錯誤');
+                }
+            });
+        }
+
+        // 編輯系統
+        function editSystem(sysId, sysName) {
+            resetForm();
+            $('#modalTitle').text('修改系統');
+            $('#sysId').val(sysId).prop('readonly', true);
+            $('#sysName').val(sysName);
+            $('#actionType').val('Edit');
+
+            initSelect2();
+            loadControllerList(sysId);
+
+            // 載入現有的資料
+            $.get('@Url.Action("GetSystemDetail", "SYS")', { sysId: sysId }, function (response) {
+                if (response.success) {
+                    var system = response.data;
+
+                    // 設定資訊人員
+                    if (system.NOTIFY_AUTOS_IT) {
+                        var itList = system.NOTIFY_AUTOS_IT.split(',');
+                        itList.forEach(function (empNo) {
+                            if (empNo.trim()) {
+                                var option = new Option(empNo, empNo, true, true);
+                                $('#notifyIt').append(option);
+                            }
+                        });
+                        $('#notifyIt').trigger('change');
+                    }
+
+                    // 設定一般USER
+                    if (system.NOTIFY_AUTOS_USERS) {
+                        var usersList = system.NOTIFY_AUTOS_USERS.split(',');
+                        usersList.forEach(function (empNo) {
+                            if (empNo.trim()) {
+                                var option = new Option(empNo, empNo, true, true);
+                                $('#notifyUsers').append(option);
+                            }
+                        });
+                        $('#notifyUsers').trigger('change');
+                    }
+
+                    // 設定Controller
+                    if (system.AUTOS_CONTROLLER_NAME) {
+                        setTimeout(function () {
+                            $('#controllerName').val(system.AUTOS_CONTROLLER_NAME);
+                            updateControllerDisplay();
+                        }, 500);
+                    }
+                }
+            });
+
+            $('#systemModal').modal('show');
+        }
+
+        // 重置表單
+        function resetForm() {
+            $('#systemForm')[0].reset();
+            $('#sysId').prop('readonly', false);
+            $('#selectedItList, #selectedUsersList, #selectedController').hide();
+
+            // 清除 Select2
+            if ($('#notifyIt').hasClass('select2-hidden-accessible')) {
+                $('#notifyIt').select2('destroy');
+            }
+            if ($('#notifyUsers').hasClass('select2-hidden-accessible')) {
+                $('#notifyUsers').select2('destroy');
+            }
+        }
+    </script>
 }
-
-
-行為說明
-
-
-
-|動作                    |結果                                      |
-|----------------------|----------------------------------------|
-|點擊員工輸入框               |立即展開下拉（首次呼叫 API，之後用快取）                  |
-|邊輸入邊篩選                |即時過濾，不用按搜尋                              |
-|點選員工                  |highlight 該行，預覽列顯示「編號　姓名」               |
-|按「＋ 新增」               |加入 tag，清除預覽，關閉下拉                        |
-|點選 Controller 後按「＋ 新增」|同邏輯                                     |
-|點擊下拉以外區域              |自動關閉下拉                                  |
-|存 DB                  |員工 `;` 分隔只存編號；Controller `;` 分隔；空值存 null|
