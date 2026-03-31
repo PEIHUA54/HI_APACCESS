@@ -1,591 +1,13 @@
-以下是全部需要修改的完整程式碼：
-
-1. F_SYS.cs
-
-using HI_APACCESS.Models.M_SYS;
-using HI_APACCESS.Service;
-using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.Data;
-using System.Data.SqlClient;
-using System.Linq;
-using System.Web;
-using static HI_APACCESS.Service.SVS_Common;
-
-namespace HI_APACCESS.Factory.F_SYS
-{
-    public class F_SYS
-    {
-        SVS_DBmanager SVS_DBmanager = new SVS_DBmanager();
-
-        // 取得登入員工可維護的系統清單(001群組)
-        public List<M_SYS> GetAvailableSystems(string empNo)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetAvailableSystems);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@EMP_NO", empNo)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return SVS_DBmanager.ConvertToList<M_SYS>(dt);
-        }
-
-        // 取得可維護系統選項(用於下拉選單)
-        public List<M_SYS_Option> GetMaintainableSystemOptions(string empNo)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetMaintainableSystemOptions);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@EMP_NO", empNo)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return SVS_DBmanager.ConvertToList<M_SYS_Option>(dt);
-        }
-
-        // 檢查系統是否存在於AP_SYS
-        public bool CheckSystemExistsInApSys(string sysId)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.CheckSystemExistsInApSys);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID", sysId)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
-        }
-
-        // 檢查系統是否有001群組
-        public bool CheckSystemHasGroup001(string sysId)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.CheckSystemHasGroup001);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID", sysId)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
-        }
-
-        // 取得員工姓名
-        public string GetEmployeeName(string empNo)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetEmployeeName);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@EMP_NO", empNo)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            if (dt.Rows.Count > 0)
-                return dt.Rows[0]["EMP_NAME"].ToString();
-            return "";
-        }
-
-        // 新增系統到AP_SYS（包含新欄位）
-        public string InsertSystemToApSys(M_SYS_Apply model, string creator)
-        {
-            string sql = @"
-                INSERT INTO [HI-APLOG].[dbo].[AP_SYS] 
-                ([SYS_ID], [SYS_NAME], [NOTIFY_AUTOS_IT], [NOTIFY_AUTOS_USERS], [AUTOS_CONTROLLER_NAME], [CREATE_TIME], [CREATOR])
-                VALUES (@SYS_ID, @SYS_NAME, @NOTIFY_AUTOS_IT, @NOTIFY_AUTOS_USERS, @AUTOS_CONTROLLER_NAME, GETDATE(), @CREATOR)";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID",   model.SYS_ID),
-                new SqlParameter("@SYS_NAME", model.SYS_NAME),
-                new SqlParameter("@NOTIFY_AUTOS_IT",
-                    string.IsNullOrEmpty(model.NOTIFY_AUTOS_IT)
-                        ? (object)DBNull.Value : model.NOTIFY_AUTOS_IT),
-                new SqlParameter("@NOTIFY_AUTOS_USERS",
-                    string.IsNullOrEmpty(model.NOTIFY_AUTOS_USERS)
-                        ? (object)DBNull.Value : model.NOTIFY_AUTOS_USERS),
-                new SqlParameter("@AUTOS_CONTROLLER_NAME",
-                    string.IsNullOrEmpty(model.AUTOS_CONTROLLER_NAME)
-                        ? (object)DBNull.Value : model.AUTOS_CONTROLLER_NAME),
-                new SqlParameter("@CREATOR", creator)
-            };
-
-            return SVS_DBmanager.ExecuteSQL(sql, parameters);
-        }
-
-        // 更新系統（包含新欄位）
-        public string UpdateSystem(M_SYS_Apply model, string editor)
-        {
-            string sql = @"
-                UPDATE [HI-APLOG].[dbo].[AP_SYS] 
-                SET [SYS_NAME]               = @SYS_NAME,
-                    [NOTIFY_AUTOS_IT]        = @NOTIFY_AUTOS_IT,
-                    [NOTIFY_AUTOS_USERS]     = @NOTIFY_AUTOS_USERS,
-                    [AUTOS_CONTROLLER_NAME]  = @AUTOS_CONTROLLER_NAME,
-                    [EDIT_TIME]              = GETDATE(),
-                    [EDITOR]                 = @EDITOR
-                WHERE [SYS_ID] = @SYS_ID";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID",   model.SYS_ID),
-                new SqlParameter("@SYS_NAME", model.SYS_NAME),
-                new SqlParameter("@NOTIFY_AUTOS_IT",
-                    string.IsNullOrEmpty(model.NOTIFY_AUTOS_IT)
-                        ? (object)DBNull.Value : model.NOTIFY_AUTOS_IT),
-                new SqlParameter("@NOTIFY_AUTOS_USERS",
-                    string.IsNullOrEmpty(model.NOTIFY_AUTOS_USERS)
-                        ? (object)DBNull.Value : model.NOTIFY_AUTOS_USERS),
-                new SqlParameter("@AUTOS_CONTROLLER_NAME",
-                    string.IsNullOrEmpty(model.AUTOS_CONTROLLER_NAME)
-                        ? (object)DBNull.Value : model.AUTOS_CONTROLLER_NAME),
-                new SqlParameter("@EDITOR", editor)
-            };
-
-            return SVS_DBmanager.ExecuteSQL(sql, parameters);
-        }
-
-        // 新增001群組
-        public string InsertGroup001(string sysId, string creator)
-        {
-            string sql = @"
-                INSERT INTO [HI-AUTOS].[dbo].[AP_GROUP] 
-                ([SYS_ID], [APG_NO], [APG_NAME], [CREATE_TIME], [CREATOR])
-                VALUES (@SYS_ID, '001', N'管理員(資訊)', GETDATE(), @CREATOR)";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID",   sysId),
-                new SqlParameter("@CREATOR",  creator)
-            };
-            return SVS_DBmanager.ExecuteSQL(sql, parameters);
-        }
-
-        // 新增使用者到001群組
-        public string InsertUserToGroup001(string sysId, string empNo, string empName)
-        {
-            string sql = @"
-                INSERT INTO [HI-AUTOS].[dbo].[AP_USER] 
-                ([SYS_ID], [APG_NO], [U_ID], [U_NAME], [CREATE_TIME], [CREATOR])
-                VALUES (@SYS_ID, '001', @U_ID, @U_NAME, GETDATE(), @CREATOR)";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID",  sysId),
-                new SqlParameter("@U_ID",    empNo),
-                new SqlParameter("@U_NAME",  empName),
-                new SqlParameter("@CREATOR", empNo)
-            };
-            return SVS_DBmanager.ExecuteSQL(sql, parameters);
-        }
-
-        // 檢查使用者是否已在001群組
-        public bool CheckUserInGroup001(string sysId, string empNo)
-        {
-            string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.CheckUserInGroup001);
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID", sysId),
-                new SqlParameter("@U_ID",   empNo)
-            };
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return dt.Rows.Count > 0 && Convert.ToInt32(dt.Rows[0][0]) > 0;
-        }
-
-        // 取得員工清單 - 使用 HI_APACCESS_DLL（大小寫不敏感搜尋）
-        public List<EmployeeOption> GetEmployeeList(string keyword = "")
-        {
-            try
-            {
-                var request = new
-                {
-                    Type       = "2",
-                    EmpNoList  = (List<string>)null,
-                    Environment = EnvHelper.EnvironmentForDll()
-                };
-
-                string requestJson  = JsonConvert.SerializeObject(request);
-                string responseJson = new HI_APACCESS_DLL.APACCESS().GetEmpMast(requestJson);
-                var response        = JsonConvert.DeserializeObject<GetEmpMastResponse>(responseJson);
-
-                if (response.Result_code == "0000" && response.Result != null && response.Result.Count > 0)
-                {
-                    var employees = response.Result.Select(emp => new EmployeeOption
-                    {
-                        EMP_NO   = emp.EmpNo,
-                        EMP_NAME = emp.EmpName
-                    }).ToList();
-
-                    // 大小寫不敏感（.NET Framework 用 IndexOf）
-                    if (!string.IsNullOrWhiteSpace(keyword))
-                    {
-                        string kw = keyword.Trim();
-                        employees = employees.Where(e =>
-                            e.EMP_NO.IndexOf(kw,   StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            e.EMP_NAME.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0
-                        ).ToList();
-                    }
-
-                    return employees;
-                }
-
-                return new List<EmployeeOption>();
-            }
-            catch
-            {
-                return new List<EmployeeOption>();
-            }
-        }
-
-        // 取得Controller清單
-        public List<ControllerOption> GetControllerList(string sysId)
-        {
-            string sql = @"
-                SELECT DISTINCT [CONTROLLER_NAME]
-                FROM [HI-APLOG].[dbo].[AP_SYS_CTRL]
-                WHERE [SYS_ID] = @SYS_ID
-                ORDER BY [CONTROLLER_NAME]";
-
-            List<SqlParameter> parameters = new List<SqlParameter>
-            {
-                new SqlParameter("@SYS_ID", sysId)
-            };
-
-            DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-            return SVS_DBmanager.ConvertToList<ControllerOption>(dt);
-        }
-    }
-}
-
-
-2. SYSController.cs
-
-public class SYSController : HI_APACCESSBaseController
-{
-    private F_SYS F_SYS = new F_SYS();
-
-    #region 申請系統
-
-    // 申請系統介面
-    public ActionResult SYS_APPLY()
-    {
-        var systems = F_SYS.GetAvailableSystems(this.Emp_NO);
-        return View(systems);
-    }
-
-    // 系統申請(新增/修改)
-    [HttpPost]
-    public JsonResult ApplySystem([Bind] M_SYS_Apply model)
-    {
-        try
-        {
-            if (!ModelState.IsValid)
-                return Json(new { success = false, message = "資料驗證失敗" });
-
-            string empNo   = this.Emp_NO;
-            string empName = F_SYS.GetEmployeeName(empNo);
-
-            if (string.IsNullOrEmpty(empName))
-                return Json(new { success = false, message = "無法取得員工姓名" });
-
-            bool systemExists  = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
-            bool group001Exists = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
-            bool userExists    = F_SYS.CheckUserInGroup001(model.SYS_ID, empNo);
-
-            if (model.Action == "Add" && systemExists && group001Exists && userExists)
-            {
-                return Json(new
-                {
-                    success = false,
-                    message = "此系統已完成申請，您已具有管理權限。\r\n如需修改系統名稱，請點擊修改按鈕。"
-                });
-            }
-
-            string result = ProcessSystemApply(model, empNo, empName);
-
-            if (result == null || !result.Contains("fail"))
-            {
-                string successMessage = model.Action == "Add" ? "系統申請成功" : "系統修改成功";
-                return Json(new { success = true, message = successMessage });
-            }
-            else
-            {
-                string failMessage = model.Action == "Add" ? "系統申請失敗：" : "系統修改失敗：";
-                return Json(new { success = false, message = failMessage + result });
-            }
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "系統處理發生錯誤：" + ex.Message });
-        }
-    }
-
-    // 系統申請處理流程
-    private string ProcessSystemApply(M_SYS_Apply model, string empNo, string empName)
-    {
-        string result = null;
-
-        bool systemExists = F_SYS.CheckSystemExistsInApSys(model.SYS_ID);
-
-        if (!systemExists)
-        {
-            result = F_SYS.InsertSystemToApSys(model, empNo);
-            if (result != null && result.Contains("fail")) return result;
-        }
-        else
-        {
-            result = F_SYS.UpdateSystem(model, empNo);
-            if (result != null && result.Contains("fail")) return result;
-        }
-
-        bool group001Exists = F_SYS.CheckSystemHasGroup001(model.SYS_ID);
-        if (!group001Exists)
-        {
-            result = F_SYS.InsertGroup001(model.SYS_ID, empNo);
-            if (result != null && result.Contains("fail")) return result;
-        }
-
-        bool userExists = F_SYS.CheckUserInGroup001(model.SYS_ID, empNo);
-        if (!userExists)
-        {
-            result = F_SYS.InsertUserToGroup001(model.SYS_ID, empNo, empName);
-            if (result != null && result.Contains("fail")) return result;
-        }
-
-        return result;
-    }
-
-    // 取得員工清單
-    [HttpGet]
-    public JsonResult GetEmployeeList(string keyword = "")
-    {
-        try
-        {
-            // 搜尋前轉大寫（前端也會轉，這裡雙保險）
-            string kw = string.IsNullOrWhiteSpace(keyword) ? "" : keyword.Trim().ToUpper();
-
-            var employees = F_SYS.GetEmployeeList(kw);
-
-            var result = employees.Select(emp => new {
-                id   = emp.EMP_NO,
-                text = emp.EMP_NO + " - " + emp.EMP_NAME
-            });
-
-            return Json(new { success = true, data = result }, JsonRequestBehavior.AllowGet);
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "取得員工清單失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
-
-    // 依員工編號清單補回姓名（編輯時使用）
-    [HttpGet]
-    public JsonResult GetEmployeesByNos(string empNos)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(empNos))
-                return Json(new { success = true, data = new List<object>() }, JsonRequestBehavior.AllowGet);
-
-            var noList = empNos.Split(';')
-                               .Select(s => s.Trim().ToUpper())
-                               .Where(s => !string.IsNullOrEmpty(s))
-                               .ToList();
-
-            var allEmployees = F_SYS.GetEmployeeList("");
-
-            var matched = allEmployees
-                .Where(e => noList.Contains(e.EMP_NO.ToUpper()))
-                .Select(e => new {
-                    id   = e.EMP_NO,
-                    text = e.EMP_NO + " - " + e.EMP_NAME
-                })
-                .ToList();
-
-            return Json(new { success = true, data = matched }, JsonRequestBehavior.AllowGet);
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "查詢失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
-
-    // 取得Controller清單
-    [HttpGet]
-    public JsonResult GetControllerList(string sysId)
-    {
-        try
-        {
-            var controllers = F_SYS.GetControllerList(sysId);
-            return Json(new { success = true, data = controllers }, JsonRequestBehavior.AllowGet);
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "取得Controller清單失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
-
-    // 取得系統詳細資料（編輯用）
-    [HttpGet]
-    public JsonResult GetSystemDetail(string sysId)
-    {
-        try
-        {
-            var systems = F_SYS.GetAvailableSystems(this.Emp_NO);
-            var system  = systems.FirstOrDefault(s => s.SYS_ID == sysId);
-
-            if (system != null)
-                return Json(new { success = true, data = system }, JsonRequestBehavior.AllowGet);
-            else
-                return Json(new { success = false, message = "找不到系統資料" }, JsonRequestBehavior.AllowGet);
-        }
-        catch (Exception ex)
-        {
-            return Json(new { success = false, message = "取得系統資料失敗：" + ex.Message }, JsonRequestBehavior.AllowGet);
-        }
-    }
-
-    #endregion
-}
-
-
-3. M_SYS.cs（Model 完整版）
-
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-
-namespace HI_APACCESS.Models.M_SYS
-{
-    // 系統清單
-    public class M_SYS
-    {
-        [Display(Name = "系統ID")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        public string SYS_NAME { get; set; }
-
-        [Display(Name = "建立人員")]
-        public string CREATOR { get; set; }
-
-        [Display(Name = "建立日期")]
-        public string CREATE_TIME { get; set; }
-
-        [Display(Name = "修改人員")]
-        public string EDITOR { get; set; }
-
-        [Display(Name = "修改日期")]
-        public string EDIT_TIME { get; set; }
-
-        [Display(Name = "權限通知對象_資訊人員")]
-        public string NOTIFY_AUTOS_IT { get; set; }
-
-        [Display(Name = "權限通知對象_一般USER")]
-        public string NOTIFY_AUTOS_USERS { get; set; }
-
-        [Display(Name = "權限CONTROLLER名稱")]
-        public string AUTOS_CONTROLLER_NAME { get; set; }
-    }
-
-    // 系統申請/修改
-    public class M_SYS_Apply
-    {
-        [Display(Name = "系統ID")]
-        [Required(ErrorMessage = "系統ID為必填")]
-        [StringLength(50, ErrorMessage = "系統ID長度不可超過50字元")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        [Required(ErrorMessage = "系統名稱為必填")]
-        [StringLength(100, ErrorMessage = "系統名稱長度不可超過100字元")]
-        public string SYS_NAME { get; set; }
-
-        public string Action { get; set; }
-
-        [Display(Name = "權限通知對象_資訊人員")]
-        public string NOTIFY_AUTOS_IT { get; set; }
-
-        [Display(Name = "權限通知對象_一般USER")]
-        public string NOTIFY_AUTOS_USERS { get; set; }
-
-        [Display(Name = "權限CONTROLLER名稱")]
-        public string AUTOS_CONTROLLER_NAME { get; set; }
-    }
-
-    // 可維護系統下拉選項
-    public class M_SYS_Option
-    {
-        [Display(Name = "系統ID")]
-        public string SYS_ID { get; set; }
-
-        [Display(Name = "系統名稱")]
-        public string SYS_NAME { get; set; }
-
-        public string DisplayText => SYS_ID + " - " + SYS_NAME;
-    }
-
-    // 系統申請結果
-    public class M_SYS_ApplyResult
-    {
-        public bool   Success { get; set; }
-        public string Message { get; set; }
-        public int    Scenario { get; set; }
-    }
-
-    // 員工選項
-    public class EmployeeOption
-    {
-        [Display(Name = "員工編號")]
-        public string EMP_NO { get; set; }
-
-        [Display(Name = "員工姓名")]
-        public string EMP_NAME { get; set; }
-    }
-
-    // Controller選項
-    public class ControllerOption
-    {
-        [Display(Name = "Controller名稱")]
-        public string CONTROLLER_NAME { get; set; }
-    }
-
-    // 員工主檔 Response Model
-    public class GetEmpMastResponse
-    {
-        public string          Result_code { get; set; }
-        public string          Msg         { get; set; }
-        public List<EmpMastData> Result    { get; set; }
-    }
-
-    // 員工資料（對應 DLL 欄位）
-    public class EmpMastData
-    {
-        public string EmpNo      { get; set; }
-        public string EmpName    { get; set; }
-        public string OrganNo    { get; set; }
-        public string OrganName  { get; set; }
-        public string PostNo     { get; set; }
-        public string PostName   { get; set; }
-        public string EnterDate  { get; set; }
-        public string EndDate    { get; set; }
-    }
-
-    // GetUrl Request
-    public class GetUrlRequsetModel
-    {
-        public string SysID       { get; set; }
-        public string Type        { get; set; }
-        public string Environment { get; set; }
-    }
-
-    // GetUrl Response
-    public class GetUrlResponseModel
-    {
-        public string Result_code { get; set; }
-        public string Msg         { get; set; }
-        public string Url         { get; set; }
-    }
-}
-
-
-4. SYS_APPLY.cshtml（View 完整版）
+收到，整理需求：
+員工清單
+	∙	點擊輸入框 → 立即顯示下拉清單（不用按搜尋）
+	∙	邊輸入邊篩選（不用按搜尋鍵）
+	∙	點選員工後按「新增」加入 tag，不預留清單空間
+	∙	員工編號／姓名要對齊表頭欄位
+Controller
+	∙	同樣改成點選後按「新增」加入 tag
+	∙	不用 Ctrl+ 多選
+只需要改 View，Factory / Controller / Model 不動。以下是完整 View：
 
 @model IEnumerable<HI_APACCESS.Models.M_SYS.M_SYS>
 @using HI_APACCESS.Service;
@@ -611,11 +33,11 @@ namespace HI_APACCESS.Models.M_SYS
     .modal-body .form-group {
         display: flex;
         align-items: flex-start;
-        margin-bottom: 16px;
+        margin-bottom: 14px;
     }
     .modal-body .field-label {
-        width: 160px;
-        min-width: 160px;
+        width: 150px;
+        min-width: 150px;
         font-weight: 600;
         padding-top: 7px;
         text-align: right;
@@ -627,40 +49,89 @@ namespace HI_APACCESS.Models.M_SYS
     .modal-body .field-control { flex: 1; min-width: 0; }
     .modal-body .field-hint { font-size: 12px; color: #888; margin-top: 3px; }
 
-    /* ── 員工搜尋 ── */
-    .emp-search-wrap { display: flex; gap: 6px; margin-bottom: 6px; }
-    .emp-search-wrap input { flex: 1; }
-    .emp-search-wrap button { white-space: nowrap; }
-
-    .emp-result-box {
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-        overflow: hidden;
+    /* ── 員工搜尋下拉 ── */
+    .emp-dropdown-wrap {
+        position: relative;
     }
-    .emp-result-header {
+    .emp-dropdown-wrap input {
+        width: 100%;
+    }
+    .emp-dropdown-panel {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 9999;
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-radius: 0 0 4px 4px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+        max-height: 220px;
+        overflow: hidden;
+        flex-direction: column;
+    }
+    .emp-dropdown-panel.open {
+        display: flex;
+    }
+    /* 表頭 */
+    .emp-dropdown-header {
         display: flex;
         background: #343a40;
         color: #fff;
+        font-size: 12px;
         font-weight: 600;
-        font-size: 13px;
-        padding: 5px 10px;
+        padding: 5px 0;
+        flex-shrink: 0;
     }
-    .emp-result-header span:first-child { width: 38%; }
-    .emp-result-header span:last-child  { width: 62%; }
+    .emp-dropdown-header .col-no  { width: 38%; padding-left: 10px; }
+    .emp-dropdown-header .col-name { width: 62%; padding-left: 6px; }
+    /* 選項清單 */
+    .emp-dropdown-list {
+        overflow-y: auto;
+        flex: 1;
+    }
+    .emp-dropdown-item {
+        display: flex;
+        align-items: center;
+        padding: 6px 0;
+        cursor: pointer;
+        font-size: 13px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .emp-dropdown-item:hover,
+    .emp-dropdown-item.selected {
+        background: #4a90d9;
+        color: #fff;
+    }
+    .emp-dropdown-item .col-no  { width: 38%; padding-left: 10px; }
+    .emp-dropdown-item .col-name { width: 62%; padding-left: 6px; }
+    .emp-dropdown-empty {
+        padding: 10px;
+        color: #888;
+        font-size: 13px;
+        text-align: center;
+    }
 
-    .emp-result-select {
-        width: 100%;
-        border: none;
-        height: 130px;
+    /* ── 新增按鈕列 ── */
+    .emp-add-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+    }
+    .emp-add-row .selected-preview {
+        flex: 1;
         font-size: 13px;
-        outline: none;
-        display: block;
+        color: #555;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 4px 8px;
+        min-height: 30px;
+        line-height: 22px;
     }
-    .emp-result-select option { padding: 5px 10px; }
-    .emp-result-select option:hover {
-        background: #4a90d9 !important;
-        color: #fff !important;
-    }
+    .emp-add-row .selected-preview.placeholder { color: #aaa; }
 
     /* ── 已選 tag ── */
     .selected-list {
@@ -668,9 +139,9 @@ namespace HI_APACCESS.Models.M_SYS
         padding: 8px 10px;
         border-radius: 4px;
         border: 1px solid #dee2e6;
-        margin-top: 8px;
+        margin-top: 6px;
     }
-    .selected-content { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .selected-content { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .selected-tag {
         background: #4a90d9;
         color: #fff;
@@ -684,18 +155,35 @@ namespace HI_APACCESS.Models.M_SYS
     .selected-tag .tag-remove { cursor: pointer; font-weight: bold; }
     .selected-tag .tag-remove:hover { color: #ffd; }
 
-    /* ── Controller 多選 ── */
-    .ctrl-select {
-        width: 100%;
-        height: 130px;
+    /* ── Controller 下拉 ── */
+    .ctrl-dropdown-wrap { position: relative; }
+    .ctrl-dropdown-panel {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0; right: 0;
+        z-index: 9999;
+        background: #fff;
         border: 1px solid #ced4da;
-        border-radius: 4px;
-        font-size: 13px;
+        border-radius: 0 0 4px 4px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+        max-height: 180px;
+        overflow-y: auto;
     }
-    .ctrl-select option { padding: 5px 10px; }
-    .ctrl-select option:checked {
-        background: #4a90d9;
-        color: #fff;
+    .ctrl-dropdown-panel.open { display: block; }
+    .ctrl-dropdown-item {
+        padding: 7px 12px;
+        cursor: pointer;
+        font-size: 13px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .ctrl-dropdown-item:hover,
+    .ctrl-dropdown-item.selected { background: #4a90d9; color: #fff; }
+    .ctrl-dropdown-empty {
+        padding: 10px;
+        color: #888;
+        font-size: 13px;
+        text-align: center;
     }
 </style>
 
@@ -707,10 +195,10 @@ namespace HI_APACCESS.Models.M_SYS
 
 <!-- ── 主表格 ── -->
 <div>
-    <div style="overflow-y: auto; height: 835px; overflow-x: auto;">
+    <div style="overflow-y:auto; height:835px; overflow-x:auto;">
         <section class="form-data" id="table-border">
             <table id="systemTable" class="table table-bordered">
-                <thead style="position: sticky; top: -0.1px; z-index: 2;">
+                <thead style="position:sticky; top:-0.1px; z-index:2;">
                     <tr>
                         <th style="width:100px;">
                             <button type="button" class="btn btn-green" id="btnAdd">新增</button>
@@ -751,9 +239,7 @@ namespace HI_APACCESS.Models.M_SYS
                     }
                     else
                     {
-                        <tr>
-                            <td colspan="10" style="text-align:center; font-weight:600;">查無資料</td>
-                        </tr>
+                        <tr><td colspan="10" style="text-align:center;font-weight:600;">查無資料</td></tr>
                     }
                 </tbody>
             </table>
@@ -770,14 +256,14 @@ namespace HI_APACCESS.Models.M_SYS
                 <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
             </div>
             <div class="modal-body">
-                <form id="systemForm">
+                <form id="systemForm" autocomplete="off">
 
                     <!-- 系統ID -->
                     <div class="form-group">
                         <div class="field-label">系統ID <span class="text-danger">*</span></div>
                         <div class="field-control">
                             <input type="text" class="form-control" id="sysId" name="SYS_ID"
-                                   required maxlength="100" autocomplete="off">
+                                   required maxlength="100">
                         </div>
                     </div>
 
@@ -786,7 +272,7 @@ namespace HI_APACCESS.Models.M_SYS
                         <div class="field-label">系統名稱 <span class="text-danger">*</span></div>
                         <div class="field-control">
                             <input type="text" class="form-control" id="sysName" name="SYS_NAME"
-                                   required maxlength="100" autocomplete="off">
+                                   required maxlength="100">
                         </div>
                     </div>
 
@@ -794,22 +280,23 @@ namespace HI_APACCESS.Models.M_SYS
                     <div class="form-group">
                         <div class="field-label">權限通知對象<br />資訊人員</div>
                         <div class="field-control">
-                            <div class="emp-search-wrap">
+                            <div class="emp-dropdown-wrap" id="wrapIt">
                                 <input type="text" class="form-control" id="searchIt"
-                                       placeholder="輸入員工編號或姓名" autocomplete="off">
-                                <button type="button" class="btn btn-blue"
-                                        onclick="searchEmployee('It')">搜尋</button>
-                            </div>
-                            <div class="emp-result-box">
-                                <div class="emp-result-header">
-                                    <span>員工編號</span><span>員工名稱</span>
+                                       placeholder="點擊或輸入員工編號／姓名篩選">
+                                <div class="emp-dropdown-panel" id="panelIt">
+                                    <div class="emp-dropdown-header">
+                                        <span class="col-no">員工編號</span>
+                                        <span class="col-name">員工名稱</span>
+                                    </div>
+                                    <div class="emp-dropdown-list" id="listIt"></div>
                                 </div>
-                                <select id="empResultIt" class="emp-result-select" multiple
-                                        ondblclick="addSelected('It')"></select>
                             </div>
-                            <div class="field-hint">雙擊或按「加入」將選取的人員加入清單</div>
-                            <button type="button" class="btn btn-sm btn-green mt-1"
-                                    onclick="addSelected('It')">＋ 加入已選</button>
+                            <!-- 新增列：預覽 + 按鈕 -->
+                            <div class="emp-add-row">
+                                <div class="selected-preview placeholder" id="previewIt">尚未選取</div>
+                                <button type="button" class="btn btn-sm btn-green"
+                                        onclick="addSelectedEmp('It')">＋ 新增</button>
+                            </div>
                             <div id="selectedItList" class="selected-list" style="display:none;">
                                 <strong>已選擇：</strong>
                                 <div id="selectedItContent" class="selected-content"></div>
@@ -821,22 +308,22 @@ namespace HI_APACCESS.Models.M_SYS
                     <div class="form-group">
                         <div class="field-label">權限通知對象<br />一般USER</div>
                         <div class="field-control">
-                            <div class="emp-search-wrap">
+                            <div class="emp-dropdown-wrap" id="wrapUsers">
                                 <input type="text" class="form-control" id="searchUsers"
-                                       placeholder="輸入員工編號或姓名" autocomplete="off">
-                                <button type="button" class="btn btn-blue"
-                                        onclick="searchEmployee('Users')">搜尋</button>
-                            </div>
-                            <div class="emp-result-box">
-                                <div class="emp-result-header">
-                                    <span>員工編號</span><span>員工名稱</span>
+                                       placeholder="點擊或輸入員工編號／姓名篩選">
+                                <div class="emp-dropdown-panel" id="panelUsers">
+                                    <div class="emp-dropdown-header">
+                                        <span class="col-no">員工編號</span>
+                                        <span class="col-name">員工名稱</span>
+                                    </div>
+                                    <div class="emp-dropdown-list" id="listUsers"></div>
                                 </div>
-                                <select id="empResultUsers" class="emp-result-select" multiple
-                                        ondblclick="addSelected('Users')"></select>
                             </div>
-                            <div class="field-hint">雙擊或按「加入」將選取的人員加入清單</div>
-                            <button type="button" class="btn btn-sm btn-green mt-1"
-                                    onclick="addSelected('Users')">＋ 加入已選</button>
+                            <div class="emp-add-row">
+                                <div class="selected-preview placeholder" id="previewUsers">尚未選取</div>
+                                <button type="button" class="btn btn-sm btn-green"
+                                        onclick="addSelectedEmp('Users')">＋ 新增</button>
+                            </div>
                             <div id="selectedUsersList" class="selected-list" style="display:none;">
                                 <strong>已選擇：</strong>
                                 <div id="selectedUsersContent" class="selected-content"></div>
@@ -848,12 +335,21 @@ namespace HI_APACCESS.Models.M_SYS
                     <div class="form-group">
                         <div class="field-label">權限CONTROLLER<br />名稱</div>
                         <div class="field-control">
-                            <select id="controllerName" class="ctrl-select" multiple>
-                                <option value="" disabled>-- 請先輸入系統ID後按下方按鈕載入 --</option>
-                            </select>
-                            <div class="field-hint">Ctrl + 點擊可複選；新系統無可選項目（存null）</div>
-                            <button type="button" class="btn btn-sm btn-blue mt-1"
-                                    onclick="loadControllerList(null)">載入Controller清單</button>
+                            <div class="ctrl-dropdown-wrap" id="wrapCtrl">
+                                <input type="text" class="form-control" id="searchCtrl"
+                                       placeholder="請先輸入系統ID，點擊載入Controller清單"
+                                       readonly>
+                                <div class="ctrl-dropdown-panel" id="panelCtrl">
+                                    <div class="ctrl-dropdown-empty">請先載入Controller清單</div>
+                                </div>
+                            </div>
+                            <div class="emp-add-row">
+                                <div class="selected-preview placeholder" id="previewCtrl">尚未選取</div>
+                                <button type="button" class="btn btn-sm btn-blue"
+                                        onclick="loadAndOpenCtrl()">載入</button>
+                                <button type="button" class="btn btn-sm btn-green"
+                                        onclick="addSelectedCtrl()">＋ 新增</button>
+                            </div>
                             <div id="selectedController" class="selected-list" style="display:none;">
                                 <strong>已選擇：</strong>
                                 <div id="selectedControllerContent" class="selected-content"></div>
@@ -874,10 +370,21 @@ namespace HI_APACCESS.Models.M_SYS
 
 @section Scripts{
 <script>
-    // 已選資料（全域）
-    var selectedIt    = [];
-    var selectedUsers = [];
+    // ── 全域狀態 ────────────────────────────────────────────────
+    var selectedIt      = [];   // { empNo, empName }
+    var selectedUsers   = [];
+    var selectedCtrlArr = [];   // string[]
 
+    var allEmployees    = [];   // 全員工快取
+    var empLoaded       = false;
+
+    var pendingEmpIt    = null; // 目前在下拉中點選的員工（It）
+    var pendingEmpUsers = null;
+    var pendingCtrl     = null; // 目前在下拉中點選的 Controller
+
+    var ctrlList        = [];   // Controller 快取
+
+    // ── 初始化 ──────────────────────────────────────────────────
     $(document).ready(function () {
         initPage();
     });
@@ -895,90 +402,151 @@ namespace HI_APACCESS.Models.M_SYS
             editSystem($(this).data('sysid'), $(this).data('sysname'));
         });
 
-        $('#btnSave').off('click').on('click', function () {
-            saveSystem();
+        $('#btnSave').off('click').on('click', saveSystem);
+
+        // 點擊輸入框 → 載入員工並開啟下拉
+        $('#searchIt').on('focus click', function () {
+            loadEmployeesAndOpen('It');
+        });
+        $('#searchUsers').on('focus click', function () {
+            loadEmployeesAndOpen('Users');
         });
 
-        // Enter 觸發搜尋
-        $('#searchIt').on('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); searchEmployee('It'); }
+        // 邊輸入邊篩選
+        $('#searchIt').on('input', function () {
+            filterEmpList('It', $(this).val());
         });
-        $('#searchUsers').on('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); searchEmployee('Users'); }
+        $('#searchUsers').on('input', function () {
+            filterEmpList('Users', $(this).val());
         });
 
-        // Controller 選擇變動更新 tag
-        $('#controllerName').on('change', function () {
-            updateControllerDisplay();
+        // Controller 輸入框點擊 → 開啟已載入的清單
+        $('#searchCtrl').on('focus click', function () {
+            if (ctrlList.length > 0) openCtrlPanel();
+        });
+
+        // 點擊 Modal 外部關閉下拉
+        $(document).on('click', function (e) {
+            if (!$(e.target).closest('#wrapIt').length)    closeEmpPanel('It');
+            if (!$(e.target).closest('#wrapUsers').length) closeEmpPanel('Users');
+            if (!$(e.target).closest('#wrapCtrl').length)  closeCtrlPanel();
         });
     }
 
-    // ── 員工搜尋 ────────────────────────────────────────────────
-    function searchEmployee(type) {
-        var inputId = type === 'It' ? '#searchIt' : '#searchUsers';
-        var keyword = $(inputId).val().trim().toUpperCase(); // 前端轉大寫
-
-        var resultId = '#empResult' + type;
-        $(resultId).empty().append('<option disabled>搜尋中…</option>');
-
-        $.ajax({
-            url:      '@Url.Action("GetEmployeeList", "SYS")',
-            type:     'GET',
-            data:     { keyword: keyword },
-            dataType: 'json',
-            success: function (response) {
-                $(resultId).empty();
-                if (response.success && response.data && response.data.length > 0) {
-                    response.data.forEach(function (emp) {
-                        var parts   = emp.text.split(' - ');
-                        var empNo   = parts[0] || '';
-                        var empName = parts[1] || '';
-                        // option 顯示：編號用固定寬空白對齊名稱欄
-                        var displayText = empNo + '        ' + empName;
-                        $('<option>')
-                            .val(empNo)
-                            .text(displayText)
-                            .data('empname', empName)
-                            .appendTo($(resultId));
-                    });
-                } else {
-                    $(resultId).append('<option disabled>查無符合員工</option>');
+    // ── 員工清單載入（只呼叫一次，之後用快取） ─────────────────
+    function loadEmployeesAndOpen(type) {
+        if (!empLoaded) {
+            $.get('@Url.Action("GetEmployeeList", "SYS")', { keyword: '' }, function (res) {
+                if (res.success && res.data) {
+                    allEmployees = res.data; // [{ id, text }]
+                    empLoaded = true;
                 }
-            },
-            error: function () {
-                $(resultId).empty().append('<option disabled>搜尋失敗</option>');
-            }
-        });
-    }
-
-    // ── 加入已選 ────────────────────────────────────────────────
-    function addSelected(type) {
-        var resultId  = '#empResult' + type;
-        var arr       = type === 'It' ? selectedIt : selectedUsers;
-
-        $(resultId + ' option:selected').each(function () {
-            var empNo   = $(this).val();
-            var empName = $(this).data('empname') || '';
-            if (!empNo) return;
-            if (!arr.some(function (e) { return e.empNo === empNo; })) {
-                arr.push({ empNo: empNo, empName: empName });
-            }
-        });
-
-        renderSelectedTags(type);
-    }
-
-    // ── 移除已選 ────────────────────────────────────────────────
-    function removeSelected(type, empNo) {
-        if (type === 'It') {
-            selectedIt    = selectedIt.filter(function (e) { return e.empNo !== empNo; });
+                renderEmpList(type, allEmployees);
+                openEmpPanel(type);
+            });
         } else {
-            selectedUsers = selectedUsers.filter(function (e) { return e.empNo !== empNo; });
+            var keyword = type === 'It' ? $('#searchIt').val() : $('#searchUsers').val();
+            filterEmpList(type, keyword);
+            openEmpPanel(type);
         }
+    }
+
+    // ── 員工篩選 ────────────────────────────────────────────────
+    function filterEmpList(type, keyword) {
+        var kw = (keyword || '').trim().toUpperCase();
+        var filtered = kw
+            ? allEmployees.filter(function (e) {
+                return e.id.toUpperCase().indexOf(kw) >= 0 ||
+                       e.text.split(' - ')[1].toUpperCase().indexOf(kw) >= 0;
+              })
+            : allEmployees;
+        renderEmpList(type, filtered);
+        openEmpPanel(type);
+    }
+
+    // ── 渲染員工下拉清單 ─────────────────────────────────────────
+    function renderEmpList(type, list) {
+        var listId = type === 'It' ? '#listIt' : '#listUsers';
+        var $list  = $(listId).empty();
+
+        if (!list || list.length === 0) {
+            $list.append('<div class="emp-dropdown-empty">查無符合員工</div>');
+            return;
+        }
+
+        list.forEach(function (emp) {
+            var parts   = emp.text.split(' - ');
+            var empNo   = emp.id;
+            var empName = parts[1] || '';
+
+            var $item = $('<div class="emp-dropdown-item">')
+                .append($('<span class="col-no">').text(empNo))
+                .append($('<span class="col-name">').text(empName))
+                .on('click', function () {
+                    selectEmpItem(type, empNo, empName, $item);
+                });
+
+            $list.append($item);
+        });
+    }
+
+    // ── 員工選取（點選下拉項目） ─────────────────────────────────
+    function selectEmpItem(type, empNo, empName, $item) {
+        var panelId  = type === 'It' ? '#panelIt'      : '#panelUsers';
+        var previewId = type === 'It' ? '#previewIt'   : '#previewUsers';
+
+        // 清除舊 highlight
+        $(panelId).find('.emp-dropdown-item').removeClass('selected');
+        $item.addClass('selected');
+
+        // 更新 pending 與預覽
+        if (type === 'It') pendingEmpIt    = { empNo: empNo, empName: empName };
+        else               pendingEmpUsers = { empNo: empNo, empName: empName };
+
+        $(previewId)
+            .text(empNo + '　' + empName)
+            .removeClass('placeholder');
+    }
+
+    // ── 新增員工到 tag 區 ────────────────────────────────────────
+    function addSelectedEmp(type) {
+        var pending = type === 'It' ? pendingEmpIt : pendingEmpUsers;
+        var arr     = type === 'It' ? selectedIt   : selectedUsers;
+
+        if (!pending) return;
+
+        if (!arr.some(function (e) { return e.empNo === pending.empNo; })) {
+            arr.push({ empNo: pending.empNo, empName: pending.empName });
+            renderSelectedTags(type);
+        }
+
+        // 清除 pending 與預覽
+        if (type === 'It') pendingEmpIt    = null;
+        else               pendingEmpUsers = null;
+
+        var previewId = type === 'It' ? '#previewIt' : '#previewUsers';
+        $(previewId).text('尚未選取').addClass('placeholder');
+        closeEmpPanel(type);
+    }
+
+    // ── 員工下拉開關 ─────────────────────────────────────────────
+    function openEmpPanel(type) {
+        var panelId = type === 'It' ? '#panelIt' : '#panelUsers';
+        $(panelId).addClass('open');
+    }
+    function closeEmpPanel(type) {
+        var panelId = type === 'It' ? '#panelIt' : '#panelUsers';
+        $(panelId).removeClass('open');
+    }
+
+    // ── 移除已選員工 ─────────────────────────────────────────────
+    function removeEmp(type, empNo) {
+        if (type === 'It') selectedIt    = selectedIt.filter(function (e) { return e.empNo !== empNo; });
+        else               selectedUsers = selectedUsers.filter(function (e) { return e.empNo !== empNo; });
         renderSelectedTags(type);
     }
 
-    // ── 渲染 tag ────────────────────────────────────────────────
+    // ── 渲染員工 tag ─────────────────────────────────────────────
     function renderSelectedTags(type) {
         var listId    = type === 'It' ? '#selectedItList'    : '#selectedUsersList';
         var contentId = type === 'It' ? '#selectedItContent' : '#selectedUsersContent';
@@ -986,10 +554,9 @@ namespace HI_APACCESS.Models.M_SYS
 
         if (arr.length > 0) {
             var html = arr.map(function (e) {
-                var label = e.empName ? e.empNo + ' ' + e.empName : e.empNo;
+                var label = e.empName ? e.empNo + '　' + e.empName : e.empNo;
                 return '<span class="selected-tag">' + label +
-                    ' <span class="tag-remove" onclick="removeSelected(\'' + type + '\',\'' + e.empNo + '\')">&times;</span>' +
-                    '</span>';
+                    ' <span class="tag-remove" onclick="removeEmp(\'' + type + '\',\'' + e.empNo + '\')">&times;</span></span>';
             }).join('');
             $(contentId).html(html);
             $(listId).show();
@@ -998,38 +565,63 @@ namespace HI_APACCESS.Models.M_SYS
         }
     }
 
-    // ── Controller 載入 ──────────────────────────────────────────
-    function loadControllerList(preSelected) {
+    // ── Controller 載入並開啟 ────────────────────────────────────
+    function loadAndOpenCtrl() {
         var sysId = $('#sysId').val().trim();
         if (!sysId) { alert('請先輸入系統ID'); return; }
 
-        preSelected = preSelected || [];
-
-        $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (response) {
-            $('#controllerName').empty();
-
-            if (response.success && response.data && response.data.length > 0) {
-                response.data.forEach(function (ctrl) {
-                    var isSelected = preSelected.indexOf(ctrl.CONTROLLER_NAME) >= 0;
-                    $('#controllerName').append(
-                        new Option(ctrl.CONTROLLER_NAME, ctrl.CONTROLLER_NAME, isSelected, isSelected)
-                    );
-                });
-            } else {
-                $('#controllerName').append(
-                    '<option value="" disabled>-- 此系統無Controller（新系統或尚未設定）--</option>'
-                );
-            }
-            updateControllerDisplay();
+        $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (res) {
+            ctrlList = (res.success && res.data && res.data.length > 0)
+                ? res.data.map(function (c) { return c.CONTROLLER_NAME; })
+                : [];
+            renderCtrlList(ctrlList);
+            openCtrlPanel();
         });
     }
 
-    // ── Controller tag 顯示 ──────────────────────────────────────
-    function updateControllerDisplay() {
-        var selected = $('#controllerName').val();
-        if (selected && selected.length > 0) {
-            var html = selected.map(function (v) {
-                return '<span class="selected-tag">' + v + '</span>';
+    function renderCtrlList(list) {
+        var $panel = $('#panelCtrl').empty();
+        if (!list || list.length === 0) {
+            $panel.append('<div class="ctrl-dropdown-empty">此系統無Controller</div>');
+            return;
+        }
+        list.forEach(function (name) {
+            var $item = $('<div class="ctrl-dropdown-item">').text(name)
+                .on('click', function () {
+                    selectCtrlItem(name, $item);
+                });
+            $panel.append($item);
+        });
+    }
+
+    function selectCtrlItem(name, $item) {
+        $('#panelCtrl .ctrl-dropdown-item').removeClass('selected');
+        $item.addClass('selected');
+        pendingCtrl = name;
+        $('#previewCtrl').text(name).removeClass('placeholder');
+    }
+
+    function addSelectedCtrl() {
+        if (!pendingCtrl) return;
+        if (!selectedCtrlArr.some(function (c) { return c === pendingCtrl; })) {
+            selectedCtrlArr.push(pendingCtrl);
+            renderCtrlTags();
+        }
+        pendingCtrl = null;
+        $('#previewCtrl').text('尚未選取').addClass('placeholder');
+        closeCtrlPanel();
+    }
+
+    function removeCtrl(name) {
+        selectedCtrlArr = selectedCtrlArr.filter(function (c) { return c !== name; });
+        renderCtrlTags();
+    }
+
+    function renderCtrlTags() {
+        if (selectedCtrlArr.length > 0) {
+            var html = selectedCtrlArr.map(function (c) {
+                return '<span class="selected-tag">' + c +
+                    ' <span class="tag-remove" onclick="removeCtrl(\'' + c + '\')">&times;</span></span>';
             }).join('');
             $('#selectedControllerContent').html(html);
             $('#selectedController').show();
@@ -1038,27 +630,21 @@ namespace HI_APACCESS.Models.M_SYS
         }
     }
 
+    function openCtrlPanel()  { $('#panelCtrl').addClass('open'); }
+    function closeCtrlPanel() { $('#panelCtrl').removeClass('open'); }
+
     // ── 儲存 ────────────────────────────────────────────────────
     function saveSystem() {
         var sysId   = $('#sysId').val().trim().toUpperCase();
         var sysName = $('#sysName').val().trim();
-
         if (!sysId || !sysName) { alert('系統ID和系統名稱為必填'); return; }
-
-        // 員工編號以 ; 分隔（已為大寫）
-        var notifyIt    = selectedIt.map(function (e)    { return e.empNo; }).join(';');
-        var notifyUsers = selectedUsers.map(function (e) { return e.empNo; }).join(';');
-
-        // Controller 多選以 ; 分隔
-        var ctrlVal = $('#controllerName').val();
-        var ctrlStr = (ctrlVal && ctrlVal.length > 0) ? ctrlVal.join(';') : '';
 
         var formData = {
             SYS_ID:                sysId,
             SYS_NAME:              sysName,
-            NOTIFY_AUTOS_IT:       notifyIt,
-            NOTIFY_AUTOS_USERS:    notifyUsers,
-            AUTOS_CONTROLLER_NAME: ctrlStr,
+            NOTIFY_AUTOS_IT:       selectedIt.map(function (e) { return e.empNo; }).join(';'),
+            NOTIFY_AUTOS_USERS:    selectedUsers.map(function (e) { return e.empNo; }).join(';'),
+            AUTOS_CONTROLLER_NAME: selectedCtrlArr.join(';'),
             Action:                $('#actionType').val()
         };
 
@@ -1067,13 +653,13 @@ namespace HI_APACCESS.Models.M_SYS
             type:     'POST',
             data:     formData,
             dataType: 'json',
-            success: function (response) {
-                if (response.success) {
-                    alert(response.message);
+            success: function (res) {
+                if (res.success) {
+                    alert(res.message);
                     $('#systemModal').modal('hide');
                     location.reload();
                 } else {
-                    alert(response.message);
+                    alert(res.message);
                 }
             },
             error: function () { alert('儲存時發生錯誤'); }
@@ -1088,18 +674,17 @@ namespace HI_APACCESS.Models.M_SYS
         $('#sysName').val(sysName);
         $('#actionType').val('Edit');
 
-        $.get('@Url.Action("GetSystemDetail", "SYS")', { sysId: sysId }, function (response) {
-            if (!response.success) return;
-            var system = response.data;
+        $.get('@Url.Action("GetSystemDetail", "SYS")', { sysId: sysId }, function (res) {
+            if (!res.success) return;
+            var system = res.data;
 
-            // 補回員工姓名的共用函數
+            // 補回員工姓名
             function loadEmpTags(empNosStr, type) {
                 if (!empNosStr) return;
-                $.get('@Url.Action("GetEmployeesByNos", "SYS")', { empNos: empNosStr }, function (res) {
+                $.get('@Url.Action("GetEmployeesByNos", "SYS")', { empNos: empNosStr }, function (r) {
                     var arr = type === 'It' ? selectedIt : selectedUsers;
-
-                    if (res.success && res.data && res.data.length > 0) {
-                        res.data.forEach(function (emp) {
+                    if (r.success && r.data && r.data.length > 0) {
+                        r.data.forEach(function (emp) {
                             var empNo   = emp.id;
                             var empName = emp.text.split(' - ')[1] || '';
                             if (!arr.some(function (e) { return e.empNo === empNo; })) {
@@ -1107,7 +692,6 @@ namespace HI_APACCESS.Models.M_SYS
                             }
                         });
                     } else {
-                        // fallback：只顯示編號
                         empNosStr.split(';').forEach(function (no) {
                             no = no.trim();
                             if (no && !arr.some(function (e) { return e.empNo === no; })) {
@@ -1119,14 +703,24 @@ namespace HI_APACCESS.Models.M_SYS
                 });
             }
 
-            loadEmpTags(system.NOTIFY_AUTOS_IT,    'It');
-            loadEmpTags(system.NOTIFY_AUTOS_USERS,  'Users');
+            loadEmpTags(system.NOTIFY_AUTOS_IT,   'It');
+            loadEmpTags(system.NOTIFY_AUTOS_USERS, 'Users');
 
-            // Controller 帶入已選值
-            var preSelected = system.AUTOS_CONTROLLER_NAME
-                ? system.AUTOS_CONTROLLER_NAME.split(';').map(function (s) { return s.trim(); })
-                : [];
-            loadControllerList(preSelected);
+            // Controller 帶入已選
+            if (system.AUTOS_CONTROLLER_NAME) {
+                selectedCtrlArr = system.AUTOS_CONTROLLER_NAME
+                    .split(';').map(function (s) { return s.trim(); })
+                    .filter(function (s) { return s; });
+                renderCtrlTags();
+            }
+
+            // 同時載入 Controller 清單（方便再新增）
+            $.get('@Url.Action("GetControllerList", "SYS")', { sysId: sysId }, function (r) {
+                ctrlList = (r.success && r.data && r.data.length > 0)
+                    ? r.data.map(function (c) { return c.CONTROLLER_NAME; })
+                    : [];
+                renderCtrlList(ctrlList);
+            });
         });
 
         $('#systemModal').modal('show');
@@ -1136,25 +730,36 @@ namespace HI_APACCESS.Models.M_SYS
     function resetForm() {
         $('#systemForm')[0].reset();
         $('#sysId').prop('readonly', false);
-        selectedIt    = [];
-        selectedUsers = [];
+
+        selectedIt      = [];
+        selectedUsers   = [];
+        selectedCtrlArr = [];
+        pendingEmpIt    = null;
+        pendingEmpUsers = null;
+        pendingCtrl     = null;
+        ctrlList        = [];
+        // 不重置 empLoaded / allEmployees（員工資料快取保留）
+
+        $('#previewIt, #previewUsers, #previewCtrl')
+            .text('尚未選取').addClass('placeholder');
         $('#selectedItList, #selectedUsersList, #selectedController').hide();
-        $('#empResultIt, #empResultUsers').empty();
-        $('#controllerName').empty().append(
-            '<option value="" disabled>-- 請先輸入系統ID後按下方按鈕載入 --</option>'
-        );
+        $('#panelIt, #panelUsers, #panelCtrl').removeClass('open');
+        $('#panelCtrl').html('<div class="ctrl-dropdown-empty">請先載入Controller清單</div>');
     }
 </script>
 }
 
 
-修改總覽
+行為說明
 
 
 
-|檔案                |改了什麼                                                                      |
-|------------------|--------------------------------------------------------------------------|
-|`M_SYS.cs`        |無異動（維持上版）                                                                 |
-|`F_SYS.cs`        |`InsertSystemToApSys` / `UpdateSystem` 空字串改存 null；`GetEmployeeList` 大小寫不敏感|
-|`SYSController.cs`|`ProcessSystemApply` 改呼叫 `UpdateSystem`；新增 `GetEmployeesByNos` Action     |
-|`SYS_APPLY.cshtml`|完全移除 Select2；改原生 multiple select；欄位對齊；員工搜尋表頭；tag 顯示；編輯補回姓名                |
+|動作                    |結果                                      |
+|----------------------|----------------------------------------|
+|點擊員工輸入框               |立即展開下拉（首次呼叫 API，之後用快取）                  |
+|邊輸入邊篩選                |即時過濾，不用按搜尋                              |
+|點選員工                  |highlight 該行，預覽列顯示「編號　姓名」               |
+|按「＋ 新增」               |加入 tag，清除預覽，關閉下拉                        |
+|點選 Controller 後按「＋ 新增」|同邏輯                                     |
+|點擊下拉以外區域              |自動關閉下拉                                  |
+|存 DB                  |員工 `;` 分隔只存編號；Controller `;` 分隔；空值存 null|
