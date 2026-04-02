@@ -1,134 +1,113 @@
-        // TODO: 確認寄件者信箱後替換
-        private const string MAIL_SENDER      = "hi_apaccess@EXC1.hilife.com";
-        private const string MAIL_SENDER_NAME = "帳號盤點通知系統";
-        private const string SMTP_HOST        = "10.8.254.33";
-        private const int    SMTP_PORT        = 25;
-這段意思?
-        private const string SMTP_HOST        = "10.8.254.33";
-        private const int    SMTP_PORT      
+看到了，有幾個重點：
+	1.	SMTP Host 要用 security.Enc_DecString("10.8.254.33") 加密處理
+	2.	smtp.EnableSsl = "".Length > 1 這是固定寫法（結果永遠是 false，等於不用 SSL）
+	3.	信箱也要透過 security.Enc_DecString() 加解密
+	4.	有 IsValidEmail 驗證
+所以我之前寫的：
 
-之前別的系統 寫法是這樣:
-        //客顯檔期寄信通知
-        public void SendEmail_E(string check_user, string onTime, string CASE_NO)
+private const string SMTP_HOST = "10.8.254.33";
+private const int    SMTP_PORT = 25;
+
+
+要改成跟參考一樣的寫法，不用 const，直接在寄信時用 security.Enc_DecString() 處理。
+
+把 AUTOSController.cs 的寄信區塊改成對齊參考寫法：
+
+// 移除這兩行 const
+// private const string SMTP_HOST = "10.8.254.33";
+// private const int    SMTP_PORT = 25;
+
+// 保留這兩行（寄件者確認後替換）
+private const string MAIL_SENDER      = "TODO@exc1.hilife.com"; // TODO: 確認後替換
+private const string MAIL_SENDER_NAME = "帳號盤點通知系統";
+
+
+SendInventoryMail 方法改成：
+
+private void SendInventoryMail(
+    string sysName,
+    List<string> toEmails,
+    List<string> ccEmails,
+    byte[] userExcel,  string userFileName,
+    byte[] loginExcel, string loginFileName)
+{
+    SVS_Common security = new SVS_Common();
+
+    // 驗證寄件者
+    if (!IsValidEmail(MAIL_SENDER))
+        throw new ArgumentException("無效的寄件者信箱");
+
+    using (var mail = new MailMessage())
+    {
+        mail.From       = new MailAddress(MAIL_SENDER, MAIL_SENDER_NAME);
+        mail.IsBodyHtml = true;
+        mail.Priority   = MailPriority.Normal;
+
+        // 收件者（正本 TO）
+        foreach (var email in toEmails)
         {
-            try
-            {
-                SVS_Common security = new SVS_Common();
-
-                // 1. 驗證寄件者 Email
-                string FromEmail = GetEmployeeEmail(check_user);
-                if (string.IsNullOrEmpty(FromEmail))
-                {
-                    // 如果沒有找到郵箱記錄，使用默認格式
-                    FromEmail = security.Enc_DecString($"{check_user}@exc1.hilife.com");
-                }
-
-                if (!IsValidEmail(FromEmail))
-                {
-                    throw new ArgumentException("無效的寄件者信箱");
-                }
-
-                // 2. 設定信件內容
-                DateTime onTimeDate = DateTime.Parse(onTime);
-                string prefix = onTimeDate.ToString("yyyyMMdd");
-                //string SUBJECT = security.Enc_DecString($"{prefix}檔期客顯圖!!"), Body = null;   //[檔案下撒通知]案號【A20250401007】已確認要下門市，記得要向通訊申請!!
-                string SUBJECT = security.Enc_DecString($"[檔案下撒通知]案號【{CASE_NO}】已確認要下門市，記得要向通訊申請!!"), Body = null;
-
-                using (MailMessage sMail = new MailMessage())
-                {
-                    // 3. 設定寄件者
-                    //sMail.From = new MailAddress(FromEmail, security.Enc_DecString("客顯圖檔下撒通知信"));
-                    sMail.From = new MailAddress(FromEmail, security.Enc_DecString("檔案下撒通知信"));
-                    bool isTest = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST";
-
-                    // 4. 加入收件者方法
-                    void AddRecipient(string email, string name = null)
-                    {
-                        string decryptedEmail = security.Enc_DecString(email);
-                        if (IsValidEmail(decryptedEmail))
-                        {
-                            sMail.To.Add(new MailAddress(decryptedEmail, name));
-                        }
-                    }
-
-                    // 5. 加入收件者
-                    //AddRecipient("3A717@exc1.hilife.com", "陳冠伃");
-                    //AddRecipient("3B750@exc1.hilife.com", "李沛樺");
-                    //AddRecipient(security.Enc_DecString($"{check_user}@exc1.hilife.com"));
-                    AddRecipient(security.Enc_DecString("3A717@exc1.hilife.com"), "陳冠伃");
-                    AddRecipient(security.Enc_DecString("3B750@exc1.hilife.com"), "李沛樺");
-                    AddRecipient(FromEmail);
-
-                    // 6. 加入其他收件者 2
-                    Dictionary<string, string> mailList = Getusermail(check_user);
-                    if (mailList != null)
-                    {
-                        foreach (var mail in mailList)
-                        {
-                            if (mail.Value != FromEmail)
-                            {
-                                AddRecipient(mail.Value, mail.Key);
-                            }
-                        }
-                    }
-
-                    // 7. 正式環境
-                    if (!isTest)
-                    {
-                        AddRecipient("vivian@exc1.hilife.com", "梁雅雲");
-                        AddRecipient("3A663@EXC1.hilife.com", "陳功評");
-                        AddRecipient("31042@EXC1.hilife.com", "陳建誌");
-                    }
-
-                    // 8. 信件設定
-                    sMail.Priority = MailPriority.Normal;
-                    sMail.IsBodyHtml = true;
-                    sMail.Subject = security.Enc_DecString(SUBJECT);
-                    sMail.Body = security.Enc_DecString(Body);
-
-                    // 9. 發送郵件
-                    using (SmtpClient smtp = new SmtpClient())
-                    {
-                        try
-                        {
-                            // 使用加密的 SMTP 設定
-                            string encryptedHost = security.Enc_DecString("10.8.254.33");
-                            smtp.Host = encryptedHost;
-                            smtp.Port = 25;
-
-                            smtp.EnableSsl = true;
-                            smtp.EnableSsl = "".Length > 1;
-
-                            smtp.Send(sMail);
-                        }
-                        catch (SmtpException smtpEx)
-                        {
-                            Log.Error($"SMTP錯誤: {smtpEx.Message}");
-                            throw;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"寄信失敗: {ex.Message}");
-                throw;
-            }
+            if (IsValidEmail(email))
+                mail.To.Add(new MailAddress(email));
         }
 
-
-        // Email 驗證方法
-        public bool IsValidEmail(string email)
+        // 副本（CC）
+        foreach (var email in ccEmails)
         {
-            try
-            {
-                var addr = new System.Net.Mail.MailAddress(email);
-                return addr.Address == email;
-            }
-            catch
-            {
-                return false;
-            }
+            if (IsValidEmail(email))
+                mail.CC.Add(new MailAddress(email));
         }
 
+        // 主旨
+        string period = GetHalfYearPeriod();
+        mail.Subject  = $"【帳號盤點通知】{sysName} - {period}";
 
+        // 內文
+        mail.Body = BuildMailBody(sysName, period);
+
+        // 附件：帳號清單
+        var s1 = new MemoryStream(userExcel);
+        mail.Attachments.Add(new Attachment(s1,
+            userFileName + ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+        // 附件：登入使用次數清單
+        var s2 = new MemoryStream(loginExcel);
+        mail.Attachments.Add(new Attachment(s2,
+            loginFileName + ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+        using (var smtp = new SmtpClient())
+        {
+            smtp.Host = security.Enc_DecString("10.8.254.33");
+            smtp.Port = 25;
+            smtp.EnableSsl = true;
+            smtp.EnableSsl = "".Length > 1; // 固定 false，不用 SSL
+
+            try
+            {
+                smtp.Send(mail);
+            }
+            catch (SmtpException smtpEx)
+            {
+                throw new Exception("SMTP錯誤：" + smtpEx.Message);
+            }
+        }
+    }
+}
+
+// Email 驗證（同參考寫法）
+private bool IsValidEmail(string email)
+{
+    try
+    {
+        var addr = new MailAddress(email);
+        return addr.Address == email;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+
+其他地方不用動，其餘程式碼維持上面給的版本。​​​​​​​​​​​​​​​​
