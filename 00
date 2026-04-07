@@ -1,77 +1,29 @@
-SQL 先確認：
-把你的系統 ID 填進去執行：
+修正完後:
 
-DECLARE @SYS_ID VARCHAR(100) = 'HI_APACCESS'  -- 改成你要測試的系統ID
-DECLARE @CONTROLLER_NAME VARCHAR(100)
+                // 登入次數（最近半年）
+                case QueryKey.GetLoginCountList:
+                    return @"
+        DECLARE @CONTROLLER_NAME VARCHAR(100)
+        SELECT @CONTROLLER_NAME = [AUTOS_CONTROLLER_NAME]
+        FROM [HI-APLOG].[dbo].[AP_SYS]
+        WHERE [SYS_ID] = @SYS_ID
 
-SELECT @CONTROLLER_NAME = [AUTOS_CONTROLLER_NAME]
-FROM [HI-APLOG].[dbo].[AP_SYS]
-WHERE [SYS_ID] = @SYS_ID
+        SELECT
+            A.[U_ID],
+            A.[U_NAME],
+            COUNT(B.[LOG_ID]) AS LOGIN_COUNT
+        FROM [HI-AUTOS].[dbo].[AP_USER] AS A
+        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
+            ON A.[U_ID] = NT.[EMP_NO]
+        LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
+            ON A.[SYS_ID] = B.[SYS_ID]
+            AND NT.[EMP_NO] = B.[ACTION_USER]
+            AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
+            AND B.[ACTION_TIME] >= DATEADD(MONTH, -6, GETDATE())
+        WHERE A.[SYS_ID] = @SYS_ID
+        GROUP BY A.[U_ID], A.[U_NAME]
+        ORDER BY A.[U_ID]
+    ";
 
--- 先確認 CONTROLLER_NAME 撈到什麼
-SELECT @CONTROLLER_NAME AS CONTROLLER_NAME
-
--- 再確認登入紀錄
-SELECT
-    A.[U_ID],
-    A.[U_NAME],
-    NT.[EMP_DOM_ID],
-    COUNT(B.[LOG_ID]) AS LOGIN_COUNT
-FROM [HI-AUTOS].[dbo].[AP_USER] AS A
-LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
-    ON A.[U_ID] = NT.[EMP_NO]
-LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
-    ON A.[SYS_ID] = B.[SYS_ID]
-    AND NT.[EMP_DOM_ID] = B.[ACTION_USER]
-    AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
-    AND B.[LOG_TIME] >= DATEADD(MONTH, -6, GETDATE())
-WHERE A.[SYS_ID] = @SYS_ID
-GROUP BY A.[U_ID], A.[U_NAME], NT.[EMP_DOM_ID]
-ORDER BY A.[U_ID]
-
-
-先把 EMP_DOM_ID 也查出來，確認：
-	1.	@CONTROLLER_NAME 有沒有值
-	2.	EMP_DOM_ID 有沒有對應到 AP_EVENT_LOG 的 ACTION_USER
-結果貼給我看。
-
-Excel 框線問題，SetHeaders 和 SetDataRowStyle 改成只框實際有資料的範圍，把 SetBorder 改成這樣：
-
-private void SetHeaders(ExcelWorksheet ws, string[] headers)
-{
-    for (int i = 0; i < headers.Length; i++)
-        ws.Cells[1, i + 1].Value = headers[i];
-
-    // 只框 headers 實際欄位數
-    using (var range = ws.Cells[1, 1, 1, headers.Length])
-    {
-        range.Style.Font.Bold        = true;
-        range.Style.Font.Size        = 11;
-        range.Style.Font.Name        = "微軟正黑體";
-        range.Style.Fill.PatternType = ExcelFillStyle.Solid;
-        range.Style.Fill.BackgroundColor.SetColor(Color.LightGray);
-        range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
-        range.Style.VerticalAlignment   = ExcelVerticalAlignment.Center;
-        range.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
-        range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
-        range.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
-        range.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
-    }
-}
-
-private void SetDataRowStyle(ExcelWorksheet ws, int row, int colCount)
-{
-    // 只框實際欄位數，不會超出
-    using (var range = ws.Cells[row, 1, row, colCount])
-    {
-        range.Style.Font.Name         = "微軟正黑體";
-        range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
-        range.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
-        range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
-        range.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
-        range.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
-    }
-}
-
-
-這樣框線只會框到有資料的欄位，不會多出空欄。​​​​​​​​​​​​​​​​
+sql 有取到LOGIN_COUNT 值
+然後excel出來沒值
