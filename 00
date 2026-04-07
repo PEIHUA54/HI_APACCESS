@@ -1,12 +1,49 @@
-SQL 沒問題只有一段。問題在 dt.Rows.Count = 1 但 list 卻是 8 筆，這很奇怪。
-在中斷點直接看 dt 的內容：
+dt 資料完全正確！8筆、LOGIN_COUNT 都有值。
+問題在 ConvertToList<M_AUTOS_LoginCount> 對應不到，因為 Model 的欄位是：
 
-DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-// ← 這行下中斷點，展開 dt 看：
-// dt.Rows.Count = ?
-// dt.Rows[0]["U_ID"] = ?
-// dt.Rows[0]["LOGIN_COUNT"] = ?
+public int LOGIN_COUNT { get; set; }
 
 
-我懷疑 dt.Rows.Count = 1 那筆資料的欄位名稱對不上，ConvertToList 對應不到就全部給預設值 0。
-你把 dt.Rows[0] 展開，看裡面的欄位名稱和值是什麼。​​​​​​​​​​​​​​​​
+但 ConvertToList 可能對大小寫敏感，或是 int 型別轉換失敗。
+把 M_AUTOS_LoginCount 的 LOGIN_COUNT 改成 string 試試，或是直接手動轉換，不用 ConvertToList：
+在 F_AUTOS.cs 的 GetLoginCountList 改成手動轉：
+
+public List<M_AUTOS_LoginCount> GetLoginCountList(string sysId, string sysName)
+{
+    // 先取 CONTROLLER_NAME
+    string sqlCtrl = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetControllerNameBySysId);
+    var pCtrl = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", sysId)
+    };
+    DataTable dtCtrl = SVS_DBmanager.QueryBySQL(sqlCtrl, pCtrl);
+
+    string controllerName = "";
+    if (dtCtrl.Rows.Count > 0)
+        controllerName = dtCtrl.Rows[0]["AUTOS_CONTROLLER_NAME"]?.ToString() ?? "";
+
+    // 查登入次數
+    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetLoginCountList);
+    var parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID",          sysId),
+        new SqlParameter("@CONTROLLER_NAME", controllerName)
+    };
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+
+    // 手動轉換，不用 ConvertToList
+    var list = new List<M_AUTOS_LoginCount>();
+    foreach (DataRow row in dt.Rows)
+    {
+        list.Add(new M_AUTOS_LoginCount
+        {
+            SYS_NAME    = sysName,
+            U_ID        = row["U_ID"]?.ToString(),
+            U_NAME      = row["U_NAME"]?.ToString(),
+            LOGIN_COUNT = row["LOGIN_COUNT"] == DBNull.Value ? 0 : Convert.ToInt32(row["LOGIN_COUNT"])
+        });
+    }
+
+    return list;
+}
