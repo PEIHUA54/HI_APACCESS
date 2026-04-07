@@ -1,49 +1,83 @@
-dt 資料完全正確！8筆、LOGIN_COUNT 都有值。
-問題在 ConvertToList<M_AUTOS_LoginCount> 對應不到，因為 Model 的欄位是：
+對，所以用實際往前推6個月最準確，跟 SQL 邏輯一致。
+把 GetHalfYearPeriod() 改成：
 
-public int LOGIN_COUNT { get; set; }
-
-
-但 ConvertToList 可能對大小寫敏感，或是 int 型別轉換失敗。
-把 M_AUTOS_LoginCount 的 LOGIN_COUNT 改成 string 試試，或是直接手動轉換，不用 ConvertToList：
-在 F_AUTOS.cs 的 GetLoginCountList 改成手動轉：
-
-public List<M_AUTOS_LoginCount> GetLoginCountList(string sysId, string sysName)
+private string GetHalfYearPeriod()
 {
-    // 先取 CONTROLLER_NAME
-    string sqlCtrl = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetControllerNameBySysId);
-    var pCtrl = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", sysId)
-    };
-    DataTable dtCtrl = SVS_DBmanager.QueryBySQL(sqlCtrl, pCtrl);
-
-    string controllerName = "";
-    if (dtCtrl.Rows.Count > 0)
-        controllerName = dtCtrl.Rows[0]["AUTOS_CONTROLLER_NAME"]?.ToString() ?? "";
-
-    // 查登入次數
-    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetLoginCountList);
-    var parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID",          sysId),
-        new SqlParameter("@CONTROLLER_NAME", controllerName)
-    };
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-
-    // 手動轉換，不用 ConvertToList
-    var list = new List<M_AUTOS_LoginCount>();
-    foreach (DataRow row in dt.Rows)
-    {
-        list.Add(new M_AUTOS_LoginCount
-        {
-            SYS_NAME    = sysName,
-            U_ID        = row["U_ID"]?.ToString(),
-            U_NAME      = row["U_NAME"]?.ToString(),
-            LOGIN_COUNT = row["LOGIN_COUNT"] == DBNull.Value ? 0 : Convert.ToInt32(row["LOGIN_COUNT"])
-        });
-    }
-
-    return list;
+    var end   = DateTime.Now;
+    var start = end.AddMonths(-6);
+    return $"{start:yyyy/MM/dd} ～ {end:yyyy/MM/dd}";
 }
+
+
+這樣不管排程是幾月跑，信件主旨和內文顯示的期間都會跟 SQL 撈的範圍一致。
+例如：
+	∙	4月跑 → 2025/10/07 ～ 2026/04/07
+	∙	8月跑 → 2026/02/01 ～ 2026/08/01
+
+日期怎麼算：
+SQL 的 DATEADD(MONTH, -6, GETDATE()) 就是執行當下時間往前推剛好6個月。
+例如今天 2026-04-07：
+	∙	開始：2025-10-07
+	∙	結束：2026-04-07（當下）
+
+確認哪些系統哪些人會被通知的 SQL：
+
+SELECT 
+    s.[SYS_ID],
+    s.[SYS_NAME],
+    s.[NOTIFY_AUTOS_USERS],
+    s.[NOTIFY_AUTOS_IT],
+    -- 展開 USER 窗口信箱
+    u_mail.[EMP_EMAIL] AS USER_EMAIL,
+    -- 展開 IT 信箱
+    it_mail.[EMP_EMAIL] AS IT_EMAIL
+FROM [HI-APLOG].[dbo].[AP_SYS] s
+-- USER 窗口（只取第一個，若多個需另外處理）
+OUTER APPLY (
+    SELECT TOP 1 m.[EMP_EMAIL]
+    FROM STRING_SPLIT(s.[NOTIFY_AUTOS_USERS], ';') t
+    LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
+) u_mail
+-- IT 人員（只取第一個）
+OUTER APPLY (
+    SELECT TOP 1 m.[EMP_EMAIL]
+    FROM STRING_SPLIT(s.[NOTIFY_AUTOS_IT], ';') t
+    LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
+) it_mail
+WHERE s.[NOTIFY_AUTOS_USERS] IS NOT NULL
+  AND s.[NOTIFY_AUTOS_USERS] <> ''
+ORDER BY s.[SYS_ID]
+
+
+但這樣每個系統只顯示一筆，如果你想展開每個人一行：
+
+SELECT 
+    s.[SYS_ID],
+    s.[SYS_NAME],
+    '正本TO' AS 類型,
+    t.[value] AS 員工編號,
+    m.[EMP_EMAIL] AS 信箱
+FROM [HI-APLOG].[dbo].[AP_SYS] s
+CROSS APPLY STRING_SPLIT(s.[NOTIFY_AUTOS_USERS], ';') t
+LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
+WHERE s.[NOTIFY_AUTOS_USERS] IS NOT NULL
+  AND s.[NOTIFY_AUTOS_USERS] <> ''
+
+UNION ALL
+
+SELECT 
+    s.[SYS_ID],
+    s.[SYS_NAME],
+    '副本CC' AS 類型,
+    t.[value] AS 員工編號,
+    m.[EMP_EMAIL] AS 信箱
+FROM [HI-APLOG].[dbo].[AP_SYS] s
+CROSS APPLY STRING_SPLIT(s.[NOTIFY_AUTOS_IT], ';') t
+LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
+WHERE s.[NOTIFY_AUTOS_IT] IS NOT NULL
+  AND s.[NOTIFY_AUTOS_IT] <> ''
+
+ORDER BY SYS_ID, 類型
+
+
+這樣可以清楚看到每個系統、每個人、信箱有沒有設定。​​​​​​​​​​​​​​​​
