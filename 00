@@ -1,26 +1,12 @@
-            // 登入次數（最近半年）
-            case QueryKey.GetLoginCountList:
-                return @"
-    SELECT
-        A.[U_ID],
-        A.[U_NAME],
-        COUNT(B.[LOG_ID]) AS LOGIN_COUNT
-    FROM [HI-AUTOS].[dbo].[AP_USER] AS A
-    LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
-        ON A.[U_ID] = NT.[EMP_NO]
-    LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
-        ON A.[SYS_ID] = B.[SYS_ID]
-        AND NT.[EMP_NO] = B.[ACTION_USER]
-        AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
-        AND B.[ACTION_TIME] >= DATEADD(MONTH, -6, GETDATE())
-    WHERE A.[SYS_ID] = @SYS_ID
-    GROUP BY A.[U_ID], A.[U_NAME]
-    ORDER BY A.[U_ID]
-";
+SQL 沒問題只有一段。問題在 dt.Rows.Count = 1 但 list 卻是 8 筆，這很奇怪。
+在中斷點直接看 dt 的內容：
 
-            case QueryKey.GetControllerNameBySysId:
-                return @"
-    SELECT [AUTOS_CONTROLLER_NAME]
-    FROM [HI-APLOG].[dbo].[AP_SYS]
-    WHERE [SYS_ID] = @SYS_ID
-";
+DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+// ← 這行下中斷點，展開 dt 看：
+// dt.Rows.Count = ?
+// dt.Rows[0]["U_ID"] = ?
+// dt.Rows[0]["LOGIN_COUNT"] = ?
+
+
+我懷疑 dt.Rows.Count = 1 那筆資料的欄位名稱對不上，ConvertToList 對應不到就全部給預設值 0。
+你把 dt.Rows[0] 展開，看裡面的欄位名稱和值是什麼。​​​​​​​​​​​​​​​​
