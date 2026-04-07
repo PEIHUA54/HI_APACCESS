@@ -1,13 +1,15 @@
-修正完後:
+Excel 沒值的問題是因為 SQL 有 DECLARE 多段語法，QueryBySQL 執行後回傳的是第一個結果集（DECLARE + SELECT @CONTROLLER_NAME 那段），不是你要的 SELECT 資料。
+確認一下你的 QueryBySQL 是怎麼寫的，通常會是：
 
-                // 登入次數（最近半年）
-                case QueryKey.GetLoginCountList:
-                    return @"
-        DECLARE @CONTROLLER_NAME VARCHAR(100)
-        SELECT @CONTROLLER_NAME = [AUTOS_CONTROLLER_NAME]
-        FROM [HI-APLOG].[dbo].[AP_SYS]
-        WHERE [SYS_ID] = @SYS_ID
+// 只取第一個 DataTable
+DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
 
+
+解法：把兩段 SQL 拆開，在 F_AUTOS 裡先查 CONTROLLER_NAME，再帶入第二段查詢：
+SQL 改成單純一段：
+
+case QueryKey.GetLoginCountList:
+    return @"
         SELECT
             A.[U_ID],
             A.[U_NAME],
@@ -25,5 +27,40 @@
         ORDER BY A.[U_ID]
     ";
 
-sql 有取到LOGIN_COUNT 值
-然後excel出來沒值
+case QueryKey.GetControllerNameBySysId:
+    return @"
+        SELECT [AUTOS_CONTROLLER_NAME]
+        FROM [HI-APLOG].[dbo].[AP_SYS]
+        WHERE [SYS_ID] = @SYS_ID
+    ";
+
+
+F_AUTOS.cs 的 GetLoginCountList 改成：
+
+public List<M_AUTOS_LoginCount> GetLoginCountList(string sysId, string sysName)
+{
+    // 先取 CONTROLLER_NAME
+    string sqlCtrl = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetControllerNameBySysId);
+    var pCtrl = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID", sysId)
+    };
+    DataTable dtCtrl = SVS_DBmanager.QueryBySQL(sqlCtrl, pCtrl);
+
+    string controllerName = "";
+    if (dtCtrl.Rows.Count > 0)
+        controllerName = dtCtrl.Rows[0]["AUTOS_CONTROLLER_NAME"]?.ToString() ?? "";
+
+    // 再查登入次數
+    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetLoginCountList);
+    var parameters = new List<SqlParameter>
+    {
+        new SqlParameter("@SYS_ID",          sysId),
+        new SqlParameter("@CONTROLLER_NAME", controllerName)
+    };
+
+    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
+    var list = SVS_DBmanager.ConvertToList<M_AUTOS_LoginCount>(dt);
+    list.ForEach(x => x.SYS_NAME = sysName);
+    return list;
+}
