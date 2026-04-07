@@ -1,34 +1,26 @@
-資料是有的，最新時間是今天 2026-04-07，總筆數 1038 筆，時間範圍也在半年內。
-問題一定在 JOIN 條件。執行這個直接比對：
+            // 登入次數（最近半年）
+            case QueryKey.GetLoginCountList:
+                return @"
+    SELECT
+        A.[U_ID],
+        A.[U_NAME],
+        COUNT(B.[LOG_ID]) AS LOGIN_COUNT
+    FROM [HI-AUTOS].[dbo].[AP_USER] AS A
+    LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
+        ON A.[U_ID] = NT.[EMP_NO]
+    LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
+        ON A.[SYS_ID] = B.[SYS_ID]
+        AND NT.[EMP_NO] = B.[ACTION_USER]
+        AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
+        AND B.[ACTION_TIME] >= DATEADD(MONTH, -6, GETDATE())
+    WHERE A.[SYS_ID] = @SYS_ID
+    GROUP BY A.[U_ID], A.[U_NAME]
+    ORDER BY A.[U_ID]
+";
 
-DECLARE @SYS_ID VARCHAR(100) = 'HI_APACCESS'
-DECLARE @CONTROLLER_NAME VARCHAR(100) = 'Account'
-
--- 直接看有沒有 JOIN 到
-SELECT 
-    A.[U_ID],
-    NT.[EMP_NO],
-    B.[ACTION_USER],
-    B.[LOG_ID]
-FROM [HI-AUTOS].[dbo].[AP_USER] AS A
-LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
-    ON A.[U_ID] = NT.[EMP_NO]
-LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
-    ON A.[SYS_ID] = B.[SYS_ID]
-    AND NT.[EMP_NO] = B.[ACTION_USER]
-    AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
-    AND B.[ACTION_TIME] >= DATEADD(MONTH, -6, GETDATE())
-WHERE A.[SYS_ID] = @SYS_ID
-  AND B.[LOG_ID] IS NOT NULL  -- 只看有 JOIN 到的
-
-
-如果沒有任何資料，再執行：
-
--- 直接看 ACTION_USER 的值長什麼樣
-SELECT TOP 5 [ACTION_USER]
-FROM [HI-APLOG].[dbo].[AP_EVENT_LOG]
-WHERE [SYS_ID] = 'HI_APACCESS'
-  AND [CONTROLLER_NAME] = 'Account'
-
-
-把 ACTION_USER 的實際值貼給我看。​​​​​​​​​​​​​​​​
+            case QueryKey.GetControllerNameBySysId:
+                return @"
+    SELECT [AUTOS_CONTROLLER_NAME]
+    FROM [HI-APLOG].[dbo].[AP_SYS]
+    WHERE [SYS_ID] = @SYS_ID
+";
