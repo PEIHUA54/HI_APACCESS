@@ -1,117 +1,77 @@
-可以，參考那個系統的寫法：
+SQL 先確認：
+把你的系統 ID 填進去執行：
 
-bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
+DECLARE @SYS_ID VARCHAR(100) = 'HI_APACCESS'  -- 改成你要測試的系統ID
+DECLARE @CONTROLLER_NAME VARCHAR(100)
+
+SELECT @CONTROLLER_NAME = [AUTOS_CONTROLLER_NAME]
+FROM [HI-APLOG].[dbo].[AP_SYS]
+WHERE [SYS_ID] = @SYS_ID
+
+-- 先確認 CONTROLLER_NAME 撈到什麼
+SELECT @CONTROLLER_NAME AS CONTROLLER_NAME
+
+-- 再確認登入紀錄
+SELECT
+    A.[U_ID],
+    A.[U_NAME],
+    NT.[EMP_DOM_ID],
+    COUNT(B.[LOG_ID]) AS LOGIN_COUNT
+FROM [HI-AUTOS].[dbo].[AP_USER] AS A
+LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
+    ON A.[U_ID] = NT.[EMP_NO]
+LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
+    ON A.[SYS_ID] = B.[SYS_ID]
+    AND NT.[EMP_DOM_ID] = B.[ACTION_USER]
+    AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
+    AND B.[LOG_TIME] >= DATEADD(MONTH, -6, GETDATE())
+WHERE A.[SYS_ID] = @SYS_ID
+GROUP BY A.[U_ID], A.[U_NAME], NT.[EMP_DOM_ID]
+ORDER BY A.[U_ID]
 
 
-在 SendInventoryMail 裡加測試模式判斷：
+先把 EMP_DOM_ID 也查出來，確認：
+	1.	@CONTROLLER_NAME 有沒有值
+	2.	EMP_DOM_ID 有沒有對應到 AP_EVENT_LOG 的 ACTION_USER
+結果貼給我看。
 
-private void SendInventoryMail(
-    string sysName,
-    List<string> toEmails,
-    List<string> ccEmails,
-    byte[] userExcel,  string userFileName,
-    byte[] loginExcel, string loginFileName)
+Excel 框線問題，SetHeaders 和 SetDataRowStyle 改成只框實際有資料的範圍，把 SetBorder 改成這樣：
+
+private void SetHeaders(ExcelWorksheet ws, string[] headers)
 {
-    SVS_Common security = new SVS_Common();
+    for (int i = 0; i < headers.Length; i++)
+        ws.Cells[1, i + 1].Value = headers[i];
 
-    bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
-
-    using (var mail = new MailMessage())
+    // 只框 headers 實際欄位數
+    using (var range = ws.Cells[1, 1, 1, headers.Length])
     {
-        mail.From       = new MailAddress(MAIL_SENDER, MAIL_SENDER_NAME);
-        mail.IsBodyHtml = true;
-        mail.Priority   = MailPriority.Normal;
+        range.Style.Font.Bold        = true;
+        range.Style.Font.Size        = 11;
+        range.Style.Font.Name        = "微軟正黑體";
+        range.Style.Fill.PatternType = ExcelFillStyle.Solid;
+        range.Style.Fill.BackgroundColor.SetColor(Color.LightGray);
+        range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+        range.Style.VerticalAlignment   = ExcelVerticalAlignment.Center;
+        range.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
+        range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+        range.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
+        range.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
+    }
+}
 
-        if (isTest)
-        {
-            // ── 測試模式：只寄給自己，不寄給真實 USER ──
-            mail.To.Add(new MailAddress("3B750@exc1.hilife.com"));  // TODO: 改成你自己的信箱
-        }
-        else
-        {
-            // ── 正式模式：寄給真實收件者 ──
-            foreach (var email in toEmails)
-            {
-                if (IsValidEmail(email))
-                    mail.To.Add(new MailAddress(email));
-            }
-
-            foreach (var email in ccEmails)
-            {
-                if (IsValidEmail(email))
-                    mail.CC.Add(new MailAddress(email));
-            }
-        }
-
-        // 主旨加上測試標記
-        string period = GetHalfYearPeriod();
-        mail.Subject  = isTest
-            ? $"【測試】【帳號盤點通知】{sysName} - {period}"
-            : $"【帳號盤點通知】{sysName} - {period}";
-
-        mail.Body = BuildMailBody(sysName, period);
-
-        // 附件
-        var s1 = new MemoryStream(userExcel);
-        mail.Attachments.Add(new Attachment(s1,
-            userFileName + ".xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
-
-        var s2 = new MemoryStream(loginExcel);
-        mail.Attachments.Add(new Attachment(s2,
-            loginFileName + ".xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
-
-        using (var smtp = new SmtpClient())
-        {
-            smtp.Host      = security.Enc_DecString("10.8.254.33");
-            smtp.Port      = 25;
-            smtp.EnableSsl = true;
-            smtp.EnableSsl = "".Length > 1;
-
-            try { smtp.Send(mail); }
-            catch (SmtpException smtpEx)
-            {
-                throw new Exception("SMTP錯誤：" + smtpEx.Message);
-            }
-        }
+private void SetDataRowStyle(ExcelWorksheet ws, int row, int colCount)
+{
+    // 只框實際欄位數，不會超出
+    using (var range = ws.Cells[row, 1, row, colCount])
+    {
+        range.Style.Font.Name         = "微軟正黑體";
+        range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+        range.Style.Border.Top.Style    = ExcelBorderStyle.Thin;
+        range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+        range.Style.Border.Left.Style   = ExcelBorderStyle.Thin;
+        range.Style.Border.Right.Style  = ExcelBorderStyle.Thin;
     }
 }
 
 
-然後 Web.config 的 <appSettings> 加：
-
-<!-- 測試模式：改成 AUTOS_TEST 只寄給自己；正式上線改回其他值 -->
-<add key="Environment" value="AUTOS_TEST" />
-
-
-測試完要上線前，把 value 改掉就好，不用動程式碼。​​​​​​​​​​​​​​​​
-
-你的 Web.config 已經有 Environment 這個 key 了，不需要新增，直接沿用。
-
-改法
-把判斷條件改成對應你現有的值：
-
-// 改這行
-bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
-
-// 改成
-bool isTest = ConfigurationManager.AppSettings["Environment"] == "HI_APACCESS_TEST";
-
-
-跑起來的邏輯
-現在（value="HI_APACCESS_TEST"）：
-	∙	isTest = true
-	∙	所有系統的信只寄給你自己（3B750@exc1.hilife.com）
-	∙	主旨前面會加 【測試】
-	∙	真實的 USER 和 IT 不會收到任何信
-上線後（value="HI_APACCESS"）：
-	∙	isTest = false
-	∙	正常寄給各系統的 NOTIFY_AUTOS_USERS（正本）和 NOTIFY_AUTOS_IT（副本）
-	∙	主旨正常顯示
-
-所以測試流程就是：
-	1.	Web.config 維持現在的 HI_APACCESS_TEST
-	2.	呼叫 AUTOSController/AutosBatch
-	3.	信只會寄到你信箱，確認 Excel 附件和內容正確
-	4.	確認沒問題後，Web.config 改成 HI_APACCESS，上線​​​​​​​​​​​​​​​​
+這樣框線只會框到有資料的欄位，不會多出空欄。​​​​​​​​​​​​​​​​
