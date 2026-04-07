@@ -1,66 +1,12 @@
-Excel 沒值的問題是因為 SQL 有 DECLARE 多段語法，QueryBySQL 執行後回傳的是第一個結果集（DECLARE + SELECT @CONTROLLER_NAME 那段），不是你要的 SELECT 資料。
-確認一下你的 QueryBySQL 是怎麼寫的，通常會是：
+DECLARE @SYS_ID VARCHAR(100) = 'HI_APACCESS'  -- 你的系統ID
+DECLARE @CONTROLLER_NAME VARCHAR(100) = 'Account'  -- 剛才確認的值
 
-// 只取第一個 DataTable
-DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-
-
-解法：把兩段 SQL 拆開，在 F_AUTOS 裡先查 CONTROLLER_NAME，再帶入第二段查詢：
-SQL 改成單純一段：
-
-case QueryKey.GetLoginCountList:
-    return @"
-        SELECT
-            A.[U_ID],
-            A.[U_NAME],
-            COUNT(B.[LOG_ID]) AS LOGIN_COUNT
-        FROM [HI-AUTOS].[dbo].[AP_USER] AS A
-        LEFT JOIN [HI-AUTOS].[dbo].[M1EMP_MAST] AS NT
-            ON A.[U_ID] = NT.[EMP_NO]
-        LEFT JOIN [HI-APLOG].[dbo].[AP_EVENT_LOG] AS B
-            ON A.[SYS_ID] = B.[SYS_ID]
-            AND NT.[EMP_NO] = B.[ACTION_USER]
-            AND B.[CONTROLLER_NAME] = @CONTROLLER_NAME
-            AND B.[ACTION_TIME] >= DATEADD(MONTH, -6, GETDATE())
-        WHERE A.[SYS_ID] = @SYS_ID
-        GROUP BY A.[U_ID], A.[U_NAME]
-        ORDER BY A.[U_ID]
-    ";
-
-case QueryKey.GetControllerNameBySysId:
-    return @"
-        SELECT [AUTOS_CONTROLLER_NAME]
-        FROM [HI-APLOG].[dbo].[AP_SYS]
-        WHERE [SYS_ID] = @SYS_ID
-    ";
-
-
-F_AUTOS.cs 的 GetLoginCountList 改成：
-
-public List<M_AUTOS_LoginCount> GetLoginCountList(string sysId, string sysName)
-{
-    // 先取 CONTROLLER_NAME
-    string sqlCtrl = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetControllerNameBySysId);
-    var pCtrl = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID", sysId)
-    };
-    DataTable dtCtrl = SVS_DBmanager.QueryBySQL(sqlCtrl, pCtrl);
-
-    string controllerName = "";
-    if (dtCtrl.Rows.Count > 0)
-        controllerName = dtCtrl.Rows[0]["AUTOS_CONTROLLER_NAME"]?.ToString() ?? "";
-
-    // 再查登入次數
-    string sql = SVS_DBmanager.GetQuery(SVS_DBmanager.QueryKey.GetLoginCountList);
-    var parameters = new List<SqlParameter>
-    {
-        new SqlParameter("@SYS_ID",          sysId),
-        new SqlParameter("@CONTROLLER_NAME", controllerName)
-    };
-
-    DataTable dt = SVS_DBmanager.QueryBySQL(sql, parameters);
-    var list = SVS_DBmanager.ConvertToList<M_AUTOS_LoginCount>(dt);
-    list.ForEach(x => x.SYS_NAME = sysName);
-    return list;
-}
+-- 先看 AP_EVENT_LOG 裡有沒有這個 CONTROLLER_NAME 的資料
+SELECT TOP 10 
+    [ACTION_USER],
+    [CONTROLLER_NAME],
+    [ACTION_TIME]
+FROM [HI-APLOG].[dbo].[AP_EVENT_LOG]
+WHERE [SYS_ID] = @SYS_ID
+  AND [CONTROLLER_NAME] = @CONTROLLER_NAME
+ORDER BY [ACTION_TIME] DESC
