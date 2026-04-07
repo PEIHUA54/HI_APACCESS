@@ -1,10 +1,117 @@
- <appSettings>
-   <add key="webpages:Version" value="3.0.0.0" />
-   <add key="webpages:Enabled" value="false" />
-   <add key="ClientValidationEnabled" value="true" />
-   <add key="UnobtrusiveJavaScriptEnabled" value="true" />
-   <!--測試環境-->
-   <add key="Environment" value="HI_APACCESS_TEST" />
-   <!--正式環境-->
-   <!--<add key="Environment" value="HI_APACCESS"/>-->
- </appSettings>
+可以，參考那個系統的寫法：
+
+bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
+
+
+在 SendInventoryMail 裡加測試模式判斷：
+
+private void SendInventoryMail(
+    string sysName,
+    List<string> toEmails,
+    List<string> ccEmails,
+    byte[] userExcel,  string userFileName,
+    byte[] loginExcel, string loginFileName)
+{
+    SVS_Common security = new SVS_Common();
+
+    bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
+
+    using (var mail = new MailMessage())
+    {
+        mail.From       = new MailAddress(MAIL_SENDER, MAIL_SENDER_NAME);
+        mail.IsBodyHtml = true;
+        mail.Priority   = MailPriority.Normal;
+
+        if (isTest)
+        {
+            // ── 測試模式：只寄給自己，不寄給真實 USER ──
+            mail.To.Add(new MailAddress("3B750@exc1.hilife.com"));  // TODO: 改成你自己的信箱
+        }
+        else
+        {
+            // ── 正式模式：寄給真實收件者 ──
+            foreach (var email in toEmails)
+            {
+                if (IsValidEmail(email))
+                    mail.To.Add(new MailAddress(email));
+            }
+
+            foreach (var email in ccEmails)
+            {
+                if (IsValidEmail(email))
+                    mail.CC.Add(new MailAddress(email));
+            }
+        }
+
+        // 主旨加上測試標記
+        string period = GetHalfYearPeriod();
+        mail.Subject  = isTest
+            ? $"【測試】【帳號盤點通知】{sysName} - {period}"
+            : $"【帳號盤點通知】{sysName} - {period}";
+
+        mail.Body = BuildMailBody(sysName, period);
+
+        // 附件
+        var s1 = new MemoryStream(userExcel);
+        mail.Attachments.Add(new Attachment(s1,
+            userFileName + ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+        var s2 = new MemoryStream(loginExcel);
+        mail.Attachments.Add(new Attachment(s2,
+            loginFileName + ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+        using (var smtp = new SmtpClient())
+        {
+            smtp.Host      = security.Enc_DecString("10.8.254.33");
+            smtp.Port      = 25;
+            smtp.EnableSsl = true;
+            smtp.EnableSsl = "".Length > 1;
+
+            try { smtp.Send(mail); }
+            catch (SmtpException smtpEx)
+            {
+                throw new Exception("SMTP錯誤：" + smtpEx.Message);
+            }
+        }
+    }
+}
+
+
+然後 Web.config 的 <appSettings> 加：
+
+<!-- 測試模式：改成 AUTOS_TEST 只寄給自己；正式上線改回其他值 -->
+<add key="Environment" value="AUTOS_TEST" />
+
+
+測試完要上線前，把 value 改掉就好，不用動程式碼。​​​​​​​​​​​​​​​​
+
+你的 Web.config 已經有 Environment 這個 key 了，不需要新增，直接沿用。
+
+改法
+把判斷條件改成對應你現有的值：
+
+// 改這行
+bool isTest = ConfigurationManager.AppSettings["Environment"] == "AUTOS_TEST";
+
+// 改成
+bool isTest = ConfigurationManager.AppSettings["Environment"] == "HI_APACCESS_TEST";
+
+
+跑起來的邏輯
+現在（value="HI_APACCESS_TEST"）：
+	∙	isTest = true
+	∙	所有系統的信只寄給你自己（3B750@exc1.hilife.com）
+	∙	主旨前面會加 【測試】
+	∙	真實的 USER 和 IT 不會收到任何信
+上線後（value="HI_APACCESS"）：
+	∙	isTest = false
+	∙	正常寄給各系統的 NOTIFY_AUTOS_USERS（正本）和 NOTIFY_AUTOS_IT（副本）
+	∙	主旨正常顯示
+
+所以測試流程就是：
+	1.	Web.config 維持現在的 HI_APACCESS_TEST
+	2.	呼叫 AUTOSController/AutosBatch
+	3.	信只會寄到你信箱，確認 Excel 附件和內容正確
+	4.	確認沒問題後，Web.config 改成 HI_APACCESS，上線​​​​​​​​​​​​​​​​
