@@ -1,83 +1,168 @@
-對，所以用實際往前推6個月最準確，跟 SQL 邏輯一致。
-把 GetHalfYearPeriod() 改成：
+改成下拉選向GET、POST 
+   <div class="col-md-6">
+        <div class="form-group">
+            <label for="http">按鈕HTTP_TYPE</label>
+            <input type="text" class="form-control" id="http">
+        </div>
+    </div>
 
-private string GetHalfYearPeriod()
-{
-    var end   = DateTime.Now;
-    var start = end.AddMonths(-6);
-    return $"{start:yyyy/MM/dd} ～ {end:yyyy/MM/dd}";
-}
-
-
-這樣不管排程是幾月跑，信件主旨和內文顯示的期間都會跟 SQL 撈的範圍一致。
-例如：
-	∙	4月跑 → 2025/10/07 ～ 2026/04/07
-	∙	8月跑 → 2026/02/01 ～ 2026/08/01
-
-日期怎麼算：
-SQL 的 DATEADD(MONTH, -6, GETDATE()) 就是執行當下時間往前推剛好6個月。
-例如今天 2026-04-07：
-	∙	開始：2025-10-07
-	∙	結束：2026-04-07（當下）
-
-確認哪些系統哪些人會被通知的 SQL：
-
-SELECT 
-    s.[SYS_ID],
-    s.[SYS_NAME],
-    s.[NOTIFY_AUTOS_USERS],
-    s.[NOTIFY_AUTOS_IT],
-    -- 展開 USER 窗口信箱
-    u_mail.[EMP_EMAIL] AS USER_EMAIL,
-    -- 展開 IT 信箱
-    it_mail.[EMP_EMAIL] AS IT_EMAIL
-FROM [HI-APLOG].[dbo].[AP_SYS] s
--- USER 窗口（只取第一個，若多個需另外處理）
-OUTER APPLY (
-    SELECT TOP 1 m.[EMP_EMAIL]
-    FROM STRING_SPLIT(s.[NOTIFY_AUTOS_USERS], ';') t
-    LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
-) u_mail
--- IT 人員（只取第一個）
-OUTER APPLY (
-    SELECT TOP 1 m.[EMP_EMAIL]
-    FROM STRING_SPLIT(s.[NOTIFY_AUTOS_IT], ';') t
-    LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
-) it_mail
-WHERE s.[NOTIFY_AUTOS_USERS] IS NOT NULL
-  AND s.[NOTIFY_AUTOS_USERS] <> ''
-ORDER BY s.[SYS_ID]
+  function editButton(funcId, btnSeq) {
+      isButtonEditMode = true;
+      $('#buttonModalTitle').text('修改按鈕');
 
 
-但這樣每個系統只顯示一筆，如果你想展開每個人一行：
+      $.get('@Url.Action("GetButtonsByFuncId", "AP")', {
+          func_id: funcId,
+          sysID: currentSysID
+      }, function (response) {
+          if (response.success) {
+              const button = response.data.find(b => b.BTNSEQ === btnSeq);
+              if (button) {
+                  $('#buttonFuncId').val(button.FUNC_ID);
+                  $('#buttonBtnSeq').val(button.BTNSEQ);
+                  $('#btnSeqDisplay').val(button.BTNSEQ);
+                  $('#btnId').val(button.BTNID);
+                  $('#btnName').val(button.BTN_NAME);
+                  $('#controller').val(button.CONTROLLER || '');
+                  $('#action').val(button.ACTION || '');
+                  $('#loc').val(button.LOC || '');
+                  $('#onclick').val(button.ONCLICK || '');
+                  $('#http').val(button.HTTP_TYPE || '');
 
-SELECT 
-    s.[SYS_ID],
-    s.[SYS_NAME],
-    '正本TO' AS 類型,
-    t.[value] AS 員工編號,
-    m.[EMP_EMAIL] AS 信箱
-FROM [HI-APLOG].[dbo].[AP_SYS] s
-CROSS APPLY STRING_SPLIT(s.[NOTIFY_AUTOS_USERS], ';') t
-LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
-WHERE s.[NOTIFY_AUTOS_USERS] IS NOT NULL
-  AND s.[NOTIFY_AUTOS_USERS] <> ''
+                  const selectedPageData = allPages.find(p => p.FUNC_ID === funcId);
+                  $('#selectedPageName').text(selectedPageData ? selectedPageData.FUNC_NA : funcId);
 
-UNION ALL
+                  $('#buttonModal').modal('show');
+              }
+          }
+      });
 
-SELECT 
-    s.[SYS_ID],
-    s.[SYS_NAME],
-    '副本CC' AS 類型,
-    t.[value] AS 員工編號,
-    m.[EMP_EMAIL] AS 信箱
-FROM [HI-APLOG].[dbo].[AP_SYS] s
-CROSS APPLY STRING_SPLIT(s.[NOTIFY_AUTOS_IT], ';') t
-LEFT JOIN [HI-AUTOS].[dbo].[EMPLOYEE_MAIL] m ON m.[EMP_ID] = t.[value]
-WHERE s.[NOTIFY_AUTOS_IT] IS NOT NULL
-  AND s.[NOTIFY_AUTOS_IT] <> ''
+  }
 
-ORDER BY SYS_ID, 類型
+  function saveButton() {
+      const formData = {
+          FUNC_ID: $('#buttonFuncId').val(),
+          BTNSEQ: $('#buttonBtnSeq').val(),
+          BTNID: $('#btnId').val(),
+          BTN_NAME: $('#btnName').val(),
+          CONTROLLER: $('#controller').val() || null,
+          ACTION: $('#action').val() || null,
+          LOC: $('#loc').val() || null,
+          ONCLICK: $('#onclick').val() || null,
+          HTTP_TYPE: $('#http').val() || null
+      };
 
 
-這樣可以清楚看到每個系統、每個人、信箱有沒有設定。​​​​​​​​​​​​​​​​
+      if (!formData.BTNID.trim() || !formData.BTN_NAME.trim()) {
+          alert('請輸入按鈕ID和按鈕名稱');
+          return;
+      }
+
+      const url = isButtonEditMode ? '@Url.Action("UpdateButton", "AP")' : '@Url.Action("AddButton", "AP")';
+
+      $.post(url, formData, function (response) {
+          if (response.success) {
+              alert(response.message);
+              $('#buttonModal').modal('hide');
+
+              // 自動重新載入按鈕列表
+              if (currentSelectedPage) {
+                  const selectedPageData = allPages.find(p => p.FUNC_ID === currentSelectedPage);
+                  if (selectedPageData) {
+                      loadButtons(currentSelectedPage, selectedPageData.FUNC_NA);
+                  }
+              }
+          } else {
+              alert(response.message);
+          }
+      });
+  }
+
+        // 取得頁面的按鈕列表
+        [HttpGet]
+        public JsonResult GetButtonsByFuncId(string func_id, string sysID)
+        {
+            try
+            {
+                var service = GetAPService();
+                var buttons = service.GetButtonsByFuncId(func_id);
+                return Json(new { success = true, data = buttons }, JsonRequestBehavior.AllowGet);
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "取得按鈕資料發生錯誤：" + ex.Message }, JsonRequestBehavior.AllowGet);
+            }
+        }
+
+        // 新增按鈕
+        [HttpPost]
+        public JsonResult AddButton([Bind] RFuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetAPService();
+                    if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID))
+                    {
+                        return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                    }
+
+                    if (string.IsNullOrEmpty(model.BTNSEQ))
+                    {
+                        model.BTNSEQ = service.GetNextButtonSeq(model.FUNC_ID);
+                    }
+
+                    var result = service.InsertButton(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "按鈕新增成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "按鈕新增失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "新增按鈕發生錯誤：" + ex.Message });
+            }
+        }
+
+        // 修改按鈕
+        [HttpPost]
+        public JsonResult UpdateButton([Bind] RFuncModel model)
+        {
+            try
+            {
+                model.SYS_ID = CurrentSystemId;
+
+                if (ModelState.IsValid)
+                {
+                    var service = GetAPService();
+                    if (service.IsButtonIdExists(model.FUNC_ID, model.BTNID, model.BTNSEQ))
+                    {
+                        return Json(new { success = false, message = "該頁面已存在相同的按鈕ID" });
+                    }
+
+                    var result = service.UpdateButton(model, Emp_NO);
+                    if (result == null || !result.Contains("fail"))
+                    {
+                        return Json(new { success = true, message = "按鈕修改成功" });
+                    }
+                    else
+                    {
+                        return Json(new { success = false, message = "按鈕修改失敗：" + result });
+                    }
+                }
+                return Json(new { success = false, message = "資料驗證失敗" });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { success = false, message = "修改按鈕發生錯誤：" + ex.Message });
+            }
+        }
