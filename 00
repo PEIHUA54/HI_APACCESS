@@ -1,10 +1,36 @@
-我剛才那句話講得不夠清楚，抱歉。
+把 `#http` 的 `<input>` 改成 `<select>`，其餘 JS 邏輯不用動，因為 `.val()` 對 select 一樣適用：
 
-我的意思是:目前只看得到你貼的 View 和 Controller 程式碼，看不到 `RFuncModel` 這個 Model 類別的定義。想確認的是它裡面 `HTTP_TYPE` 這個屬性有沒有做限制,例如:
+```html
+<div class="col-md-6">
+    <div class="form-group">
+        <label for="http">按鈕HTTP_TYPE</label>
+        <select class="form-control" id="http">
+            <option value="">請選擇</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+        </select>
+    </div>
+</div>
+```
 
-- 是不是 `string` 型態就沒限制,還是有用 `[RegularExpression]`、`enum` 之類的做值域驗證
-- 資料庫欄位本身有沒有 CHECK constraint 限制只能存 GET/POST
+**說明：**
+- `editButton()` 裡的 `$('#http').val(button.HTTP_TYPE || '');` 不用改，select 元素用 `.val()` 設定選中值一樣有效，只要資料庫存的值剛好是 `"GET"` / `"POST"`（大寫要一致，不然選不到對應 option）。
+- `saveButton()` 裡的 `$('#http').val() || null` 也不用改，抓取邏輯相同。
 
-**但這其實不是必要的確認**——如果你只是想把 input 換成 select 讓使用者用選的比較不會打錯字，不影響資料儲存邏輯，那前面給的改法就可以直接用，不需要額外確認什麼。
+**要注意的地方：**
+- 如果資料庫裡舊資料的 HTTP_TYPE 有大小寫不一致（例如 `"get"`、`"Post"`）或有其他非 GET/POST 的值，改成 select 後這些值會顯示為空白（因為找不到對應 option），需要確認資料庫裡的實際值範圍，或在 JS 端做一次 `.toUpperCase()` 正規化：
 
-真正需要你留意的是**大小寫**這件事:如果資料庫裡舊資料存的是 `"get"` 或 `"Post"`（小寫或混合），select 因為 option value 是大寫 `"GET"`/`"POST"`，就會抓不到對應選項而顯示空白。你可以直接查一下資料庫現有資料，看看 HTTP_TYPE 欄位的值都是什麼格式就好。
+```javascript
+$('#http').val((button.HTTP_TYPE || '').toUpperCase());
+```
+
+- 如果這個欄位是必填，記得在 `saveButton()` 的驗證區塊加上檢查（目前只驗證了 BTNID 和 BTN_NAME）：
+
+```javascript
+if (!formData.BTNID.trim() || !formData.BTN_NAME.trim() || !formData.HTTP_TYPE) {
+    alert('請輸入按鈕ID、按鈕名稱並選擇HTTP_TYPE');
+    return;
+}
+```
+
+需要我一併確認後端 `RFuncModel.HTTP_TYPE` 欄位是否有做值域限制（例如 enum 或資料庫 CHECK constraint）嗎？
