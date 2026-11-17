@@ -1,0 +1,232 @@
+現在要做加解密操作手冊
+DLL: ConnStrEncryptor.dll 新名稱
+TOOL:ConnStrEncryptorTool.exe 新名稱
+舉例:
+這是同事改法
+1.hi_pos系統(net framework)
+新增一個class
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HI_POS.DataAccess
+{
+    public class DbUtility
+    {
+        public static string GetConnectionString(string ConectName, string sysName)
+        {
+            string encryptedConnStr = ConfigurationManager.ConnectionStrings[ConectName].ToString();
+            return new ConnStrEncryptor.ConnStrDecryptor().GetConnectionString(encryptedConnStr, sysName);
+        }
+
+    }
+}
+
+namespace HI_POS.DataAccess
+{
+    using System;
+    using System.Data.Entity;
+    using System.Data.Entity.Infrastructure;
+    using System.Data.Entity.Core.Objects;
+    using System.Linq;
+    using System.Configuration;
+
+    public partial class HI_MARKETEntities : DbContext
+    {
+        public HI_MARKETEntities()
+             : base(DbUtility.GetConnectionString(ConfigurationManager.AppSettings["Enviroment"] == "HI_POS_TEST" ? "HI_MARKETEntities_test" : "HI_MARKETEntities", "HI_POS"))
+        {
+        }
+    
+        protected override void OnModelCreating(DbModelBuilder modelBuilder)
+        {
+            throw new UnintentionalCodeFirstException();
+        }
+    
+        public virtual DbSet<MREXCATALOG_CLASS> MREXCATALOG_CLASS { get; set; }
+        public virtual DbSet<MREXCATALOG_UPSET> MREXCATALOG_UPSET { get; set; }
+        public virtual DbSet<MREXCATALOG_PRD> MREXCATALOG_PRD { get; set; }
+        public virtual DbSet<MREXCATALOG_PRD_TEMP> MREXCATALOG_PRD_TEMP { get; set; }
+    
+        public virtual ObjectResult<usp_檢核超值購上架商品資料_Result> usp_檢核超值購上架商品資料()
+        {
+            return ((IObjectContextAdapter)this).ObjectContext.ExecuteFunction<usp_檢核超值購上架商品資料_Result>("usp_檢核超值購上架商品資料");
+        }
+    }
+}
+
+
+namespace HI_POS.DataAccess
+{
+    using System;
+    using System.Data.Entity;
+    using System.Data.Entity.Infrastructure;
+    using System.Data.Entity.Core.Objects;
+    using System.Linq;
+    using System.Configuration;
+
+    public partial class HI_TMMAINEntities2 : DbContext
+    {
+        public HI_TMMAINEntities2()
+             : base(DbUtility.GetConnectionString(ConfigurationManager.AppSettings["Enviroment"] == "HI_POS_TEST" ? "HI_TMMAINEntities2_test" : "HI_TMMAINEntities2", "HI_POS"))
+        {
+        }
+   ... 
+   }
+}
+
+using System.Configuration;
+
+namespace HI_POS.Controllers
+{
+    public class SpecialOfferController : Controller
+    {
+        public HI_MARKETEntities db = new HI_MARKETEntities();
+        readonly string Enviroment = ConfigurationManager.AppSettings["Enviroment"];
+        string errText = "請修正錯誤";
+...
+}}
+如果是報表devexpress
+using DevExpress.DataAccess.ConnectionParameters;
+using DevExpress.XtraPrinting;
+using DevExpress.XtraReports.UI;
+using HI_POS.DataAccess;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Configuration;
+using System.Drawing;
+
+namespace HI_POS
+{
+    public partial class 超值購條碼 : DevExpress.XtraReports.UI.XtraReport
+    {
+        public 超值購條碼()
+        {
+            InitializeComponent();
+            OverrideConnection();
+        }
+
+        private void 超值購條碼_BeforePrint(object sender, System.Drawing.Printing.PrintEventArgs e)
+        {
+        }
+        private void OverrideConnection()
+        {
+            sqlDataSource2.ConnectionParameters =
+                new CustomStringConnectionParameters(
+                    DbUtility.GetConnectionString(ConfigurationManager.AppSettings["Enviroment"] == "HI_POS_TEST" ? "HI_MARKETEntities (HI_POS)_test" : "HI_MARKETEntities (HI_POS)", "HI_POS")
+                );
+        }
+    }
+}
+2.posfile_apply(net framework)
+新增一個CLASS
+using DEC_DLL;
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Linq;
+using System.Web;
+
+namespace POSFILE_APPLY.Service
+{
+    public class DbConnectionHelper
+    {
+        private const string SysName = "POSFILE_APPLY";
+
+        public static string Get(string connectName)
+        {
+            string encrypted = ConfigurationManager.ConnectionStrings[connectName].ConnectionString;
+            return ConnStrDecryptor.GetConnectionString(encrypted, SysName);
+        }
+    }
+}
+
+FACTORY
+namespace POSFILE_APPLY.Factory.F_FLOW
+{
+    public class F_POS_FLOW
+    {
+        readonly static string sqlcon = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+              POSFILE_APPLY.Service.DbConnectionHelper.Get("ConnDB_TFS_HI_FLOW")
+            : POSFILE_APPLY.Service.DbConnectionHelper.Get("ConnDB_DB2_HI_FLOW");
+
+        readonly static string sqlcondb3 = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+      POSFILE_APPLY.Service.DbConnectionHelper.Get("ConnDB_TFS_HI_TMMAIN")
+    : POSFILE_APPLY.Service.DbConnectionHelper.Get("ConnDB_DB3_HI_TMMAIN");
+
+        //readonly static string sqlcon = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+        //      ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_FLOW"].ConnectionString 
+        //    : ConfigurationManager.ConnectionStrings["ConnDB_DB2_HI_FLOW"].ConnectionString;
+
+        //readonly static string sqlcondb3 = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+        //   ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString
+        // : ConfigurationManager.ConnectionStrings["ConnDB_DB3_HI_TMMAIN"].ConnectionString;
+
+        readonly SVS_DBmanager SVS_DBmanager = new SVS_DBmanager(sqlcon);
+        readonly SVS_DBmanager SVS_DBmanagerdb3 = new SVS_DBmanager(sqlcondb3);
+
+...
+
+namespace POSFILE_APPLY.Service
+{
+    /// <summary>
+    /// ado.net連線資料庫
+    /// </summary>
+    public class SVS_DBmanager
+    {
+        //private readonly string sqlcon = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+        //    ConfigurationManager.ConnectionStrings["ConnDB_TFS_HI_TMMAIN"].ConnectionString
+        //    : ConfigurationManager.ConnectionStrings["ConnDB_DB3_HI_TMMAIN"].ConnectionString;
+
+        private readonly string sqlcon = ConfigurationManager.AppSettings["Environment"] == "POSFILE_APPLY_TEST" ?
+    DbConnectionHelper.Get("ConnDB_TFS_HI_TMMAIN") : DbConnectionHelper.Get("ConnDB_DB3_HI_TMMAIN");
+
+        private readonly string _sqlcon;
+...
+3.HI_PRDCARD(NET CORE)
+PROGRAM
+ // DB
+    //new SVS_ENC_DEC().DecryptConnectionStrings(builder.Configuration);
+
+    const string sysName = "HI_PRDCARD";
+ConnStrDecryptor decryptor = new ConnStrDecryptor();
+foreach (IConfigurationSection section in builder.Configuration.GetSection("ConnectionStrings").GetChildren().ToList())
+{
+    if (!string.IsNullOrWhiteSpace(section.Value))
+    {
+        builder.Configuration[section.Path] = decryptor.GetConnectionString(section.Value, sysName);
+    }
+}
+
+    string? connectionString = builder.Configuration.GetConnectionString("HI_MARKET");  // HI_MARKET預設
+    ILogger<SVS_DBmanager> logger_dbmanager = SVS_Serilog.ConvertTo<SVS_DBmanager>(Log.Logger);
+    builder.Services.AddSingleton<SVS_DBmanager>(sp => new SVS_DBmanager(connectionString, logger_dbmanager));
+
+    // HI_PRDCARD
+    builder.Services.AddScoped<PRDCARD_DBManager>(sp =>
+    {
+        string? connectionString = builder.Configuration.GetConnectionString("HI_PRDCARD");
+        ILogger<SVS_DBmanager> logger_dbmanager = SVS_Serilog.ConvertTo<SVS_DBmanager>(Log.Logger);
+        return () => new SVS_DBmanager(connectionString, logger_dbmanager);
+    });
+
+    // USCACCT
+    builder.Services.AddScoped<USCACCT_DBManager>(sp =>
+    {
+        string? connectionString = builder.Configuration.GetConnectionString("USCACCT");
+        ILogger<SVS_DBmanager> logger_dbmanager = SVS_Serilog.ConvertTo<SVS_DBmanager>(Log.Logger);
+        return () => new SVS_DBmanager(connectionString, logger_dbmanager);
+    });
+
+...
+要怎麼寫出兩中版本操作手冊
+包含放置dll 引用
+然後放置exe在同個資料夾
+然後如何修改程式碼可以使用dll
+如果有報表 目前看net framework要改
+那net core要改嗎 我測試是開designer會不會報錯
